@@ -1,0 +1,33 @@
+# /etc/conf.d/nitod: config file for /etc/init.d/nitod
+
+# Config file location
+#BITCOIND_CONFIGFILE="/etc/nito/nito.conf"
+
+# What directory to write pidfile to?  (created and owned by $BITCOIND_USER)
+#BITCOIND_PIDDIR="/var/run/nitod"
+
+# What filename to give the pidfile
+#BITCOIND_PIDFILE="${BITCOIND_PIDDIR}/nitod.pid"
+
+# Where to write nitod data (be mindful that the blockchain is large)
+#BITCOIND_DATADIR="/var/lib/nitod"
+
+# User and group to own nitod process
+#BITCOIND_USER="nito"
+#BITCOIND_GROUP="nito"
+
+# Path to nitod executable
+#BITCOIND_BIN="/usr/bin/nitod"
+
+# Nice value to run nitod under
+#BITCOIND_NICE=0
+
+# Additional options (avoid -conf and -datadir, use flags above)
+#BITCOIND_OPTS=""
+
+# The timeout in seconds OpenRC will wait for nitod to terminate
+# after a SIGTERM has been raised.
+# Note that this will be mapped as argument to start-stop-daemon's
+# '--retry' option, which means you can specify a retry schedule
+# here. For more information see man 8 start-stop-daemon.
+BITCOIND_SIGTERM_TIMEOUT=600
