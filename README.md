@@ -10,11 +10,11 @@ Nito Core connects to the Nito peer-to-peer network to download and fully valida
 #
 ***Nito FAQ***
 
-***Launch Date:*** may 8th, 2024
+***Launch Date:*** Saturday, 6th July 2024
 
 ***Genesis Block:*** "Nito/Core Genesis 6-9"
 
-***Max Total Supply:*** 2.6 Billion Nito in ±200 Years.
+***Max Total Supply:*** 2,763,394,496 Nito in ±200 Years.
 
 ***Block Subsidy Halving:*** ±40 years ( 21024000 Blocks )
 
