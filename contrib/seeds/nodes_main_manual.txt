@@ -1,0 +1,6 @@
+cc7go4454pb4p2zmnkwrgsi6v6oqv53zxnmalz6rnfjemxftapfa.b32.i2p:0
+ccdw2e4ufgfwhcqna4g3m2qsvaly23ozaexawcj3x4gtgcehgwujjgid.onion:12200
+
+
+# manually updated 2023-04 for minimal cjdns bootstrap support
+[fc32:17ea:e415:c3bf:9808:149d:b5a2:c9aa]:12200
