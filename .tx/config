@@ -1,0 +1,7 @@
+[main]
+host = https://www.transifex.com
+
+[o:nito:p:nito:r:qt-translation-027x]
+file_filter = src/qt/locale/nito_<lang>.xlf
+source_file = src/qt/locale/nito_en.xlf
+source_lang = en
