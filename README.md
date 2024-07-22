@@ -1,4 +1,4 @@
-![githublogo](https://github.com/Jongjan88/NITO-Core/assets/125610144/65e749b4-3c02-4a24-9e6b-83704c8ff8b9)
+![githublogov2](https://github.com/user-attachments/assets/125e6510-5faa-4f38-8ed2-d3249f8aa887)
 
 
 #
