@@ -121,9 +121,7 @@ public:
         assert(genesis.hashMerkleRoot == uint256S("0x3fe6998642c9f48cb189914e60efcc6a34fbfc602b7fa87b224a53619f525418"));
 
 
-//nitcode: printf("genesis.GetHash = %s\n", genesis.GetHash().ToString().c_str());
-//nitcode: printf("genesis.hashMerkleRoot = %s\n", genesis.hashMerkleRoot.ToString().c_str());
-        
+     
         // Note that of those which support the service bits prefix, most only support a subset of
         // possible options.
         // This is fine at runtime as we'll fall back to using them as an addrfetch if they don't support the
