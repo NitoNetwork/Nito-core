@@ -26,3 +26,6 @@ Nito Core connects to the Nito peer-to-peer network to download and fully valida
 ***License***
 
 License Nito Core is released under the terms of the MIT license. See COPYING for more information or see https://opensource.org/licenses/MIT.
+
+
+https://discord.com/invite/y5rkGHU7Qh
