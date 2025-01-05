@@ -1,7 +1,5 @@
 ![imagenito](https://github.com/user-attachments/assets/41389ade-1a8e-4b9b-9f3a-2572bd1aadbb)
 
-www.nitopool.fr
-
 ***What is Nito Core?***
 
 Nito Core connects to the Nito peer-to-peer network to download and fully validate blocks and transactions. It also includes a wallet and graphical user interface, which can be optionally built.
