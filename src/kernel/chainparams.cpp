@@ -96,7 +96,7 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0;
 
-        consensus.nMinimumChainWork = uint256S("0x00000000000000000000000000000000000000000000033127f662aba79a7a64");
+        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000000000002e29bd3c4afb3");
         consensus.defaultAssumeValid = uint256S("0x000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b");
 
         /**
