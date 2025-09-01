@@ -95,8 +95,9 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nStartTime = Consensus::BIP9Deployment::NEVER_ACTIVE;
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0;
-        consensus.nMinimumChainWork = uint256S("0x00");
-        consensus.defaultAssumeValid = uint256S("0x00000000000000235fdb9836cce1353efe564744ab97da7b67b04e4fa38f8515");
+
+        consensus.nMinimumChainWork = uint256S("0x00000000000000000000000000000000000000000000033127f662aba79a7a64");
+        consensus.defaultAssumeValid = uint256S("0x000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b");
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
@@ -111,7 +112,6 @@ public:
         nPruneAfterHeight = 100000;
         m_assumed_blockchain_size = 2;
         m_assumed_chain_state_size = 2;
-
         
 
         genesis = CreateGenesisBlock(1724234444, 3982125265, 0x1d00ffff, 1, 512 * COIN);
@@ -164,7 +164,7 @@ public:
                 {350000, uint256S("0x00000000000004260b9a90a06a757b8545c4f4e704992173f874c06929d4a3ed")},
                 {400000, uint256S("0x000000000000080c140a6a4b74828d3756c98b8c7da48cf0437f597bdbc80801")},
                 {450000, uint256S("0x00000000000011c41dde862d73ca2b010dd0b4920f964cc4e57429a5169fe0d4")},
-
+                {515000, uint256S("0x000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b")},
             }
         };
 
@@ -174,10 +174,10 @@ public:
         };
 
         chainTxData = ChainTxData{
-            // Data from RPC: getchaintxstats 4096 00000000000000000001a0a448d6cf2546b06801389cc030b2b18c6491266815
-            .nTime    = 1714772864,
-            .nTxCount = 0,
-            .dTxRate  = 0,
+            // Data from RPC: getchaintxstats 515000 000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b
+            .nTime    = 1756678308,
+            .nTxCount = 601032,
+            .dTxRate  = 0.0185212417162687,
         };
     }
 };
