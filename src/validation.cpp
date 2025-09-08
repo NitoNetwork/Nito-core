@@ -1719,50 +1719,25 @@ PackageMempoolAcceptResult ProcessNewPackage(Chainstate& active_chainstate, CTxM
 
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
 {
-
     CAmount nSubsidy = 512 * COIN;
 
-    // 1
-    if (nHeight < 525600)
-        nSubsidy = nSubsidy /1;
+    if (nHeight < 530000) {
         return nSubsidy;
-
-    // 2
-    if (nHeight < 1051200)
-        nSubsidy = nSubsidy /2;
-        return nSubsidy;
-
-    // 3
-    if (nHeight < 1576800)
-        nSubsidy = nSubsidy /4;
-        return nSubsidy;
-
-    // 4 - 10
-    if (nHeight < 5256000)
-        nSubsidy = nSubsidy /8;
-        return nSubsidy;
-
-    // 11 - 20
-    if (nHeight < 10512000)
-        nSubsidy = nSubsidy /16;
-        return nSubsidy;
-
-    // 21 - 50
-    if (nHeight < 26280000)
-        nSubsidy = nSubsidy /32;
-        return nSubsidy;
-
-    // 51 - 200
-    if (nHeight <= 105120000)
-        nSubsidy = nSubsidy /256;
-        return nSubsidy;
-
-
-    // Check after 105120000 blocks
-    if (nHeight > 105120000)
+    } else if (nHeight < 1042400) {
+        return nSubsidy / 2;
+    } else if (nHeight < 1576800) {
+        return nSubsidy / 4;
+    } else if (nHeight < 5256000) {
+        return nSubsidy / 8;
+    } else if (nHeight < 10512000) {
+        return nSubsidy / 16;
+    } else if (nHeight < 26280000) {
+        return nSubsidy / 32;
+    } else if (nHeight < 105120001) {
+        return nSubsidy / 256;
+    } else {
         return 0;
-        // return 1 * COIN;
-
+    }
 }
 
 
