@@ -15,6 +15,8 @@ Nito Core connects to the Nito peer-to-peer network to download and fully valida
 
 ***Max Total Supply:*** 1,154,217,600 Nito in ±200 Years.
 
+***Block Reward:*** 512 Nito
+
 ***Algorithm:*** SHA256
 
 ***Block Interval:*** 60 Seconds
