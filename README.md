@@ -1,3 +1,10 @@
+#Easy installation
+
+```bash
+https://nito.network/tools/easynode/
+```
+
+
 ![imagenito](https://github.com/user-attachments/assets/41389ade-1a8e-4b9b-9f3a-2572bd1aadbb)
 
 
