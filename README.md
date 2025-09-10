@@ -1,4 +1,4 @@
-#Easy installation
+# Easy installation
 
 ```bash
 https://nito.network/tools/easynode/
