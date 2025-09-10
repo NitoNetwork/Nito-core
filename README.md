@@ -36,6 +36,8 @@ Nito Core connects to the Nito peer-to-peer network to download and fully valida
 
 ***Years 51–200: 2 → 0 at block 105,120,001*** — Emitted 157,680,002 (total 1,284,565,890)
 
+***Years 201–∞: 0 → 0 at block 105,120,001*** — Or soft fork to maintain 1 NITO per block distributed from the year 201 
+
 
 ***Algorithm:*** SHA256
 
