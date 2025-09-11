@@ -1,10 +1,12 @@
 # Easy installation
 
 ```bash
-https://nito.network/tools/easynode/
+([https://nito.network/tools/easynode/](https://nito.network/tools/easynode/))
 ```
+([https://nito.network/tools/easynode/](https://nito.network/tools/easynode/))
+
 ```bash
-https://nito.network/#Downloads
+([https://nito.network/#Downloads](https://nito.network/#Downloads))
 ```
 
 ![imagenito](https://github.com/user-attachments/assets/41389ade-1a8e-4b9b-9f3a-2572bd1aadbb)
