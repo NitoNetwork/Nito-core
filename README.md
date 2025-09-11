@@ -24,6 +24,8 @@ Nito Core connects to the Nito peer-to-peer network to download and fully valida
 
 ***Block Interval:*** 60 Seconds
 
+***Difficulty adjustment:*** Adjustment to each new block
+
 
 _______________________________________________________________________________________________________________________
 
