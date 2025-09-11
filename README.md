@@ -20,6 +20,12 @@ Nito Core connects to the Nito peer-to-peer network to download and fully valida
 
 ***Genesis Block:*** "Nito/Core Genesis 8-4"
 
+***Algorithm:*** SHA256
+
+***Block Interval:*** 60 Seconds
+
+
+
 ***Max Total Supply:***  1,284,565,890 Nito in ±200 Years.
 
 ***Year 1: 512 → 256 at block 530,000*** — Emitted 271,359,488 (total 271,359,488)
@@ -39,9 +45,7 @@ Nito Core connects to the Nito peer-to-peer network to download and fully valida
 ***Years 201–∞: 0 → 0 at block 105,120,001*** — Or soft fork to maintain 1 NITO per block distributed from the year 201 
 
 
-***Algorithm:*** SHA256
-
-***Block Interval:*** 60 Seconds
+_______________________________________________________________________________________________________________________
 
 
 #
