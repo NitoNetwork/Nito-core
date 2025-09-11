@@ -25,6 +25,8 @@ Nito Core connects to the Nito peer-to-peer network to download and fully valida
 ***Block Interval:*** 60 Seconds
 
 
+_______________________________________________________________________________________________________________________
+
 
 ***Max Total Supply:***  1,284,565,890 Nito in ±200 Years.
 
