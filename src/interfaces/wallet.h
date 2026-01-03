@@ -265,6 +265,9 @@ public:
 
     // Return whether the wallet contains a Taproot scriptPubKeyMan
     virtual bool taprootEnabled() = 0;
+    
+    // Return whether Legacy/P2SH transactions are enabled (after activation height)
+    virtual bool legacyP2SHEnabled() = 0;
 
     // Return whether wallet uses an external signer.
     virtual bool hasExternalSigner() = 0;

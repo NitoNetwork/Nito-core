@@ -29,6 +29,7 @@
 #include <wallet/rpc/wallet.h>
 #include <wallet/spend.h>
 #include <wallet/wallet.h>
+#include <chainparams.h>
 
 #include <memory>
 #include <string>
@@ -518,6 +519,12 @@ public:
         if (m_wallet->IsLegacy()) return false;
         auto spk_man = m_wallet->GetScriptPubKeyMan(OutputType::BECH32M, /*internal=*/false);
         return spk_man != nullptr;
+    }
+    bool legacyP2SHEnabled() override {
+        LOCK(m_wallet->cs_wallet);
+        int current_height = m_wallet->GetLastBlockHeight();
+        const auto& params = Params().GetConsensus();
+        return current_height >= params.nLegacyP2SHActivationHeight;
     }
     OutputType getDefaultAddressType() override { return m_wallet->m_default_address_type; }
     CAmount getDefaultMaxTxFee() override { return m_wallet->m_default_max_tx_fee; }

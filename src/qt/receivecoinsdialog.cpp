@@ -99,6 +99,10 @@ void ReceiveCoinsDialog::setModel(WalletModel *_model)
         if (model->wallet().taprootEnabled()) {
             add_address_type(OutputType::BECH32M, tr("Bech32m (Taproot)"), tr("Bech32m (BIP-350) is an upgrade to Bech32, wallet support is still limited."));
         }
+        if (model->wallet().legacyP2SHEnabled()) {
+            add_address_type(OutputType::LEGACY, tr("Legacy (P2PKH)"), tr("Generates a legacy address starting with 1."));
+            add_address_type(OutputType::P2SH_SEGWIT, tr("P2SH-SegWit"), tr("Generates a P2SH-wrapped SegWit address starting with 3."));
+        }
         // Set the button to be enabled or disabled based on whether the wallet can give out new addresses.
         ui->receiveButton->setEnabled(model->wallet().canGetAddresses());
 

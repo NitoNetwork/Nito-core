@@ -427,18 +427,6 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationS
             assert(coinFromUTXOSet.out == coin.out);
         }
     }
-
-    for (const CTxOut& txout : tx.vout) {
-        TxoutType whichType;
-        std::vector<std::vector<unsigned char>> vSolutions;
-
-        whichType = Solver(txout.scriptPubKey, vSolutions);
-        if (whichType == TxoutType::PUBKEY || 
-            whichType == TxoutType::PUBKEYHASH || 
-            whichType == TxoutType::SCRIPTHASH) {
-            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-blk-tx-nonstandard-script");
-        }
-    }
     
 
     // Call CheckInputScripts() to cache signature and script validity against current tip consensus rules.
@@ -1260,18 +1248,19 @@ MempoolAcceptResult MemPoolAccept::AcceptSingleTransaction(const CTransactionRef
 
     Workspace ws(ptx);
     const std::vector<Wtxid> single_wtxid{ws.m_ptx->GetWitnessHash()};
-
-    for (const CTxOut& txout : ws.m_ptx->vout) {
-        TxoutType whichType;
-        std::vector<std::vector<unsigned char>> vSolutions;
-
-        whichType = Solver(txout.scriptPubKey, vSolutions);
-
-        if (whichType == TxoutType::PUBKEY || 
-            whichType == TxoutType::PUBKEYHASH || 
-            whichType == TxoutType::SCRIPTHASH) {
-            ws.m_state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-nonstandard-script");
-            return MempoolAcceptResult::Failure(ws.m_state);
+    // Block Legacy/P2SH only before activation height
+    const int next_block_height = m_active_chainstate.m_chain.Height() + 1;
+    if (next_block_height < m_active_chainstate.m_chainman.GetConsensus().nLegacyP2SHActivationHeight) {
+        for (const CTxOut& txout : ws.m_ptx->vout) {
+            TxoutType whichType;
+            std::vector<std::vector<unsigned char>> vSolutions;
+            whichType = Solver(txout.scriptPubKey, vSolutions);
+            if (whichType == TxoutType::PUBKEY ||
+                whichType == TxoutType::PUBKEYHASH ||
+                whichType == TxoutType::SCRIPTHASH) {
+                ws.m_state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-nonstandard-script");
+                return MempoolAcceptResult::Failure(ws.m_state);
+            }
         }
     }
 

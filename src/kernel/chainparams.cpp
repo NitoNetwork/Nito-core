@@ -77,6 +77,7 @@ public:
         consensus.BIP66Height = 1; 
         consensus.CSVHeight = 1; 
         consensus.SegwitHeight = 1; 
+        consensus.nLegacyP2SHActivationHeight = 750000;
         consensus.MinBIP9WarningHeight = 1; 
         consensus.powLimit = uint256S("0x00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
@@ -96,8 +97,8 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0;
 
-        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000000000002e29bd3c4afb3");
-        consensus.defaultAssumeValid = uint256S("0x000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b");
+        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000003d239a4eda8868df16e");
+        consensus.defaultAssumeValid = uint256S("0x00000000000000eaf5b6aeb50fe0598914b62ddf38e649e7442171648569afd4");
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
@@ -165,6 +166,10 @@ public:
                 {400000, uint256S("0x000000000000080c140a6a4b74828d3756c98b8c7da48cf0437f597bdbc80801")},
                 {450000, uint256S("0x00000000000011c41dde862d73ca2b010dd0b4920f964cc4e57429a5169fe0d4")},
                 {515000, uint256S("0x000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b")},
+                {550000, uint256S("0x00000000000009baf1c76687ae038fcfff7b5def1bdc6d80cd2a098687b883cb")},
+                {600000, uint256S("0x000000000000013bba11e67273bda2c6d760d2dcde4e8f7f4cee037ecad7782d")},
+                {650000, uint256S("0x00000000000001cf7ef17b3d99ce4c94880d132a2a122a1f1cbdeca08105e5e0")},
+                {687000, uint256S("0x00000000000000eaf5b6aeb50fe0598914b62ddf38e649e7442171648569afd4")},
             }
         };
 
@@ -175,9 +180,9 @@ public:
 
         chainTxData = ChainTxData{
             // Data from RPC: getchaintxstats 515000 000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b
-            .nTime    = 1756678308,
-            .nTxCount = 601032,
-            .dTxRate  = 0.0185212417162687,
+            .nTime    = 1767442449,
+            .nTxCount = 828957,
+            .dTxRate  = 0.019172077807125,
         };
     }
 };
@@ -199,6 +204,7 @@ public:
         consensus.BIP66Height = 1; 
         consensus.CSVHeight = 1; 
         consensus.SegwitHeight = 1; 
+        consensus.nLegacyP2SHActivationHeight = 0;
         consensus.MinBIP9WarningHeight = 1; // segwit activation height + miner confirmation window
         consensus.powLimit = uint256S("00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
@@ -325,6 +331,7 @@ public:
         consensus.BIP66Height = 1;
         consensus.CSVHeight = 1;
         consensus.SegwitHeight = 1;
+        consensus.nLegacyP2SHActivationHeight = 0;
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
@@ -400,6 +407,7 @@ public:
         consensus.BIP66Height = 1;  // Always active unless overridden
         consensus.CSVHeight = 1;    // Always active unless overridden
         consensus.SegwitHeight = 1;
+        consensus.nLegacyP2SHActivationHeight = 0;
         consensus.MinBIP9WarningHeight = 1;
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
