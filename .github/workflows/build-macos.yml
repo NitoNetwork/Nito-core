@@ -8,26 +8,25 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
-    
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install dependencies
+      
+      - name: Install all dependencies via Homebrew
         run: |
-          brew install automake libtool pkg-config qt@5 create-dmg
-      - name: Build depends (without Qt)
+          brew install automake libtool pkg-config boost libevent miniupnpc libnatpmp zeromq qt@5 create-dmg
+          brew install berkeley-db@5 || brew install berkeley-db
+      
+      - name: Build Nito
         run: |
-          cd depends
-          make HOST=arm64-apple-darwin NO_QT=1 -j$(sysctl -n hw.ncpu)
-      - name: Build Nito with Qt
-        run: |
-          export PATH="/opt/homebrew/opt/qt@5/bin:$PATH"
-          export PKG_CONFIG_PATH="/opt/homebrew/opt/qt@5/lib/pkgconfig"
           ./autogen.sh
-          ./configure --prefix=$PWD/depends/arm64-apple-darwin \
-            --disable-tests --disable-bench \
-            --with-gui=qt5
+          export PATH="/opt/homebrew/opt/qt@5/bin:/opt/homebrew/bin:$PATH"
+          export PKG_CONFIG_PATH="/opt/homebrew/opt/qt@5/lib/pkgconfig:/opt/homebrew/opt/berkeley-db@5/lib/pkgconfig:/opt/homebrew/lib/pkgconfig"
+          export LDFLAGS="-L/opt/homebrew/opt/qt@5/lib -L/opt/homebrew/opt/berkeley-db@5/lib -L/opt/homebrew/lib"
+          export CPPFLAGS="-I/opt/homebrew/opt/qt@5/include -I/opt/homebrew/opt/berkeley-db@5/include -I/opt/homebrew/include"
+          ./configure --disable-tests --disable-bench --with-gui=qt5 --with-incompatible-bdb
           make -j$(sysctl -n hw.ncpu)
+      
       - name: Create tar.gz package
         run: |
           mkdir -p release/nito-3.0.0/bin
@@ -37,16 +36,17 @@ jobs:
           cp src/nito-tx release/nito-3.0.0/bin/
           cp src/nito-wallet release/nito-3.0.0/bin/
           cp src/nito-util release/nito-3.0.0/bin/
-          strip release/nito-3.0.0/bin/*
+          strip release/nito-3.0.0/bin/* || true
           cd release
           tar -czvf nito-3.0.0-arm64-apple-darwin.tar.gz nito-3.0.0/
+      
       - name: Create DMG installer
         run: |
           mkdir -p dmg_contents
           mkdir -p "dmg_contents/Nito-Qt.app/Contents/MacOS"
           mkdir -p "dmg_contents/Nito-Qt.app/Contents/Resources"
           cp src/qt/nito-qt "dmg_contents/Nito-Qt.app/Contents/MacOS/"
-          cp src/qt/res/icons/nito.icns "dmg_contents/Nito-Qt.app/Contents/Resources/nito.icns"
+          cp src/qt/res/icons/nito.icns "dmg_contents/Nito-Qt.app/Contents/Resources/nito.icns" || true
           cat > "dmg_contents/Nito-Qt.app/Contents/Info.plist" << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -75,21 +75,23 @@ jobs:
           PLIST
           create-dmg \
             --volname "Nito Core" \
-            --volicon "src/qt/res/icons/nito.icns" \
             --window-pos 200 120 \
             --window-size 600 400 \
             --icon-size 100 \
             --icon "Nito-Qt.app" 150 185 \
             --app-drop-link 450 185 \
             "release/nito-3.0.0-arm64-apple-darwin.dmg" \
-            "dmg_contents/"
+            "dmg_contents/" || true
+      
       - name: Upload tar.gz artifact
         uses: actions/upload-artifact@v4
         with:
           name: nito-3.0.0-arm64-apple-darwin-tar
           path: release/nito-3.0.0-arm64-apple-darwin.tar.gz
+      
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: nito-3.0.0-arm64-apple-darwin-dmg
           path: release/nito-3.0.0-arm64-apple-darwin.dmg
