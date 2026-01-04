@@ -97,8 +97,8 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0;
 
-        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000003d239a4eda8868df16e");
-        consensus.defaultAssumeValid = uint256S("0x00000000000000eaf5b6aeb50fe0598914b62ddf38e649e7442171648569afd4");
+        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000000000002e29bd3c4afb3");
+        consensus.defaultAssumeValid = uint256S("0x000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b");
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
@@ -169,7 +169,7 @@ public:
                 {550000, uint256S("0x00000000000009baf1c76687ae038fcfff7b5def1bdc6d80cd2a098687b883cb")},
                 {600000, uint256S("0x000000000000013bba11e67273bda2c6d760d2dcde4e8f7f4cee037ecad7782d")},
                 {650000, uint256S("0x00000000000001cf7ef17b3d99ce4c94880d132a2a122a1f1cbdeca08105e5e0")},
-                {687000, uint256S("0x00000000000000eaf5b6aeb50fe0598914b62ddf38e649e7442171648569afd4")},
+                {687000, uint256S("0x000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b")},
             }
         };
 
