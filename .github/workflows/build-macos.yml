@@ -12,9 +12,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       
-      - name: Install all dependencies via Homebrew
+      - name: Install dependencies via Homebrew
         run: |
-          brew install automake libtool pkg-config boost libevent miniupnpc libnatpmp zeromq qt@5 create-dmg
+          brew install automake libtool pkg-config boost libevent zeromq qt@5 create-dmg
           brew install berkeley-db@5 || brew install berkeley-db
       
       - name: Build Nito
@@ -24,7 +24,11 @@ jobs:
           export PKG_CONFIG_PATH="/opt/homebrew/opt/qt@5/lib/pkgconfig:/opt/homebrew/opt/berkeley-db@5/lib/pkgconfig:/opt/homebrew/lib/pkgconfig"
           export LDFLAGS="-L/opt/homebrew/opt/qt@5/lib -L/opt/homebrew/opt/berkeley-db@5/lib -L/opt/homebrew/lib"
           export CPPFLAGS="-I/opt/homebrew/opt/qt@5/include -I/opt/homebrew/opt/berkeley-db@5/include -I/opt/homebrew/include"
-          ./configure --disable-tests --disable-bench --with-gui=qt5 --with-incompatible-bdb
+          ./configure --disable-tests --disable-bench \
+            --with-gui=qt5 \
+            --with-incompatible-bdb \
+            --without-miniupnpc \
+            --without-natpmp
           make -j$(sysctl -n hw.ncpu)
       
       - name: Create tar.gz package
