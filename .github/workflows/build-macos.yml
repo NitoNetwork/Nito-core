@@ -17,18 +17,36 @@ jobs:
           brew install automake libtool pkg-config boost libevent zeromq qt@5 create-dmg
           brew install berkeley-db@5 || brew install berkeley-db
       
+      - name: Build compatible miniupnpc
+        run: |
+          cd /tmp
+          curl -L -o miniupnpc-2.2.3.tar.gz https://github.com/miniupnp/miniupnp/archive/refs/tags/miniupnpc_2_2_3.tar.gz
+          tar -xzf miniupnpc-2.2.3.tar.gz
+          cd miniupnp-miniupnpc_2_2_3/miniupnpc
+          make -j$(sysctl -n hw.ncpu)
+          sudo make INSTALLPREFIX=/usr/local install
+      
+      - name: Build compatible libnatpmp
+        run: |
+          cd /tmp
+          curl -L -o libnatpmp-20230423.tar.gz https://github.com/miniupnp/libnatpmp/archive/refs/tags/20230423.tar.gz
+          tar -xzf libnatpmp-20230423.tar.gz
+          cd libnatpmp-20230423
+          make -j$(sysctl -n hw.ncpu)
+          sudo make INSTALLPREFIX=/usr/local install
+      
       - name: Build Nito
         run: |
           ./autogen.sh
           export PATH="/opt/homebrew/opt/qt@5/bin:/opt/homebrew/bin:$PATH"
-          export PKG_CONFIG_PATH="/opt/homebrew/opt/qt@5/lib/pkgconfig:/opt/homebrew/opt/berkeley-db@5/lib/pkgconfig:/opt/homebrew/lib/pkgconfig"
-          export LDFLAGS="-L/opt/homebrew/opt/qt@5/lib -L/opt/homebrew/opt/berkeley-db@5/lib -L/opt/homebrew/lib"
-          export CPPFLAGS="-I/opt/homebrew/opt/qt@5/include -I/opt/homebrew/opt/berkeley-db@5/include -I/opt/homebrew/include"
+          export PKG_CONFIG_PATH="/opt/homebrew/opt/qt@5/lib/pkgconfig:/opt/homebrew/opt/berkeley-db@5/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig"
+          export LDFLAGS="-L/opt/homebrew/opt/qt@5/lib -L/opt/homebrew/opt/berkeley-db@5/lib -L/opt/homebrew/lib -L/usr/local/lib"
+          export CPPFLAGS="-I/opt/homebrew/opt/qt@5/include -I/opt/homebrew/opt/berkeley-db@5/include -I/opt/homebrew/include -I/usr/local/include"
           ./configure --disable-tests --disable-bench \
             --with-gui=qt5 \
             --with-incompatible-bdb \
-            --without-miniupnpc \
-            --without-natpmp
+            --with-miniupnpc \
+            --with-natpmp
           make -j$(sysctl -n hw.ncpu)
       
       - name: Create tar.gz package
