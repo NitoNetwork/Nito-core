@@ -24,7 +24,11 @@ jobs:
           tar -xzf miniupnpc-2.2.3.tar.gz
           cd miniupnp-miniupnpc_2_2_3/miniupnpc
           make -j$(sysctl -n hw.ncpu)
-          sudo make INSTALLPREFIX=/usr/local install
+          # Manual install
+          sudo mkdir -p /usr/local/lib /usr/local/include/miniupnpc
+          sudo cp build/libminiupnpc.a /usr/local/lib/
+          sudo cp build/libminiupnpc.dylib /usr/local/lib/
+          sudo cp include/*.h /usr/local/include/miniupnpc/
       
       - name: Build compatible libnatpmp
         run: |
@@ -33,7 +37,10 @@ jobs:
           tar -xzf libnatpmp-20230423.tar.gz
           cd libnatpmp-20230423
           make -j$(sysctl -n hw.ncpu)
-          sudo make INSTALLPREFIX=/usr/local install
+          # Manual install
+          sudo cp libnatpmp.a /usr/local/lib/
+          sudo cp libnatpmp.dylib /usr/local/lib/ || true
+          sudo cp natpmp.h natpmp_declspec.h /usr/local/include/
       
       - name: Build Nito
         run: |
