@@ -17,27 +17,27 @@ jobs:
           brew install automake libtool pkg-config boost libevent zeromq qt@5 create-dmg
           brew install berkeley-db@5 || brew install berkeley-db
       
-      - name: Build compatible miniupnpc
+      - name: Build miniupnpc 2.2.2
         run: |
           cd /tmp
-          git clone --depth 1 --branch miniupnpc_2_2_3 https://github.com/miniupnp/miniupnp.git miniupnp-2.2.3
-          cd miniupnp-2.2.3/miniupnpc
-          make -j$(sysctl -n hw.ncpu)
+          curl -L -o miniupnpc-2.2.2.tar.gz https://miniupnp.tuxfamily.org/files/miniupnpc-2.2.2.tar.gz
+          tar -xzf miniupnpc-2.2.2.tar.gz
+          cd miniupnpc-2.2.2
+          make -j$(sysctl -n hw.ncpu) libminiupnpc.a
           sudo mkdir -p /usr/local/lib /usr/local/include/miniupnpc
-          sudo cp build/libminiupnpc.a /usr/local/lib/
-          sudo cp build/libminiupnpc.dylib /usr/local/lib/
-          sudo cp include/*.h /usr/local/include/miniupnpc/
+          sudo install *.h /usr/local/include/miniupnpc/
+          sudo install libminiupnpc.a /usr/local/lib/
       
-      - name: Build compatible libnatpmp
+      - name: Build libnatpmp
         run: |
           cd /tmp
-          git clone --depth 1 --branch 20230423 https://github.com/miniupnp/libnatpmp.git libnatpmp-20230423
-          cd libnatpmp-20230423
-          make -j$(sysctl -n hw.ncpu)
+          curl -L -o libnatpmp.tar.gz https://github.com/miniupnp/libnatpmp/archive/07004b97cf691774efebe70404cf22201e4d330d.tar.gz
+          tar -xzf libnatpmp.tar.gz
+          cd libnatpmp-07004b97cf691774efebe70404cf22201e4d330d
+          make -j$(sysctl -n hw.ncpu) libnatpmp.a
           sudo mkdir -p /usr/local/lib /usr/local/include
-          sudo cp libnatpmp.a /usr/local/lib/
-          sudo cp libnatpmp.dylib /usr/local/lib/ || true
-          sudo cp natpmp.h natpmp_declspec.h /usr/local/include/
+          sudo install *.h /usr/local/include/
+          sudo install libnatpmp.a /usr/local/lib/
       
       - name: Build Nito
         run: |
