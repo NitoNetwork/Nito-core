@@ -20,11 +20,9 @@ jobs:
       - name: Build compatible miniupnpc
         run: |
           cd /tmp
-          curl -L -o miniupnpc-2.2.3.tar.gz https://github.com/miniupnp/miniupnp/archive/refs/tags/miniupnpc_2_2_3.tar.gz
-          tar -xzf miniupnpc-2.2.3.tar.gz
-          cd miniupnp-miniupnpc_2_2_3/miniupnpc
+          git clone --depth 1 --branch miniupnpc_2_2_3 https://github.com/miniupnp/miniupnp.git miniupnp-2.2.3
+          cd miniupnp-2.2.3/miniupnpc
           make -j$(sysctl -n hw.ncpu)
-          # Manual install
           sudo mkdir -p /usr/local/lib /usr/local/include/miniupnpc
           sudo cp build/libminiupnpc.a /usr/local/lib/
           sudo cp build/libminiupnpc.dylib /usr/local/lib/
@@ -33,11 +31,10 @@ jobs:
       - name: Build compatible libnatpmp
         run: |
           cd /tmp
-          curl -L -o libnatpmp-20230423.tar.gz https://github.com/miniupnp/libnatpmp/archive/refs/tags/20230423.tar.gz
-          tar -xzf libnatpmp-20230423.tar.gz
+          git clone --depth 1 --branch 20230423 https://github.com/miniupnp/libnatpmp.git libnatpmp-20230423
           cd libnatpmp-20230423
           make -j$(sysctl -n hw.ncpu)
-          # Manual install
+          sudo mkdir -p /usr/local/lib /usr/local/include
           sudo cp libnatpmp.a /usr/local/lib/
           sudo cp libnatpmp.dylib /usr/local/lib/ || true
           sudo cp natpmp.h natpmp_declspec.h /usr/local/include/
