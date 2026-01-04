@@ -15,18 +15,19 @@ jobs:
       - name: Install dependencies
         run: |
           brew install automake libtool pkg-config qt@5 create-dmg
-          echo "$(brew --prefix qt@5)/bin" >> $GITHUB_PATH
       - name: Build depends (without Qt)
         run: |
           cd depends
           make HOST=arm64-apple-darwin NO_QT=1 -j$(sysctl -n hw.ncpu)
       - name: Build Nito with Qt
+        env:
+          PKG_CONFIG_PATH: /opt/homebrew/opt/qt@5/lib/pkgconfig
+          PATH: /opt/homebrew/opt/qt@5/bin:$PATH
         run: |
           ./autogen.sh
           ./configure --prefix=$PWD/depends/arm64-apple-darwin \
             --disable-tests --disable-bench \
-            --with-gui=qt5 \
-            PKG_CONFIG_PATH="$(brew --prefix qt@5)/lib/pkgconfig"
+            --with-gui=qt5
           make -j$(sysctl -n hw.ncpu)
       - name: Create tar.gz package
         run: |
