@@ -396,6 +396,7 @@ void Chainstate::MaybeUpdateMempoolForReorg(
 * transaction again during block validation.
 * */
 static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationState& state,
+                int current_height, int legacy_activation_height,
                 const CCoinsViewCache& view, const CTxMemPool& pool,
                 unsigned int flags, PrecomputedTransactionData& txdata, CCoinsViewCache& coins_tip)
                 EXCLUSIVE_LOCKS_REQUIRED(cs_main, pool.cs)
@@ -428,6 +429,20 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationS
         }
     }
     
+
+    // Block Legacy/P2SH transactions before activation height
+    if (current_height + 1 < legacy_activation_height) {
+        for (const CTxOut& txout : tx.vout) {
+            TxoutType whichType;
+            std::vector<std::vector<unsigned char>> vSolutions;
+            whichType = Solver(txout.scriptPubKey, vSolutions);
+            if (whichType == TxoutType::PUBKEY ||
+                whichType == TxoutType::PUBKEYHASH ||
+                whichType == TxoutType::SCRIPTHASH) {
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-nonstandard-script");
+            }
+        }
+    }
 
     // Call CheckInputScripts() to cache signature and script validity against current tip consensus rules.
     return CheckInputScripts(tx, state, view, flags, /* cacheSigStore= */ true, /* cacheFullScriptStore= */ true, txdata);
@@ -1101,7 +1116,10 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
     // invalid blocks (using TestBlockValidity), however allowing such
     // transactions into the mempool can be exploited as a DoS attack.
     unsigned int currentBlockScriptVerifyFlags{GetBlockScriptFlags(*m_active_chainstate.m_chain.Tip(), m_active_chainstate.m_chainman)};
-    if (!CheckInputsFromMempoolAndCache(tx, state, m_view, m_pool, currentBlockScriptVerifyFlags,
+    if (!CheckInputsFromMempoolAndCache(tx, state,
+                                        m_active_chainstate.m_chain.Height(),
+                                        m_active_chainstate.m_chainman.GetConsensus().nLegacyP2SHActivationHeight,
+                                        m_view, m_pool, currentBlockScriptVerifyFlags,
                                         ws.m_precomputed_txdata, m_active_chainstate.CoinsTip())) {
         LogPrintf("BUG! PLEASE REPORT THIS! CheckInputScripts failed against latest-block but not STANDARD flags %s, %s\n", hash.ToString(), state.ToString());
         return Assume(false);
@@ -1248,21 +1266,6 @@ MempoolAcceptResult MemPoolAccept::AcceptSingleTransaction(const CTransactionRef
 
     Workspace ws(ptx);
     const std::vector<Wtxid> single_wtxid{ws.m_ptx->GetWitnessHash()};
-    // Block Legacy/P2SH only before activation height
-    const int next_block_height = m_active_chainstate.m_chain.Height() + 1;
-    if (next_block_height < m_active_chainstate.m_chainman.GetConsensus().nLegacyP2SHActivationHeight) {
-        for (const CTxOut& txout : ws.m_ptx->vout) {
-            TxoutType whichType;
-            std::vector<std::vector<unsigned char>> vSolutions;
-            whichType = Solver(txout.scriptPubKey, vSolutions);
-            if (whichType == TxoutType::PUBKEY ||
-                whichType == TxoutType::PUBKEYHASH ||
-                whichType == TxoutType::SCRIPTHASH) {
-                ws.m_state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-nonstandard-script");
-                return MempoolAcceptResult::Failure(ws.m_state);
-            }
-        }
-    }
 
     if (!PreChecks(args, ws)) {
         if (ws.m_state.GetResult() == TxValidationResult::TX_RECONSIDERABLE) {
