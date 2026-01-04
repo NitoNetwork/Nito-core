@@ -20,10 +20,9 @@ jobs:
           cd depends
           make HOST=arm64-apple-darwin NO_QT=1 -j$(sysctl -n hw.ncpu)
       - name: Build Nito with Qt
-        env:
-          PKG_CONFIG_PATH: /opt/homebrew/opt/qt@5/lib/pkgconfig
-          PATH: /opt/homebrew/opt/qt@5/bin:$PATH
         run: |
+          export PATH="/opt/homebrew/opt/qt@5/bin:$PATH"
+          export PKG_CONFIG_PATH="/opt/homebrew/opt/qt@5/lib/pkgconfig"
           ./autogen.sh
           ./configure --prefix=$PWD/depends/arm64-apple-darwin \
             --disable-tests --disable-bench \
