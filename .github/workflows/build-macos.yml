@@ -7,36 +7,89 @@ on:
       - 'V*'
 jobs:
   build-macos:
-    runs-on: macos-15-large
+    runs-on: macos-latest
     
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Install dependencies
         run: |
-          brew install automake libtool pkg-config create-dmg
+          brew install automake libtool pkg-config qt@5 create-dmg
+          echo "$(brew --prefix qt@5)/bin" >> $GITHUB_PATH
       - name: Build depends (without Qt)
         run: |
           cd depends
-          make HOST=x86_64-apple-darwin NO_QT=1 -j$(sysctl -n hw.ncpu)
-      - name: Build Nito
+          make HOST=arm64-apple-darwin NO_QT=1 -j$(sysctl -n hw.ncpu)
+      - name: Build Nito with Qt
         run: |
           ./autogen.sh
-          ./configure --prefix=$PWD/depends/x86_64-apple-darwin --disable-tests --disable-bench --without-gui
+          ./configure --prefix=$PWD/depends/arm64-apple-darwin \
+            --disable-tests --disable-bench \
+            --with-gui=qt5 \
+            PKG_CONFIG_PATH="$(brew --prefix qt@5)/lib/pkgconfig"
           make -j$(sysctl -n hw.ncpu)
       - name: Create tar.gz package
         run: |
           mkdir -p release/nito-3.0.0/bin
           cp src/nitod release/nito-3.0.0/bin/
           cp src/nito-cli release/nito-3.0.0/bin/
+          cp src/qt/nito-qt release/nito-3.0.0/bin/
           cp src/nito-tx release/nito-3.0.0/bin/
           cp src/nito-wallet release/nito-3.0.0/bin/
           cp src/nito-util release/nito-3.0.0/bin/
           strip release/nito-3.0.0/bin/*
           cd release
-          tar -czvf nito-3.0.0-x86_64-apple-darwin.tar.gz nito-3.0.0/
+          tar -czvf nito-3.0.0-arm64-apple-darwin.tar.gz nito-3.0.0/
+      - name: Create DMG installer
+        run: |
+          mkdir -p dmg_contents
+          mkdir -p "dmg_contents/Nito-Qt.app/Contents/MacOS"
+          mkdir -p "dmg_contents/Nito-Qt.app/Contents/Resources"
+          cp src/qt/nito-qt "dmg_contents/Nito-Qt.app/Contents/MacOS/"
+          cp src/qt/res/icons/nito.icns "dmg_contents/Nito-Qt.app/Contents/Resources/nito.icns"
+          cat > "dmg_contents/Nito-Qt.app/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>nito-qt</string>
+              <key>CFBundleIconFile</key>
+              <string>nito.icns</string>
+              <key>CFBundleIdentifier</key>
+              <string>org.nito.Nito-Qt</string>
+              <key>CFBundleName</key>
+              <string>Nito-Qt</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>3.0.0</string>
+              <key>CFBundleVersion</key>
+              <string>3.0.0</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+          create-dmg \
+            --volname "Nito Core" \
+            --volicon "src/qt/res/icons/nito.icns" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "Nito-Qt.app" 150 185 \
+            --app-drop-link 450 185 \
+            "release/nito-3.0.0-arm64-apple-darwin.dmg" \
+            "dmg_contents/"
       - name: Upload tar.gz artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nito-3.0.0-x86_64-apple-darwin-tar
-          path: release/nito-3.0.0-x86_64-apple-darwin.tar.gz
+          name: nito-3.0.0-arm64-apple-darwin-tar
+          path: release/nito-3.0.0-arm64-apple-darwin.tar.gz
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nito-3.0.0-arm64-apple-darwin-dmg
+          path: release/nito-3.0.0-arm64-apple-darwin.dmg
