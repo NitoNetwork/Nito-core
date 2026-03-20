@@ -6,6 +6,8 @@ Nito Core connects to the Nito peer-to-peer network to download and fully valida
 
 - **Releases:** [https://github.com/NitoNetwork/Nito-core/releases](https://github.com/NitoNetwork/Nito-core/releases)
 
+Contact: help@nito.network
+
 ---
 
 ## Installation from Binaries
