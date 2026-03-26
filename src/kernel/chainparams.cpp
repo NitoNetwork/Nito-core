@@ -98,7 +98,7 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0;
 
         consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000000000002e29bd3c4afb3");
-        consensus.defaultAssumeValid = uint256S("0x000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b");
+        consensus.defaultAssumeValid = uint256S("0x000000000000003313c51ea30df5cce1be4095e6303ddf865516d72a63f9f8fd"); // 790000
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
@@ -169,7 +169,12 @@ public:
                 {550000, uint256S("0x00000000000009baf1c76687ae038fcfff7b5def1bdc6d80cd2a098687b883cb")},
                 {600000, uint256S("0x000000000000013bba11e67273bda2c6d760d2dcde4e8f7f4cee037ecad7782d")},
                 {650000, uint256S("0x00000000000001cf7ef17b3d99ce4c94880d132a2a122a1f1cbdeca08105e5e0")},
-                {687000, uint256S("0x000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b")},
+                {687000, uint256S("0x00000000000000eaf5b6aeb50fe0598914b62ddf38e649e7442171648569afd4")},
+                {700000, uint256S("0x00000000000005ab347f9640198cf10187ac2272494d74ed4b175d18e7f2fd0e")},
+                {725000, uint256S("0x00000000000002bf93a86a54506d86ea321f660ecfc978b2154d52b8f84451b0")},
+                {750000, uint256S("0x000000000000023e00ae472f9a814c00a3140e9a52ad99829de889ad0d208ced")},
+                {775000, uint256S("0x0000000000000092a300e12483d0d465f74931fc2d6b69bbf6be8ba185ad57e0")},
+                {790000, uint256S("0x000000000000003313c51ea30df5cce1be4095e6303ddf865516d72a63f9f8fd")},
             }
         };
 
@@ -179,10 +184,10 @@ public:
         };
 
         chainTxData = ChainTxData{
-            // Data from RPC: getchaintxstats 515000 000000000000008f2da138da7854116fdea4ad719ec7393a37e52eb5e9e7f58b
-            .nTime    = 1767442449,
-            .nTxCount = 828957,
-            .dTxRate  = 0.019172077807125,
+            // Data from RPC: getchaintxstats @ block 794468
+            .nTime    = 1774532485,
+            .nTxCount = 952418,
+            .dTxRate  = 0.01760130352926609,
         };
     }
 };
