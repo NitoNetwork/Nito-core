@@ -4,7 +4,8 @@
 
 Nito Core connects to the Nito peer-to-peer network to download and fully validate blocks and transactions. It also includes a wallet and graphical user interface, which can be optionally built.
 
-- **Releases:** [https://github.com/NitoNetwork/Nito-core/releases](https://github.com/NitoNetwork/Nito-core/releases)
+- **Latest Release:** [Download](https://github.com/NitoNetwork/Nito-core/releases/latest)
+- **Whitepaper:** [Nito Whitepaper v3.0](https://nitonetwork.github.io/Nito-Whitepaper/)
 
 Contact: help@nito.network
 
@@ -12,16 +13,18 @@ Contact: help@nito.network
 
 ## Installation from Binaries
 
-### Linux
+Download the latest release for your platform from the [Releases](https://github.com/NitoNetwork/Nito-core/releases) page.
+
+### Linux (x86_64 or ARM64)
 
 ```bash
-# Download and extract
-tar -xzf nito-*-x86_64-linux-gnu.tar.gz
+# Download and extract (replace with correct filename)
+tar -xzf nito-3.0.1-x86_64-linux-gnu.tar.gz
 
-# Install
-sudo cp nito-*/bin/* /usr/local/bin/
+# Install binaries
+sudo cp nito-3.0.1-x86_64-linux-gnu/bin/* /usr/local/bin/
 
-# Create config
+# Create data directory and config
 mkdir -p ~/.nito
 cat > ~/.nito/nito.conf << EOF
 server=1
@@ -31,115 +34,157 @@ rpcpassword=$(openssl rand -hex 32)
 rpcallowip=127.0.0.1
 EOF
 
-# Start
+# Start the daemon
 nitod
+
+# Or start the GUI wallet
+nito-qt
 ```
 
 ### Windows
 
-1. Download `nito-*-win64-setup.exe`
+**Option A — Installer:**
+1. Download `nito-3.0.1-win64-setup.exe`
 2. Run the installer
-3. Launch Nito-Qt from Start Menu
+3. Launch **Nito Core** from the Start Menu or Desktop shortcut
+
+**Option B — Portable ZIP:**
+1. Download `nito-3.0.1-win64.zip`
+2. Extract to a folder of your choice
+3. Run `nito-qt.exe` for the GUI wallet
 
 ### macOS
 
 ```bash
-unzip nito-*-arm64-apple-darwin-tar.zip
-tar -xzf nito-*-arm64-apple-darwin.tar.gz
-sudo cp nito-*/bin/* /usr/local/bin/
+tar -xzf nito-3.0.1-x86_64-apple-darwin.tar.gz
+sudo cp nito-3.0.1/bin/* /usr/local/bin/
+nito-qt
 ```
+
+---
+
+## Verify Downloads (SHA256)
+
+```
+sha256sum nito-3.0.1-*.tar.gz nito-3.0.1-*.zip nito-3.0.1-*-setup.exe
+```
+
+Compare the output with the checksums listed on the [release page](https://github.com/NitoNetwork/Nito-core/releases/latest).
 
 ---
 
 ## Building from Source
 
-### Dependencies
+### Prerequisites
 
 **Ubuntu/Debian:**
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential libtool autotools-dev automake pkg-config \
-    bsdmainutils python3 libssl-dev libevent-dev libboost-all-dev \
-    libsqlite3-dev libminiupnpc-dev libnatpmp-dev libzmq3-dev \
-    libqt5gui5 libqt5core5a libqt5dbus5 qttools5-dev qttools5-dev-tools \
-    libqrencode-dev libdb-dev libdb++-dev
+    bsdmainutils python3 curl git bison
+```
+
+For cross-compilation (optional):
+```bash
+# Windows cross-compile
+sudo apt-get install -y g++-mingw-w64-x86-64 nsis zip
+
+# ARM64 cross-compile
+sudo apt-get install -y g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
 ```
 
 **macOS:**
 ```bash
-brew install automake libtool pkg-config boost libevent zeromq qt@5 miniupnpc libnatpmp qrencode berkeley-db@5
+brew install automake libtool pkg-config
 ```
 
-### Build
+### Build with depends (recommended)
+
+The `depends` system downloads and builds all dependencies locally, ensuring reproducible builds.
 
 ```bash
 git clone https://github.com/NitoNetwork/Nito-core.git
 cd Nito-core
+
+# Download Qt sources (required for GUI)
+mkdir -p depends/sources && cd depends/sources
+curl -L -O https://download.qt.io/archive/qt/5.15/5.15.11/submodules/qtbase-everywhere-opensource-src-5.15.11.tar.xz
+curl -L -O https://download.qt.io/archive/qt/5.15/5.15.11/submodules/qttranslations-everywhere-opensource-src-5.15.11.tar.xz
+curl -L -O https://download.qt.io/archive/qt/5.15/5.15.11/submodules/qttools-everywhere-opensource-src-5.15.11.tar.xz
+cd ../..
+
+# Build dependencies
+cd depends && make HOST=x86_64-pc-linux-gnu -j$(nproc) && cd ..
+
+# Build Nito
 ./autogen.sh
-./configure --with-gui=qt5 --with-incompatible-bdb
+CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site \
+    ./configure --prefix=/ --disable-tests --disable-bench
 make -j$(nproc)
-sudo make install
 ```
+
+Binaries will be in `src/` (`nitod`, `nito-cli`, `nito-qt`, etc.)
 
 ### Build without GUI
 
 ```bash
-./configure --without-gui --with-incompatible-bdb
+cd depends && make HOST=x86_64-pc-linux-gnu NO_QT=1 -j$(nproc) && cd ..
+./autogen.sh
+CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site \
+    ./configure --prefix=/ --disable-tests --disable-bench
 make -j$(nproc)
 ```
 
 ### Cross-Compile for Windows
 
 ```bash
-sudo apt-get install -y g++-mingw-w64-x86-64
 cd depends && make HOST=x86_64-w64-mingw32 -j$(nproc) && cd ..
 ./autogen.sh
-./configure --prefix=$PWD/depends/x86_64-w64-mingw32 --host=x86_64-w64-mingw32
+CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site \
+    ./configure --prefix=/ --disable-tests --disable-bench
 make -j$(nproc)
 ```
 
-### Cross-Compile for ARM64
+### Cross-Compile for ARM64 (Raspberry Pi, ARM servers)
 
 ```bash
-sudo apt-get install -y g++-aarch64-linux-gnu
 cd depends && make HOST=aarch64-linux-gnu -j$(nproc) && cd ..
 ./autogen.sh
-./configure --prefix=$PWD/depends/aarch64-linux-gnu --host=aarch64-linux-gnu
+CONFIG_SITE=$PWD/depends/aarch64-linux-gnu/share/config.site \
+    ./configure --prefix=/ --disable-tests --disable-bench --enable-reduce-exports
 make -j$(nproc)
 ```
 
 ---
 
-## Nito FAQ
+## Nito Specifications
 
 | Parameter | Value |
 |-----------|-------|
 | **Launch Date** | Wednesday, August 21, 2024 |
 | **Genesis Block** | "Nito/Core Genesis 8-4" |
-| **Algorithm** | SHA256 |
-| **Block Interval** | 60 Seconds |
-| **Difficulty Adjustment** | Each new block |
+| **Algorithm** | SHA-256 (Proof-of-Work) |
+| **Block Time** | 60 seconds |
+| **Difficulty Adjustment** | Every block (damped retarget) |
+| **Max Supply** | 1,284,565,890 NITO (~200 years) |
+| **Smallest Unit** | 1 Nitoshi = 0.00000001 NITO |
 | **P2P Port** | 8820 |
 | **RPC Port** | 8821 |
+| **Address Formats** | Bech32 (nito1...), Legacy, P2SH, Taproot (nito1p...) |
 
 ---
 
 ## Supply Schedule
 
-**Max Total Supply:** 1,284,565,890 NITO in ±200 Years
-
-| Period | Block Reward | Block Range | Emitted | Total |
-|--------|--------------|-------------|---------|-------|
-| Year 1 | 512 → 256 | 0 - 530,000 | 271,359,488 | 271,359,488 |
-| Year 2 | 256 → 128 | 530,001 - 1,042,400 | 131,174,400 | 402,533,888 |
-| Year 3 | 128 → 64 | 1,042,401 - 1,576,800 | 68,403,200 | 470,937,088 |
-| Years 4-10 | 64 → 32 | 1,576,801 - 5,256,000 | 235,468,800 | 706,405,888 |
-| Years 11-20 | 32 → 16 | 5,256,001 - 10,512,000 | 168,192,000 | 874,597,888 |
-| Years 21-50 | 16 → 2 | 10,512,001 - 26,280,000 | 252,288,000 | 1,126,885,888 |
-| Years 51-200 | 2 → 0 | 26,280,001 - 105,120,001 | 157,680,002 | 1,284,565,890 |
-| Years 201+ | 0 | 105,120,001+ | 0 | 1,284,565,890 |
-
-*Or soft fork to maintain 1 NITO per block from year 201*
+| Period | Reward/Block | Block Range | Period Total | Cumulative |
+|--------|-------------|-------------|-------------|------------|
+| Year 1 | 512 | 0 - 529,999 | 271,359,488 | 271,359,488 |
+| Year 2 | 256 | 530,000 - 1,042,399 | 131,174,400 | 402,533,888 |
+| Year 3 | 128 | 1,042,400 - 1,576,799 | 68,403,200 | 470,937,088 |
+| Years 4-10 | 64 | 1,576,800 - 5,255,999 | 235,468,800 | 706,405,888 |
+| Years 11-20 | 32 | 5,256,000 - 10,511,999 | 168,192,000 | 874,597,888 |
+| Years 21-50 | 16 → 2 | 10,512,000 - 26,279,999 | 252,288,000 | 1,126,885,888 |
+| Years 51-200 | 2 → 0 | 26,280,000 - 105,120,000 | 157,680,002 | 1,284,565,890 |
 
 ---
 
@@ -147,7 +192,9 @@ make -j$(nproc)
 
 - **Website:** [https://nito.network](https://nito.network)
 - **Explorer:** [https://explorer.nito.network](https://explorer.nito.network)
+- **Whitepaper:** [https://nitonetwork.github.io/Nito-Whitepaper/](https://nitonetwork.github.io/Nito-Whitepaper/)
 - **Easy Node:** [https://nito.network/tools/easynode/](https://nito.network/tools/easynode/)
+- **Komodo Wallet (DEX):** [https://komodoplatform.com/](https://komodoplatform.com/)
 
 ---
 
