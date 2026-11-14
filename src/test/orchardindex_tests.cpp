@@ -16,6 +16,7 @@
 #include <test/util/logging.h>
 #include <uint256.h>
 #include <validation.h>
+#include <validationinterface.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -173,6 +174,8 @@ struct PreActivationIndexTestingSetup : public TestChain100Setup
     PreActivationIndexTestingSetup()
         : TestChain100Setup{ChainType::REGTEST, {"-privateactivationheight=1000"}}
     {
+        // Finish fixture block notifications before simulating incompatible index data.
+        SyncWithValidationInterfaceQueue();
     }
 };
 
@@ -187,9 +190,9 @@ BOOST_FIXTURE_TEST_CASE(activation_change_reinitializes_empty_checkpoint_durably
         OrchardIndex index{interfaces::MakeChain(m_node), 1 << 20, false, true};
         BOOST_REQUIRE(index.Init());
         BOOST_REQUIRE(OrchardIndexTestAccess::Commit(index, ::GetLocator(tip)));
+        index.Stop();
         // Simulate an older, still pre-activation build using this same database.
         BOOST_REQUIRE(OrchardIndexTestAccess::Storage(index).Write(uint8_t{'A'}, 500));
-        index.Stop();
     }
     {
         ASSERT_DEBUG_LOG("Reinitialized empty Orchard index for activation height change (500 -> 1000)");
@@ -226,6 +229,7 @@ BOOST_FIXTURE_TEST_CASE(activation_change_preserves_unsafe_or_inconsistent_index
             OrchardIndex index{interfaces::MakeChain(m_node), 1 << 20, true, true};
             BOOST_REQUIRE(index.Init());
             BOOST_REQUIRE(OrchardIndexTestAccess::Commit(index, ::GetLocator(tip)));
+            index.Stop();
             CDBWrapper& db{OrchardIndexTestAccess::Storage(index)};
             const int old_height{prefix == 'A' ? tip->nHeight : 500};
             BOOST_REQUIRE(db.Write(uint8_t{'A'}, old_height));
@@ -240,7 +244,12 @@ BOOST_FIXTURE_TEST_CASE(activation_change_preserves_unsafe_or_inconsistent_index
             } else if (prefix != 'A') {
                 BOOST_REQUIRE(db.Write(std::make_pair(prefix, uint32_t{1}), uint32_t{123}));
             }
-            index.Stop();
+            int prepared_height{0};
+            BOOST_REQUIRE(db.Read(uint8_t{'A'}, prepared_height));
+            BOOST_REQUIRE_EQUAL(prepared_height, old_height);
+            if (prefix == 'L') {
+                BOOST_REQUIRE(m_node.chainman->m_blockman.NitoPrivateActivationObserved());
+            }
             BOOST_CHECK(!index.Init());
             int stored_height{0};
             BOOST_REQUIRE(db.Read(uint8_t{'A'}, stored_height));
