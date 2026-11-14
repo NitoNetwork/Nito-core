@@ -1,0 +1,2346 @@
+name: Nito.network release build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version used in artifact names"
+        required: true
+        default: "4.0.0"
+      targets:
+        description: "Targets value: all, windows, macos, linux-x86_64,linux-aarch64. targets=windows also works."
+        required: true
+        default: "all"
+      stages:
+        description: "Stages value: all or list: depends,configure,build,verify,package,upload,index. stages=all works."
+        required: true
+        default: "all"
+      build_scope:
+        description: "Build scope: all for release artifacts, qt-link for targeted Qt link checks."
+        required: true
+        default: "all"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nito-core-exclusive-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ github.event.inputs.version || '4.0.0' }}
+  MAKEJOBS: "4"
+  RUST_TOOLCHAIN: "1.97.0"
+  TARGETS: ${{ github.event.inputs.targets || 'all' }}
+  STAGES: ${{ github.event.inputs.stages || 'all' }}
+  BUILD_SCOPE: ${{ github.event.inputs.build_scope || 'all' }}
+  CARGO_TERM_COLOR: always
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
+jobs:
+  preflight:
+    name: Release preflight
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      target_linux: ${{ steps.plan.outputs.target_linux }}
+      target_linux_x86_64: ${{ steps.plan.outputs.target_linux_x86_64 }}
+      target_linux_aarch64: ${{ steps.plan.outputs.target_linux_aarch64 }}
+      target_windows: ${{ steps.plan.outputs.target_windows }}
+      target_macos: ${{ steps.plan.outputs.target_macos }}
+      run_index: ${{ steps.plan.outputs.run_index }}
+      run_package: ${{ steps.plan.outputs.run_package }}
+      build_scope: ${{ steps.plan.outputs.build_scope }}
+
+    steps:
+      - name: Describe release plan
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          normalize_list() {
+            printf '%s' "$1" \
+              | tr '[:upper:]' '[:lower:]' \
+              | tr '; ' ',,' \
+              | tr -s ',' \
+              | sed 's/^,//; s/,$//'
+          }
+          list_has() {
+            case ",$1," in
+              *,all,*|*,$2,*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          validate_targets() {
+            local token
+            for token in ${1//,/ }; do
+              case "$token" in
+                all|linux-x86_64|linux-aarch64|windows|macos) ;;
+                *)
+                  echo "::error title=Unknown release target::${token}"
+                  exit 1
+                  ;;
+              esac
+            done
+          }
+          validate_stages() {
+            local token
+            for token in ${1//,/ }; do
+              case "$token" in
+                all|depends|configure|build|verify|package|upload|index) ;;
+                *)
+                  echo "::error title=Unknown release stage::${token}"
+                  exit 1
+                ;;
+              esac
+            done
+          }
+          validate_build_scope() {
+            case "$1" in
+              all|qt-link) ;;
+              *)
+                echo "::error title=Unknown build scope::$1"
+                exit 1
+                ;;
+            esac
+          }
+
+          targets="$(normalize_list "${TARGETS}")"
+          stages="$(normalize_list "${STAGES}")"
+          build_scope="$(normalize_list "${BUILD_SCOPE}")"
+          targets="${targets#targets=}"
+          stages="${stages#stages=}"
+          build_scope="${build_scope#build_scope=}"
+          build_scope="${build_scope#scope=}"
+          if [ -z "$targets" ]; then
+            echo "::error title=No release target selected::Set targets to all or at least one target."
+            exit 1
+          fi
+          if [ -z "$stages" ]; then
+            echo "::error title=No release stage selected::Set stages to all or at least one stage."
+            exit 1
+          fi
+          if [ -z "$build_scope" ]; then
+            build_scope=all
+          fi
+          validate_targets "$targets"
+          validate_stages "$stages"
+          validate_build_scope "$build_scope"
+
+          if [ "$build_scope" != "all" ]; then
+            if list_has "$stages" verify || list_has "$stages" package || list_has "$stages" upload || list_has "$stages" index; then
+              echo "::error title=Invalid release probe selection::build_scope=${build_scope} is only valid with depends/configure/build stages. Use build_scope=all for verify/package/upload/index."
+              exit 1
+            fi
+          fi
+
+          if list_has "$targets" linux-x86_64; then target_linux_x86_64=true; else target_linux_x86_64=false; fi
+          if list_has "$targets" linux-aarch64; then target_linux_aarch64=true; else target_linux_aarch64=false; fi
+          if [ "$target_linux_x86_64" = "true" ] || [ "$target_linux_aarch64" = "true" ]; then target_linux=true; else target_linux=false; fi
+          if list_has "$targets" windows; then target_windows=true; else target_windows=false; fi
+          if list_has "$targets" macos; then target_macos=true; else target_macos=false; fi
+          if list_has "$stages" index; then run_index=true; else run_index=false; fi
+
+          if list_has "$stages" package || list_has "$stages" upload || list_has "$stages" index; then run_package=true; else run_package=false; fi
+
+          {
+            echo "run_package=${run_package}"
+            echo "target_linux=${target_linux}"
+            echo "target_linux_x86_64=${target_linux_x86_64}"
+            echo "target_linux_aarch64=${target_linux_aarch64}"
+            echo "target_windows=${target_windows}"
+            echo "target_macos=${target_macos}"
+            echo "run_index=${run_index}"
+            echo "build_scope=${build_scope}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "::notice title=Nito.network release::Starting release workflow for version ${VERSION}"
+          {
+            echo "## Nito.network release workflow"
+            echo
+            echo "- Version: \`${VERSION}\`"
+            echo "- Ref: \`${GITHUB_REF}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Trigger: \`${GITHUB_EVENT_NAME}\`"
+            echo "- Build parallelism: \`make -j${MAKEJOBS}\`"
+            echo "- Build scope: \`${build_scope}\`"
+            echo
+            echo "### Selected targets"
+            echo "- Raw input: \`${targets}\`"
+            echo "- Linux x86_64 Qt: \`${target_linux_x86_64}\`"
+            echo "- Linux aarch64 Qt: \`${target_linux_aarch64}\`"
+            echo "- Windows win64 Qt + NSIS: \`${target_windows}\`"
+            echo "- macOS arm64 Qt + DMG: \`${target_macos}\`"
+            echo
+            echo "### Selected stages"
+            echo "- Raw input: \`${stages}\`"
+            echo "- depends/toolchain: \`$(if list_has "$stages" depends; then echo true; else echo false; fi)\`"
+            echo "- configure: \`$(if list_has "$stages" configure; then echo true; else echo false; fi)\`"
+            echo "- build: \`$(if list_has "$stages" build; then echo true; else echo false; fi)\`"
+            echo "- verify binaries: \`$(if list_has "$stages" verify; then echo true; else echo false; fi)\`"
+            echo "- package artifacts: \`$(if list_has "$stages" package; then echo true; else echo false; fi)\`"
+            echo "- upload artifacts: \`$(if list_has "$stages" upload; then echo true; else echo false; fi)\`"
+            echo "- checksum/index verification: \`$(if list_has "$stages" index; then echo true; else echo false; fi)\`"
+            echo
+            echo "Use \`build_scope=qt-link\` with \`stages=build\` for a fast Qt link probe before launching a full release build."
+            echo "Later stages automatically run their prerequisites. For example, selecting package also runs depends, configure, build and binary verification for the selected targets."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release-sources:
+    name: Source archive and license notices
+    needs: preflight
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - name: Select source packaging
+        run: echo "Package sources = ${{ needs.preflight.outputs.run_package }}"
+      - name: Checkout
+        if: needs.preflight.outputs.run_package == 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Verify binary notice consolidation
+        if: needs.preflight.outputs.run_package == 'true'
+        run: python3 test/lint/lint-release-bundle.py
+      - name: Cache pinned source archives
+        if: needs.preflight.outputs.run_package == 'true'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            depends/sources
+            ~/.cargo/registry
+          key: release-sources-${{ hashFiles('depends/packages/*.mk', 'src/private/orchard_ffi/Cargo.lock') }}
+      - name: Prepare corresponding sources
+        if: needs.preflight.outputs.run_package == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN"
+          make -C depends HOST=x86_64-pc-linux-gnu download-one
+          cargo fetch --locked --manifest-path src/private/orchard_ffi/Cargo.toml
+          python3 contrib/release/source-bundle.py --version "$VERSION" --output source-release
+      - name: Upload matching source archive
+        if: needs.preflight.outputs.run_package == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-sources
+          path: |
+            source-release/nito-*-sources.tar.gz
+            source-release/nito-*-sources.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - name: Share notices with binary packagers
+        if: needs.preflight.outputs.run_package == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-notices-${{ github.sha }}
+          path: source-release/release-notices.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  linux:
+    name: Linux ${{ matrix.artifact }} Qt
+    needs: [preflight, release-sources]
+    if: needs.preflight.outputs.target_linux == 'true'
+    runs-on: ubuntu-22.04
+    container:
+      image: ubuntu:22.04
+    timeout-minutes: 360
+    env:
+      HOME: /root
+      CARGO_HOME: /root/.cargo
+      DOCKER_CONFIG: /tmp/.docker
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      RUSTUP_HOME: /root/.rustup
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: x86_64-pc-linux-gnu
+            target: linux-x86_64
+            artifact: x86_64-linux-gnu
+            packages: g++
+            strip: strip
+            configure_opts: "--disable-shared --with-gui=qt6 --with-qrencode --with-sqlite=yes --enable-reduce-exports --enable-werror"
+            test_opts: "--enable-tests --enable-bench"
+            qt_bindir: "libexec"
+            rust_target: ""
+            rust_linker_env: ""
+          - host: aarch64-linux-gnu
+            target: linux-aarch64
+            artifact: aarch64-linux-gnu
+            packages: g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+            strip: aarch64-linux-gnu-strip
+            configure_opts: "--disable-shared --with-gui=qt6 --with-qrencode --with-sqlite=yes --enable-reduce-exports --enable-werror"
+            test_opts: "--disable-tests --disable-bench"
+            qt_bindir: "native/bin"
+            rust_target: "aarch64-unknown-linux-gnu"
+            rust_linker_env: "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
+
+    steps:
+      - name: Prepare Ubuntu 22.04 container
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalize_list() {
+            printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '; ' ',,' | tr -s ',' | sed 's/^,//; s/,$//'
+          }
+          list_has() {
+            case ",$1," in
+              *,all,*|*,$2,*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          has_any_stage() {
+            local stage
+            for stage in "$@"; do
+              if list_has "$stages" "$stage"; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          targets="$(normalize_list "${TARGETS}")"
+          stages="$(normalize_list "${STAGES}")"
+          targets="${targets#targets=}"
+          stages="${stages#stages=}"
+          if list_has "$targets" "${{ matrix.target }}"; then run_target=true; else run_target=false; fi
+          if has_any_stage depends configure build verify package upload index; then run_depends=true; else run_depends=false; fi
+          if has_any_stage configure build verify package upload index; then run_configure=true; else run_configure=false; fi
+          if has_any_stage build verify package upload index; then run_build=true; else run_build=false; fi
+          if has_any_stage verify package upload index; then run_verify=true; else run_verify=false; fi
+          if has_any_stage package upload index; then run_package=true; else run_package=false; fi
+          if has_any_stage upload index; then run_upload=true; else run_upload=false; fi
+          {
+            echo "RUN_TARGET=${run_target}"
+            echo "RUN_DEPENDS=${run_depends}"
+            echo "RUN_CONFIGURE=${run_configure}"
+            echo "RUN_BUILD=${run_build}"
+            echo "RUN_VERIFY=${run_verify}"
+            echo "RUN_PACKAGE=${run_package}"
+            echo "RUN_UPLOAD=${run_upload}"
+          } >> "$GITHUB_ENV"
+          if [ "$run_target" != "true" ]; then
+            echo "Skipping unselected Linux target ${{ matrix.target }}."
+            exit 0
+          fi
+          if [ "$run_depends" != "true" ]; then
+            echo "No executable stage selected for Linux ${{ matrix.target }}."
+            exit 0
+          fi
+          echo "::group::[NITO.NETWORK] Prepare container"
+          if [ -f /etc/dpkg/dpkg.cfg.d/excludes ]; then
+            tmp_cfg="$(mktemp)"
+            grep -vE 'path-(exclude|include)=/usr/share/man' /etc/dpkg/dpkg.cfg.d/excludes > "$tmp_cfg"
+            cat "$tmp_cfg" > /etc/dpkg/dpkg.cfg.d/excludes
+            rm "$tmp_cfg"
+          fi
+          apt_retry() {
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              sleep "$((attempt * 10))"
+            done
+            "$@"
+          }
+          apt_install() {
+            apt_retry env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+          }
+          apt_update() {
+            apt_retry apt-get -o APT::Update::Error-Mode=any update && return 0
+            printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf || true
+            apt_retry apt-get -o APT::Update::Error-Mode=any update
+          }
+          apt_update
+          apt_install ca-certificates curl git
+          echo "::endgroup::"
+
+      - name: Checkout
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          token: ${{ github.token }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install build dependencies
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Install Linux build dependencies"
+          apt_retry() {
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              sleep "$((attempt * 10))"
+            done
+            "$@"
+          }
+          apt_install() {
+            apt_retry env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+          }
+          apt_update() {
+            apt_retry apt-get -o APT::Update::Error-Mode=any update && return 0
+            printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf || true
+            apt_retry apt-get -o APT::Update::Error-Mode=any update
+          }
+          apt_update
+          apt_install \
+            automake bison bsdmainutils build-essential cmake cpio curl file git libtool \
+            doxygen gettext graphviz libxml2-utils patch pkg-config python3 python3-tomli qt6-base-dev-tools \
+            qt6-l10n-tools unzip x11-xkb-utils xutils-dev xvfb zip ${{ matrix.packages }}
+          apt_install gperf ninja-build perl
+          if [ "${{ matrix.host }}" != "x86_64-pc-linux-gnu" ]; then
+            ln -sf /usr/bin/file "/usr/local/bin/${{ matrix.host }}-file"
+            ln -sf /usr/bin/mt "/usr/local/bin/${{ matrix.host }}-mt"
+          fi
+          for dir in /usr/lib/qt6/bin /usr/lib/qt6/libexec /usr/lib/x86_64-linux-gnu/qt6/bin; do
+            if [ -d "$dir" ]; then
+              echo "$dir" >> "$GITHUB_PATH"
+            fi
+          done
+          echo "::endgroup::"
+
+      - name: Test build diagnostic gate
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        shell: bash
+        run: python3 .github/tests/test_warning_clean_run.py
+
+      - name: Install Rust
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Install Rust toolchain"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rm -f "${RUSTUP_HOME}/settings.toml"
+          if command -v rustup >/dev/null 2>&1; then
+            rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          else
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --no-modify-path \
+                  --default-toolchain "$RUST_TOOLCHAIN"
+          fi
+          rustup default "$RUST_TOOLCHAIN"
+          if [ "${{ matrix.target }}" = "linux-x86_64" ]; then
+            rustup component add rustfmt
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          rustc --version
+          cargo --version
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            rustup target add "${{ matrix.rust_target }}"
+          fi
+          if [ -n "${{ matrix.rust_linker_env }}" ]; then
+            echo "${{ matrix.rust_linker_env }}" >> "$GITHUB_ENV"
+          fi
+          echo "::endgroup::"
+
+      - name: Cache depends
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            depends/built
+            depends/sources
+            depends/${{ matrix.host }}
+          key: nito.network-depends-linux-bdb-${{ matrix.host }}-${{ hashFiles('depends/packages/*', 'depends/patches/**') }}
+          restore-keys: |
+            nito.network-depends-linux-bdb-${{ matrix.host }}-
+
+      - name: Cache cargo
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/private/orchard_ffi/target
+          key: nito.network-cargo-linux-${{ matrix.host }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/private/orchard_ffi/Cargo.lock') }}
+          restore-keys: |
+            nito.network-cargo-linux-${{ matrix.host }}-
+
+      - name: Build depends
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Build depends for ${{ matrix.host }} with Qt"
+          WARNING_CLEAN_LOG=depends-build.log bash .github/scripts/warning-clean-run.sh \
+            make -C depends HOST=${{ matrix.host }} JOBS=${MAKEJOBS} -j${MAKEJOBS}
+          echo "::endgroup::"
+
+      - name: Configure Nito
+        if: env.RUN_TARGET == 'true' && env.RUN_CONFIGURE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Configure Linux ${{ matrix.artifact }}"
+          chmod +x autogen.sh
+          WARNING_CLEAN_LOG=autogen.log bash .github/scripts/warning-clean-run.sh ./autogen.sh
+          QT_BINDIR="$PWD/depends/${{ matrix.host }}/${{ matrix.qt_bindir }}"
+          echo "Using depends Qt tools from ${QT_BINDIR}"
+          for tool in moc uic rcc; do
+            test -x "${QT_BINDIR}/${tool}"
+            "${QT_BINDIR}/${tool}" --version || "${QT_BINDIR}/${tool}" -v || true
+          done
+          CONFIG_SITE="$PWD/depends/${{ matrix.host }}/share/config.site" \
+            WARNING_CLEAN_LOG=configure-step.log bash .github/scripts/warning-clean-run.sh \
+            ./configure --prefix=/ ${{ matrix.test_opts }} \
+              --with-qt-bindir="$QT_BINDIR" \
+              ${{ matrix.configure_opts }}
+          echo "::endgroup::"
+
+      - name: Fetch locked Orchard dependencies
+        if: env.RUN_TARGET == 'true' && env.RUN_BUILD == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fetch --locked --manifest-path src/private/orchard_ffi/Cargo.toml
+
+      - name: Build Nito
+        if: env.RUN_TARGET == 'true' && env.RUN_BUILD == 'true'
+        env:
+          CARGO_NET_OFFLINE: "true"
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Compile Linux ${{ matrix.artifact }}"
+          build_scope="$(printf '%s' "${BUILD_SCOPE}" | tr '[:upper:]' '[:lower:]' | tr '; ' ',,' | tr -s ',' | sed 's/^,//; s/,$//')"
+          build_scope="${build_scope#build_scope=}"
+          build_scope="${build_scope#scope=}"
+          if [ "$build_scope" = "qt-link" ]; then
+            echo "Running targeted Qt link probe for ${{ matrix.artifact }}."
+            WARNING_CLEAN_LOG=build.log bash .github/scripts/warning-clean-run.sh \
+              make -C src -j${MAKEJOBS} qt/nito-qt
+          else
+            WARNING_CLEAN_LOG=build.log bash .github/scripts/warning-clean-run.sh \
+              make -j${MAKEJOBS}
+          fi
+          echo "::endgroup::"
+
+      - name: Run native Linux release tests
+        if: env.RUN_TARGET == 'true' && env.RUN_BUILD == 'true' && matrix.target == 'linux-x86_64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_scope="$(printf '%s' "${BUILD_SCOPE}" | tr '[:upper:]' '[:lower:]')"
+          if [ "$build_scope" = "all" ]; then
+            echo "::group::[NITO.NETWORK] Unit, Orchard and legacy-wallet release gates"
+            QT_QPA_PLATFORM=minimal WARNING_CLEAN_LOG=native-tests.log \
+              bash .github/scripts/warning-clean-run.sh make check -j${MAKEJOBS}
+            WARNING_CLEAN_LOG=orchard-format.log \
+              bash .github/scripts/warning-clean-run.sh \
+                cargo fmt --manifest-path src/private/orchard_ffi/Cargo.toml --check
+            WARNING_CLEAN_LOG=orchard-tests.log \
+              bash .github/scripts/warning-clean-run.sh \
+                cargo test --manifest-path src/private/orchard_ffi/Cargo.toml --locked --release
+            WARNING_CLEAN_LOG=legacy-wallet-test.log \
+              bash .github/scripts/warning-clean-run.sh \
+                python3 test/functional/wallet_backup.py --legacy-wallet --configfile="$PWD/test/config.ini"
+            echo "::endgroup::"
+          fi
+
+      - name: Verify Linux binaries
+        if: env.RUN_TARGET == 'true' && env.RUN_VERIFY == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Verify Linux binaries"
+          required=(
+            src/nitod
+            src/nito-cli
+            src/nito-tx
+            src/nito-wallet
+            src/nito-util
+            src/qt/nito-qt
+          )
+          for bin in "${required[@]}"; do
+            test -x "$bin"
+            file "$bin"
+          done
+          if [ "${{ matrix.artifact }}" = "x86_64-linux-gnu" ]; then
+            echo "::group::[NITO.NETWORK] Smoke-test native Linux command binaries"
+            src/nitod -version
+            src/nito-cli -version
+            src/nito-tx -version
+            src/nito-wallet -version
+            src/nito-util -version
+            echo "::endgroup::"
+          else
+            echo "Skipping runtime smoke tests for cross-built ${{ matrix.artifact }} binaries."
+          fi
+          echo "::endgroup::"
+
+      - name: Download license notices
+        if: env.RUN_TARGET == 'true' && env.RUN_PACKAGE == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notices-${{ github.sha }}
+          path: .release-notices
+
+      - name: Package Linux tar.gz
+        if: env.RUN_TARGET == 'true' && env.RUN_PACKAGE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Package Linux ${{ matrix.artifact }}"
+          rm -rf release
+          mkdir -p "release/bin"
+
+          copy_required() {
+            test -f "$1"
+            cp "$1" "release/bin/$2"
+          }
+
+          copy_optional() {
+            if [ -f "$1" ]; then
+              cp "$1" "release/bin/$2"
+            fi
+          }
+
+          copy_required src/nitod nitod
+          copy_required src/nito-cli nito-cli
+          copy_required src/nito-tx nito-tx
+          copy_required src/nito-wallet nito-wallet
+          copy_required src/nito-util nito-util
+          copy_required src/qt/nito-qt nito-qt
+          copy_optional src/nito-node nito-node
+          ${{ matrix.strip }} release/bin/*
+          tar -xOf .release-notices/release-notices.tar.gz COPYING > release/bin/LICENSE.txt
+          tar -xOf .release-notices/release-notices.tar.gz \
+            binary/linux/THIRD_PARTY_LICENSES.txt > release/bin/THIRD_PARTY_LICENSES.txt
+          test -s release/bin/LICENSE.txt
+          test -s release/bin/THIRD_PARTY_LICENSES.txt
+          tar -C release -czf "release/nito-${VERSION}-${{ matrix.artifact }}.tar.gz" bin
+          tar -tzf "release/nito-${VERSION}-${{ matrix.artifact }}.tar.gz" > "release/nito-${VERSION}-${{ matrix.artifact }}.contents.txt"
+          grep -Fxq 'bin/nitod' "release/nito-${VERSION}-${{ matrix.artifact }}.contents.txt"
+          grep -Fxq 'bin/nito-qt' "release/nito-${VERSION}-${{ matrix.artifact }}.contents.txt"
+          grep -Fxq 'bin/LICENSE.txt' "release/nito-${VERSION}-${{ matrix.artifact }}.contents.txt"
+          grep -Fxq 'bin/THIRD_PARTY_LICENSES.txt' "release/nito-${VERSION}-${{ matrix.artifact }}.contents.txt"
+          if grep -Ev '^bin/$|^bin/(nitod|nito-cli|nito-tx|nito-wallet|nito-util|nito-qt|nito-node|LICENSE\.txt|THIRD_PARTY_LICENSES\.txt)$' \
+              "release/nito-${VERSION}-${{ matrix.artifact }}.contents.txt"; then
+            echo "::error title=Unexpected archive entry::Only release binaries and the two license files may be directly inside bin."
+            exit 1
+          fi
+          (
+            cd release
+            sha256sum "nito-${VERSION}-${{ matrix.artifact }}.tar.gz" \
+              | tee "nito-${VERSION}-${{ matrix.artifact }}.sha256"
+          )
+          echo "::endgroup::"
+
+      - name: Upload Linux artifact
+        if: env.RUN_TARGET == 'true' && env.RUN_UPLOAD == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-${{ matrix.artifact }}.tar.gz
+          path: release/nito-${{ env.VERSION }}-${{ matrix.artifact }}.tar.gz
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Linux checksums
+        if: env.RUN_TARGET == 'true' && env.RUN_UPLOAD == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-${{ matrix.artifact }}.sha256
+          path: release/nito-${{ env.VERSION }}-${{ matrix.artifact }}.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Linux build summary
+        if: env.RUN_TARGET == 'true'
+        shell: bash
+        run: |
+          {
+            echo "### Linux ${{ matrix.artifact }}"
+            echo "- Host: \`${{ matrix.host }}\`"
+            echo "- Qt: required and verified"
+            echo "- Build scope: \`${BUILD_SCOPE}\`"
+            echo "- Artifact: \`nito-${VERSION}-${{ matrix.artifact }}.tar.gz\`"
+            echo "- Checksum: \`nito-${VERSION}-${{ matrix.artifact }}.sha256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Linux failure diagnostics
+        if: failure() && env.RUN_TARGET == 'true'
+        shell: bash
+        run: |
+          set +e
+          echo "::group::[NITO.NETWORK] Linux failure diagnostics"
+          uname -a
+          df -h
+          free -h
+          gcc --version | head -n 2
+          g++ --version | head -n 2
+          if command -v ${{ matrix.host }}-g++ >/dev/null 2>&1; then
+            ${{ matrix.host }}-g++ --version | head -n 2
+          fi
+          if command -v rustc >/dev/null 2>&1; then rustc --version; fi
+          if command -v cargo >/dev/null 2>&1; then cargo --version; fi
+          if [ -f build.log ]; then
+            echo "----- build.log"
+            tail -n 200 build.log
+          fi
+          if [ -f depends-build.log ]; then
+            echo "----- depends-build.log"
+            tail -n 200 depends-build.log
+          fi
+          if [ -f configure-step.log ]; then
+            echo "----- configure-step.log"
+            tail -n 200 configure-step.log
+          fi
+          if [ -f autogen.log ]; then
+            echo "----- autogen.log"
+            tail -n 200 autogen.log
+          fi
+          for log in native-tests.log orchard-format.log orchard-tests.log legacy-wallet-test.log src/test-suite.log src/qt/test/test_nito-qt.log; do
+            if [ -f "$log" ]; then
+              echo "----- $log"
+              tail -n 300 "$log"
+            fi
+          done
+          find . -name config.log -print -exec sh -c 'echo "----- $1"; tail -n 200 "$1"' sh {} \;
+          find src/private/orchard_ffi -maxdepth 5 -type f -name "*.log" -print -exec sh -c 'echo "----- $1"; tail -n 120 "$1"' sh {} \;
+          echo "::endgroup::"
+
+      - name: Upload Linux diagnostic logs
+        if: failure() && env.RUN_TARGET == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-${{ matrix.artifact }}-diagnostics
+          path: |
+            build.log
+            depends-build.log
+            configure-step.log
+            autogen.log
+            native-tests.log
+            orchard-format.log
+            orchard-tests.log
+            legacy-wallet-test.log
+            src/test-suite.log
+            src/qt/test/test_nito-qt.log
+            **/config.log
+            src/private/orchard_ffi/target/**/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  windows:
+    name: Windows win64 Qt + NSIS
+    needs: [preflight, release-sources]
+    if: needs.preflight.outputs.target_windows == 'true'
+    runs-on: ubuntu-22.04
+    container:
+      image: ubuntu:24.04
+    timeout-minutes: 360
+    env:
+      HOME: /root
+      CARGO_HOME: /root/.cargo
+      DOCKER_CONFIG: /tmp/.docker
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      RUSTUP_HOME: /root/.rustup
+
+    steps:
+      - name: Select Windows target and stages
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalize_list() {
+            printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '; ' ',,' | tr -s ',' | sed 's/^,//; s/,$//'
+          }
+          list_has() {
+            case ",$1," in
+              *,all,*|*,$2,*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          has_any_stage() {
+            local stage
+            for stage in "$@"; do
+              if list_has "$stages" "$stage"; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          targets="$(normalize_list "${TARGETS}")"
+          stages="$(normalize_list "${STAGES}")"
+          targets="${targets#targets=}"
+          stages="${stages#stages=}"
+          if list_has "$targets" windows; then run_target=true; else run_target=false; fi
+          if has_any_stage depends configure build verify package upload index; then run_depends=true; else run_depends=false; fi
+          if has_any_stage configure build verify package upload index; then run_configure=true; else run_configure=false; fi
+          if has_any_stage build verify package upload index; then run_build=true; else run_build=false; fi
+          if has_any_stage verify package upload index; then run_verify=true; else run_verify=false; fi
+          if has_any_stage package upload index; then run_package=true; else run_package=false; fi
+          if has_any_stage upload index; then run_upload=true; else run_upload=false; fi
+          {
+            echo "RUN_TARGET=${run_target}"
+            echo "RUN_DEPENDS=${run_depends}"
+            echo "RUN_CONFIGURE=${run_configure}"
+            echo "RUN_BUILD=${run_build}"
+            echo "RUN_VERIFY=${run_verify}"
+            echo "RUN_PACKAGE=${run_package}"
+            echo "RUN_UPLOAD=${run_upload}"
+          } >> "$GITHUB_ENV"
+          if [ "$run_target" != "true" ]; then
+            echo "Skipping unselected Windows target."
+          fi
+
+      - name: Prepare Ubuntu 24.04 container
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Prepare Windows build container"
+          if [ -f /etc/dpkg/dpkg.cfg.d/excludes ]; then
+            tmp_cfg="$(mktemp)"
+            grep -vE 'path-(exclude|include)=/usr/share/man' /etc/dpkg/dpkg.cfg.d/excludes > "$tmp_cfg"
+            cat "$tmp_cfg" > /etc/dpkg/dpkg.cfg.d/excludes
+            rm "$tmp_cfg"
+          fi
+          apt_retry() {
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              sleep "$((attempt * 10))"
+            done
+            "$@"
+          }
+          apt_install() {
+            apt_retry env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+          }
+          apt_update() {
+            apt_retry apt-get -o APT::Update::Error-Mode=any update && return 0
+            printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf || true
+            apt_retry apt-get -o APT::Update::Error-Mode=any update
+          }
+          apt_update
+          apt_install ca-certificates curl git
+          echo "::endgroup::"
+
+      - name: Checkout
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          token: ${{ github.token }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install build dependencies
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Install Windows cross build dependencies"
+          apt_retry() {
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              sleep "$((attempt * 10))"
+            done
+            "$@"
+          }
+          apt_install() {
+            apt_retry env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+          }
+          apt_update() {
+            apt_retry apt-get -o APT::Update::Error-Mode=any update && return 0
+            printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf || true
+            apt_retry apt-get -o APT::Update::Error-Mode=any update
+          }
+          apt_update
+          apt_install \
+            automake bison bsdmainutils build-essential cmake cpio curl file git libtool \
+            gettext g++-mingw-w64-x86-64-posix nsis patch pkg-config python3 \
+            qt6-base-dev-tools qt6-l10n-tools unzip zip
+          apt_install gperf ninja-build perl
+          for dir in /usr/lib/qt6/bin /usr/lib/qt6/libexec /usr/lib/x86_64-linux-gnu/qt6/bin; do
+            if [ -d "$dir" ]; then
+              echo "$dir" >> "$GITHUB_PATH"
+            fi
+          done
+          update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+          ln -sf /usr/bin/file /usr/local/bin/x86_64-w64-mingw32-file
+          echo "::endgroup::"
+
+      - name: Install Rust
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Install Rust Windows target"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rm -f "${RUSTUP_HOME}/settings.toml"
+          if command -v rustup >/dev/null 2>&1; then
+            rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          else
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --no-modify-path \
+                  --default-toolchain "$RUST_TOOLCHAIN"
+          fi
+          rustup default "$RUST_TOOLCHAIN"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          rustup target add x86_64-pc-windows-gnu
+          echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc" >> "$GITHUB_ENV"
+          rustc --version
+          cargo --version
+          echo "::endgroup::"
+
+      - name: Cache depends
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            depends/built
+            depends/sources
+            depends/x86_64-w64-mingw32
+          key: nito.network-depends-windows-bdb-x86_64-w64-mingw32-${{ hashFiles('depends/packages/*', 'depends/patches/**') }}
+          restore-keys: |
+            nito.network-depends-windows-bdb-x86_64-w64-mingw32-
+
+      - name: Cache cargo
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/private/orchard_ffi/target
+          key: nito.network-cargo-windows-x86_64-w64-mingw32-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/private/orchard_ffi/Cargo.lock') }}
+          restore-keys: |
+            nito.network-cargo-windows-x86_64-w64-mingw32-
+
+      - name: Build depends
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Build Windows depends with Qt"
+          WARNING_CLEAN_LOG=depends-build.log bash .github/scripts/warning-clean-run.sh \
+            make -C depends HOST=x86_64-w64-mingw32 JOBS=${MAKEJOBS} -j${MAKEJOBS}
+          echo "::endgroup::"
+
+      - name: Configure Nito
+        if: env.RUN_TARGET == 'true' && env.RUN_CONFIGURE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Configure Windows win64"
+          chmod +x autogen.sh
+          WARNING_CLEAN_LOG=autogen.log bash .github/scripts/warning-clean-run.sh ./autogen.sh
+          QT_BINDIR="$PWD/depends/x86_64-w64-mingw32/native/bin"
+          echo "Using depends Qt tools from ${QT_BINDIR}"
+          for tool in moc uic rcc; do
+            test -x "${QT_BINDIR}/${tool}"
+            "${QT_BINDIR}/${tool}" --version || "${QT_BINDIR}/${tool}" -v || true
+          done
+          CONFIG_SITE="$PWD/depends/x86_64-w64-mingw32/share/config.site" \
+            WARNING_CLEAN_LOG=configure-step.log bash .github/scripts/warning-clean-run.sh \
+            ./configure --prefix=/ --disable-shared --disable-bench \
+              --with-gui=qt6 \
+              --with-qrencode \
+              --with-qt-bindir="$QT_BINDIR" \
+              --with-sqlite=yes \
+              --enable-reduce-exports \
+              --enable-werror
+          echo "::endgroup::"
+
+      - name: Fetch locked Orchard dependencies
+        if: env.RUN_TARGET == 'true' && env.RUN_BUILD == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fetch --locked --manifest-path src/private/orchard_ffi/Cargo.toml
+
+      - name: Build Nito
+        if: env.RUN_TARGET == 'true' && env.RUN_BUILD == 'true'
+        env:
+          CARGO_NET_OFFLINE: "true"
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Compile Windows win64"
+          build_scope="$(printf '%s' "${BUILD_SCOPE}" | tr '[:upper:]' '[:lower:]' | tr '; ' ',,' | tr -s ',' | sed 's/^,//; s/,$//')"
+          build_scope="${build_scope#build_scope=}"
+          build_scope="${build_scope#scope=}"
+          if [ "$build_scope" = "qt-link" ]; then
+            echo "Running targeted Windows Qt link probe."
+            WARNING_CLEAN_LOG=build.log bash .github/scripts/warning-clean-run.sh \
+              make -C src -j${MAKEJOBS} qt/nito-qt.exe qt/test/test_nito-qt.exe
+          else
+            WARNING_CLEAN_LOG=build.log bash .github/scripts/warning-clean-run.sh \
+              make -j${MAKEJOBS}
+          fi
+          echo "::endgroup::"
+
+      - name: Verify Windows binaries
+        if: env.RUN_TARGET == 'true' && env.RUN_VERIFY == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Verify Windows PE binaries"
+          for exe in nitod.exe nito-cli.exe nito-tx.exe nito-wallet.exe nito-util.exe nito-qt.exe; do
+            path="src/${exe}"
+            if [ "$exe" = "nito-qt.exe" ]; then
+              path="src/qt/${exe}"
+            fi
+            test -s "$path"
+            file "$path"
+            x86_64-w64-mingw32-objdump -f "$path" | tee "${path}.objdump.txt"
+            grep -q "file format pei-x86-64" "${path}.objdump.txt"
+          done
+          echo "::endgroup::"
+
+      - name: Download license notices
+        if: env.RUN_TARGET == 'true' && env.RUN_PACKAGE == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notices-${{ github.sha }}
+          path: .release-notices
+
+      - name: Build Windows NSIS installer
+        if: env.RUN_TARGET == 'true' && env.RUN_PACKAGE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Build Windows installer"
+          mkdir -p release
+          tar -xOf .release-notices/release-notices.tar.gz COPYING > release/LICENSE.txt
+          tar -xOf .release-notices/release-notices.tar.gz \
+            binary/windows/THIRD_PARTY_LICENSES.txt > release/THIRD_PARTY_LICENSES.txt
+          test -s release/LICENSE.txt
+          test -s release/THIRD_PARTY_LICENSES.txt
+          make -j${MAKEJOBS} deploy BITCOIN_WIN_INSTALLER="nito-${VERSION}-win64-setup.exe"
+          test -f "nito-${VERSION}-win64-setup.exe"
+          mkdir -p release
+          mv "nito-${VERSION}-win64-setup.exe" "release/nito-${VERSION}-win64-setup.exe"
+          file "release/nito-${VERSION}-win64-setup.exe"
+          echo "::endgroup::"
+
+      - name: Package Windows zip
+        if: env.RUN_TARGET == 'true' && env.RUN_PACKAGE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Package Windows zip"
+          rm -rf "release/bin"
+          mkdir -p "release/bin"
+
+          copy_required() {
+            test -f "$1"
+            cp "$1" "release/bin/$2"
+          }
+
+          copy_optional() {
+            if [ -f "$1" ]; then
+              cp "$1" "release/bin/$2"
+            fi
+          }
+
+          copy_required src/nitod.exe nitod.exe
+          copy_required src/nito-cli.exe nito-cli.exe
+          copy_required src/nito-tx.exe nito-tx.exe
+          copy_required src/nito-wallet.exe nito-wallet.exe
+          copy_required src/nito-util.exe nito-util.exe
+          copy_required src/qt/nito-qt.exe nito-qt.exe
+          copy_optional src/nito-node.exe nito-node.exe
+          x86_64-w64-mingw32-strip release/bin/*.exe
+          test -s release/LICENSE.txt
+          test -s release/THIRD_PARTY_LICENSES.txt
+          cp release/LICENSE.txt release/bin/LICENSE.txt
+          cp release/THIRD_PARTY_LICENSES.txt release/bin/THIRD_PARTY_LICENSES.txt
+          (cd release && zip -r "nito-${VERSION}-win64.zip" bin)
+          sha256sum "release/nito-${VERSION}-win64.zip" "release/nito-${VERSION}-win64-setup.exe"
+          echo "::endgroup::"
+
+      - name: Verify Windows packaged artifacts
+        if: env.RUN_TARGET == 'true' && env.RUN_PACKAGE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Verify Windows artifacts"
+          test -s "release/nito-${VERSION}-win64.zip"
+          test -s "release/nito-${VERSION}-win64-setup.exe"
+          file "release/nito-${VERSION}-win64.zip"
+          file "release/nito-${VERSION}-win64-setup.exe" | tee "release/nito-${VERSION}-win64-setup.file.txt"
+          grep -Eq 'PE32 executable' "release/nito-${VERSION}-win64-setup.file.txt"
+          grep -Eq 'Nullsoft Installer' "release/nito-${VERSION}-win64-setup.file.txt"
+          unzip -t "release/nito-${VERSION}-win64.zip"
+          echo "::group::[NITO.NETWORK] Verify Windows PE binaries"
+          for exe in nitod.exe nito-cli.exe nito-tx.exe nito-wallet.exe nito-util.exe nito-qt.exe; do
+            path="release/bin/${exe}"
+            test -s "$path"
+            file "$path"
+            x86_64-w64-mingw32-objdump -f "$path" | tee "${path}.objdump.txt"
+            grep -q "file format pei-x86-64" "${path}.objdump.txt"
+          done
+          echo "::endgroup::"
+          echo "::group::[NITO.NETWORK] Verify Windows zip contents"
+          unzip -Z1 "release/nito-${VERSION}-win64.zip" > "release/nito-${VERSION}-win64.contents.txt"
+          for item in nitod.exe nito-cli.exe nito-tx.exe nito-wallet.exe nito-util.exe nito-qt.exe; do
+            grep -Fxq "bin/${item}" "release/nito-${VERSION}-win64.contents.txt"
+          done
+          grep -Fxq 'bin/LICENSE.txt' "release/nito-${VERSION}-win64.contents.txt"
+          grep -Fxq 'bin/THIRD_PARTY_LICENSES.txt' "release/nito-${VERSION}-win64.contents.txt"
+          if grep -Ev '^bin/$|^bin/(nitod|nito-cli|nito-tx|nito-wallet|nito-util|nito-qt|nito-node)\.exe$|^bin/(LICENSE|THIRD_PARTY_LICENSES)\.txt$' \
+              "release/nito-${VERSION}-win64.contents.txt"; then
+            echo "::error title=Unexpected archive entry::Only release binaries and the two license files may be directly inside bin."
+            exit 1
+          fi
+          (
+            cd release
+            sha256sum "nito-${VERSION}-win64.zip" "nito-${VERSION}-win64-setup.exe" \
+              | tee "nito-${VERSION}-win64.sha256"
+          )
+          echo "::endgroup::"
+          echo "::endgroup::"
+
+      - name: Upload win64 zip
+        if: env.RUN_TARGET == 'true' && env.RUN_UPLOAD == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-win64.zip
+          path: release/nito-${{ env.VERSION }}-win64.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload win64 installer
+        if: env.RUN_TARGET == 'true' && env.RUN_UPLOAD == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-win64-setup.exe
+          path: release/nito-${{ env.VERSION }}-win64-setup.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload win64 checksums
+        if: env.RUN_TARGET == 'true' && env.RUN_UPLOAD == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-win64.sha256
+          path: release/nito-${{ env.VERSION }}-win64.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Windows build summary
+        if: env.RUN_TARGET == 'true'
+        shell: bash
+        run: |
+          {
+            echo "### Windows win64"
+            echo "- Qt: required and verified as a packaged PE binary"
+            echo "- Build scope: \`${BUILD_SCOPE}\`"
+            echo "- Zip: \`nito-${VERSION}-win64.zip\`"
+            echo "- Installer: \`nito-${VERSION}-win64-setup.exe\`"
+            echo "- Checksum: \`nito-${VERSION}-win64.sha256\`"
+            echo "- Verification: zip integrity, required binaries, PE format and SHA256"
+            echo "- Installer is unsigned; code signing remains a separate release step."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Windows failure diagnostics
+        if: failure() && env.RUN_TARGET == 'true'
+        shell: bash
+        run: |
+          set +e
+          echo "::group::[NITO.NETWORK] Windows cross-build failure diagnostics"
+          uname -a
+          df -h
+          free -h
+          x86_64-w64-mingw32-gcc --version | head -n 2
+          x86_64-w64-mingw32-g++ --version | head -n 2
+          makensis -VERSION
+          if command -v rustc >/dev/null 2>&1; then rustc --version; fi
+          if command -v cargo >/dev/null 2>&1; then cargo --version; fi
+          if [ -f build.log ]; then
+            echo "----- build.log"
+            tail -n 200 build.log
+          fi
+          if [ -f depends-build.log ]; then
+            echo "----- depends-build.log"
+            tail -n 200 depends-build.log
+          fi
+          if [ -f configure-step.log ]; then
+            echo "----- configure-step.log"
+            tail -n 200 configure-step.log
+          fi
+          if [ -f autogen.log ]; then
+            echo "----- autogen.log"
+            tail -n 200 autogen.log
+          fi
+          find . -name config.log -print -exec sh -c 'echo "----- $1"; tail -n 200 "$1"' sh {} \;
+          find src/private/orchard_ffi -maxdepth 5 -type f -name "*.log" -print -exec sh -c 'echo "----- $1"; tail -n 120 "$1"' sh {} \;
+          echo "::endgroup::"
+
+      - name: Upload Windows diagnostic logs
+        if: failure() && env.RUN_TARGET == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-win64-diagnostics
+          path: |
+            build.log
+            depends-build.log
+            configure-step.log
+            autogen.log
+            **/config.log
+            src/private/orchard_ffi/target/**/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  macos-arm64:
+    name: macOS arm64 Qt
+    needs: [preflight, release-sources]
+    if: needs.preflight.outputs.target_macos == 'true'
+    runs-on: macos-15
+    timeout-minutes: 360
+
+    steps:
+      - name: Select macOS target and stages
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalize_list() {
+            printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '; ' ',,' | tr -s ',' | sed 's/^,//; s/,$//'
+          }
+          list_has() {
+            case ",$1," in
+              *,all,*|*,$2,*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          has_any_stage() {
+            local stage
+            for stage in "$@"; do
+              if list_has "$stages" "$stage"; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          targets="$(normalize_list "${TARGETS}")"
+          stages="$(normalize_list "${STAGES}")"
+          targets="${targets#targets=}"
+          stages="${stages#stages=}"
+          if list_has "$targets" macos; then run_target=true; else run_target=false; fi
+          if has_any_stage depends configure build verify package upload index; then run_depends=true; else run_depends=false; fi
+          if has_any_stage configure build verify package upload index; then run_configure=true; else run_configure=false; fi
+          if has_any_stage build verify package upload index; then run_build=true; else run_build=false; fi
+          if has_any_stage verify package upload index; then run_verify=true; else run_verify=false; fi
+          if has_any_stage package upload index; then run_package=true; else run_package=false; fi
+          if has_any_stage upload index; then run_upload=true; else run_upload=false; fi
+          {
+            echo "RUN_TARGET=${run_target}"
+            echo "RUN_DEPENDS=${run_depends}"
+            echo "RUN_CONFIGURE=${run_configure}"
+            echo "RUN_BUILD=${run_build}"
+            echo "RUN_VERIFY=${run_verify}"
+            echo "RUN_PACKAGE=${run_package}"
+            echo "RUN_UPLOAD=${run_upload}"
+          } >> "$GITHUB_ENV"
+          if [ "$run_target" != "true" ]; then
+            echo "Skipping unselected macOS target."
+          fi
+
+      - name: Checkout
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          token: ${{ github.token }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install macOS bootstrap tools
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Install macOS bootstrap tools"
+          # GitHub's macOS images can ship optional taps that are not trusted by
+          # Homebrew's stricter tap trust mode. They are unrelated to this build.
+          if brew list --formula bicep >/dev/null 2>&1; then
+            brew uninstall --formula --ignore-dependencies bicep
+          fi
+          for tap in aws/tap azure/bicep; do
+            if brew tap | grep -Fxq "$tap"; then
+              brew untap --force "$tap"
+            fi
+          done
+
+          install_formula() {
+            if ! brew list --formula "$1" >/dev/null 2>&1; then
+              brew install "$1"
+            fi
+          }
+
+          for formula in automake bison cmake gperf libtool ninja pkg-config gettext gcc@14; do
+            install_formula "$formula"
+          done
+          echo "::endgroup::"
+
+      - name: Install Rust
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Install Rust macOS toolchain"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rm -f "$HOME/.rustup/settings.toml"
+          if command -v rustup >/dev/null 2>&1; then
+            rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          else
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --no-modify-path \
+                  --default-toolchain "$RUST_TOOLCHAIN"
+          fi
+          rustup default "$RUST_TOOLCHAIN"
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          rustc --version
+          cargo --version
+          cargo fmt --version
+          echo "::endgroup::"
+
+      - name: Cache cargo
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/private/orchard_ffi/target
+          key: nito.network-cargo-macos-arm64-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/private/orchard_ffi/Cargo.lock') }}
+          restore-keys: |
+            nito.network-cargo-macos-arm64-
+
+      - name: Cache macOS
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            depends/built
+            depends/sources
+            depends/arm64-apple-darwin
+          key: nito.network-depends-macos-arm64-${{ hashFiles('depends/Makefile', 'depends/funcs.mk', 'depends/config.site.in', 'depends/config.guess', 'depends/config.sub', 'depends/builders/**', 'depends/hosts/**', 'depends/packages/**', 'depends/patches/**') }}
+
+      - name: Build macOS
+        if: env.RUN_TARGET == 'true' && env.RUN_DEPENDS == 'true'
+        id: macos_depends
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "::group::[NITO.NETWORK] Build pinned macOS dependencies"
+          phase_status=0
+          legacy_bdb_cc="$(brew --prefix gcc@14)/bin/gcc-14"
+          if [ ! -x "$legacy_bdb_cc" ]; then
+            echo "::error title=Missing Berkeley DB compiler::$legacy_bdb_cc is not executable."
+            phase_status=1
+          fi
+          legacy_bdb_cc_version="$($legacy_bdb_cc -dumpfullversion)"
+          if [ -z "$legacy_bdb_cc_version" ]; then
+            echo "::error title=Unknown Berkeley DB compiler::Unable to read the GCC version."
+            phase_status=1
+          fi
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix gettext)/bin:$PATH"
+          if [ "$phase_status" -eq 0 ]; then
+            WARNING_CLEAN_LOG=depends-build.log \
+            bash .github/scripts/warning-clean-run.sh \
+              make -C depends HOST=arm64-apple-darwin BUILD=arm64-apple-darwin \
+                bdb_cc="$legacy_bdb_cc" \
+                HOST_ID_SALT="nito-macos-bdb-gcc-${legacy_bdb_cc_version}" \
+                NO_USDT=1 install JOBS=${MAKEJOBS} -j${MAKEJOBS} \
+              || phase_status=$?
+          fi
+          prefix="$PWD/depends/arm64-apple-darwin"
+          required_depends=(
+            lib/libdb_cxx-4.8.a
+            include/boost/version.hpp
+            lib/libevent.a
+            lib/libsqlite3.a
+            lib/libzmq.a
+            lib/libqrencode.a
+            lib/libminiupnpc.a
+            lib/libnatpmp.a
+            lib/libQt6Core.a
+            native/bin/lconvert
+            native/bin/lrelease
+            native/bin/lupdate
+            translations/qtbase_de.qm
+          )
+          depends_ready=true
+          for relative_path in "${required_depends[@]}"; do
+            if [ ! -f "$prefix/$relative_path" ]; then
+              echo "::error title=Incomplete macOS dependencies::Missing $relative_path"
+              depends_ready=false
+              phase_status=1
+            fi
+          done
+          echo "ready=${depends_ready}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+          exit "$phase_status"
+
+      - name: Configure Nito
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_CONFIGURE == 'true' && steps.macos_depends.outputs.ready == 'true'
+        id: macos_configure
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "::group::[NITO.NETWORK] Configure macOS arm64"
+          phase_status=0
+          chmod +x autogen.sh
+          WARNING_CLEAN_LOG=autogen.log bash .github/scripts/warning-clean-run.sh ./autogen.sh \
+            || phase_status=$?
+          DEPENDS_PREFIX="$PWD/depends/arm64-apple-darwin"
+          QT_BINDIR=""
+          for dir in "$DEPENDS_PREFIX/bin" "$DEPENDS_PREFIX/libexec" "$DEPENDS_PREFIX/native/bin"; do
+            if [ -x "$dir/moc" ] || [ -x "$dir/moc-qt6" ] || [ -x "$dir/moc6" ]; then
+              QT_BINDIR="$dir"
+              break
+            fi
+          done
+          if [ -z "$QT_BINDIR" ]; then
+            echo "Qt6 moc not found under $DEPENDS_PREFIX" >&2
+            find "$DEPENDS_PREFIX" -type f \( -name moc -o -name moc-qt6 -o -name moc6 \) -print >&2
+            phase_status=1
+          fi
+          QT_LINGUIST_BINDIR="$DEPENDS_PREFIX/native/bin"
+          if [ ! -x "$QT_LINGUIST_BINDIR/lrelease" ]; then
+            echo "Pinned Qt6 lrelease not found under $QT_LINGUIST_BINDIR" >&2
+            phase_status=1
+          fi
+          if [ -n "$QT_BINDIR" ] && [ -x "$QT_LINGUIST_BINDIR/lrelease" ] && [ -x ./configure ]; then
+            export PATH="$QT_BINDIR:$QT_LINGUIST_BINDIR:$DEPENDS_PREFIX/bin:$(brew --prefix gettext)/bin:$(brew --prefix bison)/bin:$(brew --prefix)/bin:$HOME/.cargo/bin:$PATH"
+            CONFIG_SITE="$DEPENDS_PREFIX/share/config.site" \
+              WARNING_CLEAN_LOG=configure-step.log bash .github/scripts/warning-clean-run.sh \
+              ./configure --disable-shared --enable-tests --enable-bench \
+                --with-gui=qt6 \
+                --with-qrencode \
+                --with-qt-bindir="$QT_BINDIR" \
+                --with-qt-translationdir="$DEPENDS_PREFIX/translations" \
+                --with-sqlite=yes \
+                --with-miniupnpc \
+                --with-natpmp \
+                --enable-werror \
+              || phase_status=$?
+          else
+            echo "::error title=macOS configure unavailable::Autogen did not produce a usable configure script or a required Qt host tool is missing."
+            phase_status=1
+          fi
+          configure_ready=true
+          for generated_file in Makefile src/Makefile; do
+            if [ ! -f "$generated_file" ]; then
+              echo "::error title=Incomplete macOS configure::Missing $generated_file"
+              configure_ready=false
+              phase_status=1
+            fi
+          done
+          echo "ready=${configure_ready}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+          exit "$phase_status"
+
+      - name: Fetch locked Orchard dependencies
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_BUILD == 'true' && steps.macos_configure.outputs.ready == 'true'
+        id: macos_cargo_fetch
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo fetch --locked --manifest-path src/private/orchard_ffi/Cargo.toml
+
+      - name: Build Nito
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_BUILD == 'true' && steps.macos_configure.outputs.ready == 'true' && steps.macos_cargo_fetch.outcome == 'success'
+        id: macos_build
+        continue-on-error: true
+        env:
+          CARGO_NET_OFFLINE: "true"
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "::group::[NITO.NETWORK] Compile macOS arm64"
+          phase_status=0
+          export PATH="$HOME/.cargo/bin:$PATH"
+          build_scope="$(printf '%s' "${BUILD_SCOPE}" | tr '[:upper:]' '[:lower:]' | tr '; ' ',,' | tr -s ',' | sed 's/^,//; s/,$//')"
+          build_scope="${build_scope#build_scope=}"
+          build_scope="${build_scope#scope=}"
+          if [ "$build_scope" = "qt-link" ]; then
+            echo "Running targeted macOS Qt link probe."
+            WARNING_CLEAN_LOG=build.log bash .github/scripts/warning-clean-run.sh \
+              make -C src -j${MAKEJOBS} qt/nito-qt \
+              || phase_status=$?
+            required_binaries=(src/qt/nito-qt)
+          else
+            WARNING_CLEAN_LOG=build.log bash .github/scripts/warning-clean-run.sh \
+              make -j${MAKEJOBS} \
+              || phase_status=$?
+            required_binaries=(
+              src/nitod
+              src/nito-cli
+              src/nito-tx
+              src/nito-wallet
+              src/nito-util
+              src/qt/nito-qt
+            )
+          fi
+          build_ready=true
+          for binary in "${required_binaries[@]}"; do
+            if [ ! -x "$binary" ]; then
+              echo "::error title=Incomplete macOS build::Missing executable $binary"
+              build_ready=false
+              phase_status=1
+            fi
+          done
+          echo "ready=${build_ready}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+          exit "$phase_status"
+
+      - name: Run native macOS release tests
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_BUILD == 'true' && steps.macos_build.outputs.ready == 'true'
+        id: macos_tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          build_scope="$(printf '%s' "${BUILD_SCOPE}" | tr '[:upper:]' '[:lower:]')"
+          if [ "$build_scope" != "all" ]; then
+            echo "Native macOS release tests are not selected for build scope ${BUILD_SCOPE}."
+            exit 0
+          fi
+          echo "::group::[NITO.NETWORK] Unit, Orchard and legacy-wallet release gates"
+          phase_status=0
+          export PATH="$HOME/.cargo/bin:$PATH"
+          QT_QPA_PLATFORM=cocoa WARNING_CLEAN_LOG=native-tests.log \
+            bash .github/scripts/warning-clean-run.sh make check -j${MAKEJOBS} \
+            || phase_status=$?
+          WARNING_CLEAN_LOG=orchard-format.log \
+            bash .github/scripts/warning-clean-run.sh \
+              cargo fmt --manifest-path src/private/orchard_ffi/Cargo.toml --check \
+            || phase_status=$?
+          WARNING_CLEAN_LOG=orchard-tests.log \
+            bash .github/scripts/warning-clean-run.sh \
+              cargo test --manifest-path src/private/orchard_ffi/Cargo.toml --locked --release \
+            || phase_status=$?
+          WARNING_CLEAN_LOG=legacy-wallet-test.log \
+            bash .github/scripts/warning-clean-run.sh \
+              python3 test/functional/wallet_backup.py --legacy-wallet --configfile="$PWD/test/config.ini" \
+            || phase_status=$?
+          echo "::endgroup::"
+          exit "$phase_status"
+
+      - name: Verify macOS binaries
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_VERIFY == 'true' && steps.macos_build.outputs.ready == 'true'
+        id: macos_verify
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Verify macOS binaries"
+          required=(
+            src/nitod
+            src/nito-cli
+            src/nito-tx
+            src/nito-wallet
+            src/nito-util
+            src/qt/nito-qt
+          )
+          for bin in "${required[@]}"; do
+            test -x "$bin"
+            file "$bin"
+          done
+          link_report="macos-binaries-otool.txt"
+          : > "$link_report"
+          for bin in "${required[@]}"; do
+            {
+              echo "### ${bin}"
+              otool -L "$bin"
+              echo
+            } >> "$link_report"
+          done
+          cat "$link_report"
+          if grep -E '/opt/homebrew|/usr/local/(Cellar|opt)|/depends/arm64-apple-darwin/' "$link_report"; then
+            echo "::error title=Non-portable macOS binary::A release binary links to a build-only dependency path."
+            exit 1
+          fi
+          non_system_links="$(awk '/^[[:space:]]/ { path=$1; if (path !~ /^\/usr\/lib\// && path !~ /^\/System\/Library\//) print path }' "$link_report")"
+          if [ -n "$non_system_links" ]; then
+            echo "::error title=Unexpected macOS runtime dependency::Release binaries must link only to Apple system libraries."
+            printf '%s\n' "$non_system_links"
+            exit 1
+          fi
+          echo "::group::[NITO.NETWORK] Smoke-test macOS command binaries"
+          src/nitod -version
+          src/nito-cli -version
+          src/nito-tx -version
+          src/nito-wallet -version
+          src/nito-util -version
+          echo "::endgroup::"
+          echo "::endgroup::"
+
+      - name: Download license notices
+        if: env.RUN_TARGET == 'true' && env.RUN_PACKAGE == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notices-${{ github.sha }}
+          path: .release-notices
+
+      - name: Package macOS command tar.gz
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_PACKAGE == 'true' && steps.macos_build.outputs.ready == 'true'
+        id: macos_tar
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Package macOS command tar.gz"
+          rm -rf release
+          mkdir -p "release/bin"
+          copy_required() {
+            test -f "$1"
+            cp "$1" "release/bin/$2"
+          }
+
+          copy_optional() {
+            if [ -f "$1" ]; then
+              cp "$1" "release/bin/$2"
+            fi
+          }
+
+          copy_required src/nitod nitod
+          copy_required src/nito-cli nito-cli
+          copy_required src/nito-tx nito-tx
+          copy_required src/nito-wallet nito-wallet
+          copy_required src/nito-util nito-util
+          copy_required src/qt/nito-qt nito-qt
+          copy_optional src/nito-node nito-node
+          for binary in release/bin/*; do
+            xcrun strip "$binary"
+            # Stripping changes the bytes covered by the Mach-O signature.
+            codesign --force --sign - "$binary"
+            codesign --verify --strict "$binary"
+          done
+          tar -xOf .release-notices/release-notices.tar.gz COPYING > release/bin/LICENSE.txt
+          tar -xOf .release-notices/release-notices.tar.gz \
+            binary/macos/THIRD_PARTY_LICENSES.txt > release/bin/THIRD_PARTY_LICENSES.txt
+          test -s release/bin/LICENSE.txt
+          test -s release/bin/THIRD_PARTY_LICENSES.txt
+          tar -C release -czf "release/nito-${VERSION}-arm64-apple-darwin.tar.gz" bin
+          tar -tzf "release/nito-${VERSION}-arm64-apple-darwin.tar.gz" > "release/nito-${VERSION}-arm64-apple-darwin.contents.txt"
+          for item in nitod nito-cli nito-tx nito-wallet nito-util nito-qt; do
+            grep -Fxq "bin/${item}" "release/nito-${VERSION}-arm64-apple-darwin.contents.txt"
+          done
+          grep -Fxq 'bin/LICENSE.txt' "release/nito-${VERSION}-arm64-apple-darwin.contents.txt"
+          grep -Fxq 'bin/THIRD_PARTY_LICENSES.txt' "release/nito-${VERSION}-arm64-apple-darwin.contents.txt"
+          if grep -Ev '^bin/$|^bin/(nitod|nito-cli|nito-tx|nito-wallet|nito-util|nito-qt|nito-node|LICENSE\.txt|THIRD_PARTY_LICENSES\.txt)$' \
+              "release/nito-${VERSION}-arm64-apple-darwin.contents.txt"; then
+            echo "::error title=Unexpected archive entry::Only release binaries and the two license files may be directly inside bin."
+            exit 1
+          fi
+          archive_probe="$(mktemp -d)"
+          trap 'rm -rf "$archive_probe"' EXIT
+          tar -xzf "release/nito-${VERSION}-arm64-apple-darwin.tar.gz" -C "$archive_probe"
+          for item in nitod nito-cli nito-tx nito-wallet nito-util; do
+            "$archive_probe/bin/$item" -version
+          done
+          rm -rf "$archive_probe"
+          trap - EXIT
+          shasum -a 256 "release/nito-${VERSION}-arm64-apple-darwin.tar.gz"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Build macOS deployable Qt app
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_PACKAGE == 'true' && steps.macos_build.outputs.ready == 'true'
+        id: macos_app
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Build deployable macOS Qt app"
+          QT_PREFIX="$PWD/depends/arm64-apple-darwin"
+          export PATH="$QT_PREFIX/libexec:$QT_PREFIX/bin:$HOME/.cargo/bin:$PATH"
+          export QTDIR="$QT_PREFIX"
+          WARNING_CLEAN_LOG=macos-deploy.log \
+            bash .github/scripts/warning-clean-run.sh \
+              make deploy OSX_DEPLOY_SCRIPT_ARGS=-no-plugins
+          test -d dist/Nito-Qt.app
+          tar -xOf .release-notices/release-notices.tar.gz COPYING \
+            > dist/Nito-Qt.app/Contents/Resources/LICENSE.txt
+          tar -xOf .release-notices/release-notices.tar.gz \
+            binary/macos/THIRD_PARTY_LICENSES.txt \
+            > dist/Nito-Qt.app/Contents/Resources/THIRD_PARTY_LICENSES.txt
+          test -s dist/Nito-Qt.app/Contents/Resources/LICENSE.txt
+          test -s dist/Nito-Qt.app/Contents/Resources/THIRD_PARTY_LICENSES.txt
+          test -x dist/Nito-Qt.app/Contents/MacOS/Nito-Qt
+          test -s dist/Nito-Qt.app/Contents/Resources/qtbase_de.qm
+          translation_count="$(find dist/Nito-Qt.app/Contents/Resources -maxdepth 1 -type f -name 'qtbase_*.qm' | wc -l | tr -d '[:space:]')"
+          if [ "$translation_count" -eq 0 ]; then
+            echo "::error title=Missing macOS Qt translations::The deployable app contains no QtBase translation catalog."
+            exit 1
+          fi
+          echo "Bundled ${translation_count} QtBase translation catalogs."
+          file dist/Nito-Qt.app/Contents/MacOS/Nito-Qt
+          bundle_otool="macos-app-otool.txt"
+          : > "$bundle_otool"
+          while IFS= read -r -d '' bundle_file; do
+            if file "$bundle_file" | grep -q 'Mach-O'; then
+              {
+                echo "### ${bundle_file}"
+                otool -L "$bundle_file"
+                echo
+              } >> "$bundle_otool"
+            fi
+          done < <(find dist/Nito-Qt.app -type f -print0)
+          cat "$bundle_otool"
+          if grep -E '/opt/homebrew|/usr/local/(Cellar|opt)|/depends/arm64-apple-darwin/' "$bundle_otool"; then
+            echo "::error title=Non-portable macOS app bundle::Nito-Qt.app still links to build-only dependency paths."
+            exit 1
+          fi
+          non_system_links="$(awk '/^[[:space:]]/ { path=$1; if (path !~ /^\/usr\/lib\// && path !~ /^\/System\/Library\//) print path }' "$bundle_otool")"
+          if [ -n "$non_system_links" ]; then
+            echo "::error title=Unexpected macOS app dependency::Nito-Qt.app must link only to Apple system libraries."
+            printf '%s\n' "$non_system_links"
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Build macOS DMG
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_PACKAGE == 'true' && steps.macos_tar.outputs.ready == 'true' && steps.macos_app.outputs.ready == 'true'
+        id: macos_dmg
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Build macOS DMG"
+          dmg_path="release/nito-${VERSION}-arm64-apple-darwin.dmg"
+          rm -f "$dmg_path"
+          dmg_root="$(mktemp -d)"
+          cleanup_dmg_root() {
+            rm -rf "$dmg_root"
+          }
+          trap cleanup_dmg_root EXIT
+          cp -R dist/Nito-Qt.app "$dmg_root/"
+          ln -s /Applications "$dmg_root/Applications"
+          dmg_created=false
+          for dmg_attempt in 1 2 3; do
+            rm -f "$dmg_path"
+            if hdiutil create \
+              -volname "Nito Core" \
+              -srcfolder "$dmg_root" \
+              -ov -format UDZO \
+              "$dmg_path"; then
+              dmg_created=true
+              break
+            fi
+            rm -f "$dmg_path"
+            if [ "$dmg_attempt" -lt 3 ]; then
+              echo "::warning title=DMG creation retry::hdiutil create failed on attempt ${dmg_attempt}/3; retrying."
+              sleep "$((dmg_attempt * 5))"
+            fi
+          done
+          if [ "$dmg_created" != true ]; then
+            echo "::error title=DMG creation failed::hdiutil create failed after 3 attempts."
+            exit 1
+          fi
+          cleanup_dmg_root
+          trap - EXIT
+          test -s "$dmg_path"
+          hdiutil verify "$dmg_path"
+          hdiutil imageinfo "$dmg_path"
+          mount_info="$(mktemp)"
+          mount_point=""
+          cleanup_dmg_mount() {
+            if [ -n "$mount_point" ]; then
+              hdiutil detach "$mount_point" || true
+            fi
+            rm -f "$mount_info"
+          }
+          trap cleanup_dmg_mount EXIT
+          hdiutil attach "$dmg_path" \
+            -readonly -nobrowse -noautoopen -plist > "$mount_info"
+          mount_point="$(python3 - "$mount_info" <<'PY'
+          import plistlib, sys
+          with open(sys.argv[1], 'rb') as f:
+              data = plistlib.load(f)
+          for entity in data.get('system-entities', []):
+              mount = entity.get('mount-point')
+              if mount:
+                  print(mount)
+                  break
+          PY
+          )"
+          if [ -z "$mount_point" ]; then
+            echo "::error title=DMG mount failed::No mount point found after hdiutil attach."
+            cat "$mount_info"
+            exit 1
+          fi
+          test -d "$mount_point/Nito-Qt.app"
+          test -x "$mount_point/Nito-Qt.app/Contents/MacOS/Nito-Qt"
+          test -s "$mount_point/Nito-Qt.app/Contents/Resources/qtbase_de.qm"
+          test -s "$mount_point/Nito-Qt.app/Contents/Resources/LICENSE.txt"
+          test -s "$mount_point/Nito-Qt.app/Contents/Resources/THIRD_PARTY_LICENSES.txt"
+          test -e "$mount_point/Applications"
+          hdiutil detach "$mount_point"
+          mount_point=""
+          rm -f "$mount_info"
+          trap - EXIT
+          (
+            cd release
+            shasum -a 256 \
+              "nito-${VERSION}-arm64-apple-darwin.tar.gz" \
+              "nito-${VERSION}-arm64-apple-darwin.dmg" \
+              | tee "nito-${VERSION}-arm64-apple-darwin.sha256"
+          )
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Upload macOS command tar.gz
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_UPLOAD == 'true' && steps.macos_tar.outputs.ready == 'true'
+        id: macos_upload_tar
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-arm64-apple-darwin.tar.gz
+          path: release/nito-${{ env.VERSION }}-arm64-apple-darwin.tar.gz
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload macOS DMG
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_UPLOAD == 'true' && steps.macos_dmg.outputs.ready == 'true'
+        id: macos_upload_dmg
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-arm64-apple-darwin.dmg
+          path: release/nito-${{ env.VERSION }}-arm64-apple-darwin.dmg
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload macOS checksums
+        if: always() && env.RUN_TARGET == 'true' && env.RUN_UPLOAD == 'true' && steps.macos_dmg.outputs.ready == 'true'
+        id: macos_upload_checksums
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-arm64-apple-darwin.sha256
+          path: release/nito-${{ env.VERSION }}-arm64-apple-darwin.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: macOS build summary
+        if: always() && env.RUN_TARGET == 'true'
+        shell: bash
+        env:
+          DEPENDS_OUTCOME: ${{ steps.macos_depends.outcome }}
+          CONFIGURE_OUTCOME: ${{ steps.macos_configure.outcome }}
+          BUILD_OUTCOME: ${{ steps.macos_build.outcome }}
+          TESTS_OUTCOME: ${{ steps.macos_tests.outcome }}
+          VERIFY_OUTCOME: ${{ steps.macos_verify.outcome }}
+          TAR_OUTCOME: ${{ steps.macos_tar.outcome }}
+          APP_OUTCOME: ${{ steps.macos_app.outcome }}
+          DMG_OUTCOME: ${{ steps.macos_dmg.outcome }}
+        run: |
+          {
+            echo "### macOS arm64"
+            echo "- Build scope: \`${BUILD_SCOPE}\`"
+            echo "- Depends: \`${DEPENDS_OUTCOME}\`"
+            echo "- Configure: \`${CONFIGURE_OUTCOME}\`"
+            echo "- Build: \`${BUILD_OUTCOME}\`"
+            echo "- Native release tests: \`${TESTS_OUTCOME}\`"
+            echo "- Verify: \`${VERIFY_OUTCOME}\`"
+            echo "- Command tar: \`${TAR_OUTCOME}\`"
+            echo "- Deployable app: \`${APP_OUTCOME}\`"
+            echo "- DMG and checksums: \`${DMG_OUTCOME}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: macOS release gate
+        if: always() && env.RUN_TARGET == 'true'
+        shell: bash
+        env:
+          DEPENDS_OUTCOME: ${{ steps.macos_depends.outcome }}
+          CONFIGURE_OUTCOME: ${{ steps.macos_configure.outcome }}
+          BUILD_OUTCOME: ${{ steps.macos_build.outcome }}
+          TESTS_OUTCOME: ${{ steps.macos_tests.outcome }}
+          VERIFY_OUTCOME: ${{ steps.macos_verify.outcome }}
+          TAR_OUTCOME: ${{ steps.macos_tar.outcome }}
+          APP_OUTCOME: ${{ steps.macos_app.outcome }}
+          DMG_OUTCOME: ${{ steps.macos_dmg.outcome }}
+          UPLOAD_TAR_OUTCOME: ${{ steps.macos_upload_tar.outcome }}
+          UPLOAD_DMG_OUTCOME: ${{ steps.macos_upload_dmg.outcome }}
+          UPLOAD_CHECKSUMS_OUTCOME: ${{ steps.macos_upload_checksums.outcome }}
+        run: |
+          set -euo pipefail
+          gate_status=0
+          require_phase() {
+            local selected="$1"
+            local phase="$2"
+            local outcome="$3"
+            if [ "$selected" = "true" ] && [ "$outcome" != "success" ]; then
+              echo "::error title=macOS phase failed::${phase}: ${outcome}"
+              gate_status=1
+            else
+              echo "${phase}: ${outcome}"
+            fi
+          }
+
+          require_phase "$RUN_DEPENDS" depends "$DEPENDS_OUTCOME"
+          require_phase "$RUN_CONFIGURE" configure "$CONFIGURE_OUTCOME"
+          require_phase "$RUN_BUILD" build "$BUILD_OUTCOME"
+          require_phase "$RUN_BUILD" native-release-tests "$TESTS_OUTCOME"
+          require_phase "$RUN_VERIFY" verify "$VERIFY_OUTCOME"
+          require_phase "$RUN_PACKAGE" command-tar "$TAR_OUTCOME"
+          require_phase "$RUN_PACKAGE" deployable-app "$APP_OUTCOME"
+          require_phase "$RUN_PACKAGE" dmg-and-checksums "$DMG_OUTCOME"
+          require_phase "$RUN_UPLOAD" upload-command-tar "$UPLOAD_TAR_OUTCOME"
+          require_phase "$RUN_UPLOAD" upload-dmg "$UPLOAD_DMG_OUTCOME"
+          require_phase "$RUN_UPLOAD" upload-checksums "$UPLOAD_CHECKSUMS_OUTCOME"
+          exit "$gate_status"
+
+      - name: macOS failure diagnostics
+        if: failure() && env.RUN_TARGET == 'true'
+        shell: bash
+        run: |
+          set +e
+          echo "::group::[NITO.NETWORK] macOS failure diagnostics"
+          sw_vers
+          uname -a
+          df -h
+          brew --version
+          brew config
+          brew list --versions automake bison cmake gperf libtool ninja pkg-config gettext gcc@14
+          cmake --version
+          ninja --version
+          clang++ --version
+          if command -v rustc >/dev/null 2>&1; then rustc --version; fi
+          if command -v cargo >/dev/null 2>&1; then cargo --version; fi
+          if [ -f build.log ]; then
+            echo "----- build.log"
+            tail -n 200 build.log
+          fi
+          if [ -f macos-deploy.log ]; then
+            echo "----- macos-deploy.log"
+            tail -n 200 macos-deploy.log
+          fi
+          if [ -f depends-build.log ]; then
+            echo "----- depends-build.log"
+            tail -n 200 depends-build.log
+          fi
+          if [ -f configure-step.log ]; then
+            echo "----- configure-step.log"
+            tail -n 200 configure-step.log
+          fi
+          if [ -f autogen.log ]; then
+            echo "----- autogen.log"
+            tail -n 200 autogen.log
+          fi
+          for log in native-tests.log orchard-format.log orchard-tests.log legacy-wallet-test.log src/test-suite.log src/qt/test/test_nito-qt.log; do
+            if [ -f "$log" ]; then
+              echo "----- $log"
+              tail -n 300 "$log"
+            fi
+          done
+          find . -name config.log -print -exec sh -c 'echo "----- $1"; tail -n 200 "$1"' sh {} \;
+          find src/private/orchard_ffi -maxdepth 5 -type f -name "*.log" -print -exec sh -c 'echo "----- $1"; tail -n 120 "$1"' sh {} \;
+          echo "::endgroup::"
+
+      - name: Upload macOS diagnostic logs
+        if: failure() && env.RUN_TARGET == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-arm64-apple-darwin-diagnostics
+          path: |
+            build.log
+            macos-deploy.log
+            macos-binaries-otool.txt
+            macos-app-otool.txt
+            depends-build.log
+            depends/*.log
+            configure-step.log
+            autogen.log
+            native-tests.log
+            orchard-format.log
+            orchard-tests.log
+            legacy-wallet-test.log
+            src/test-suite.log
+            src/qt/test/test_nito-qt.log
+            **/config.log
+            src/private/orchard_ffi/target/**/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release-index:
+    name: Verify artifacts and checksums
+    if: ${{ always() && needs.preflight.outputs.run_index == 'true' }}
+    needs:
+      - preflight
+      - release-sources
+      - linux
+      - windows
+      - macos-arm64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Select release index stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalize_list() {
+            printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '; ' ',,' | tr -s ',' | sed 's/^,//; s/,$//'
+          }
+          list_has() {
+            case ",$1," in
+              *,all,*|*,$2,*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          targets="$(normalize_list "${TARGETS}")"
+          stages="$(normalize_list "${STAGES}")"
+          targets="${targets#targets=}"
+          stages="${stages#stages=}"
+          if list_has "$stages" index; then run_index=true; else run_index=false; fi
+          if list_has "$targets" linux-x86_64; then target_linux_x86_64=true; else target_linux_x86_64=false; fi
+          if list_has "$targets" linux-aarch64; then target_linux_aarch64=true; else target_linux_aarch64=false; fi
+          if list_has "$targets" windows; then target_windows=true; else target_windows=false; fi
+          if list_has "$targets" macos; then target_macos=true; else target_macos=false; fi
+          {
+            echo "RUN_INDEX=${run_index}"
+            echo "TARGET_LINUX_X86_64=${target_linux_x86_64}"
+            echo "TARGET_LINUX_AARCH64=${target_linux_aarch64}"
+            echo "TARGET_WINDOWS=${target_windows}"
+            echo "TARGET_MACOS=${target_macos}"
+          } >> "$GITHUB_ENV"
+
+      - name: Download release artifacts
+        if: env.RUN_INDEX == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: nito-${{ env.VERSION }}-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Download Windows zip without extraction
+        if: env.RUN_INDEX == 'true' && env.TARGET_WINDOWS == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nito-${{ env.VERSION }}-win64.zip
+          path: release-artifacts
+          skip-decompress: true
+
+      - name: Verify complete release set
+        if: env.RUN_INDEX == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Verify complete artifact set"
+          mkdir -p release-artifacts
+          cd release-artifacts
+          : > expected-artifacts.txt
+          : > expected-checksums.txt
+          echo "nito-${VERSION}-sources.tar.gz" >> expected-artifacts.txt
+          echo "nito-${VERSION}-sources.sha256" >> expected-checksums.txt
+          if [ "${TARGET_LINUX_X86_64}" = "true" ]; then
+            echo "nito-${VERSION}-x86_64-linux-gnu.tar.gz" >> expected-artifacts.txt
+            echo "nito-${VERSION}-x86_64-linux-gnu.sha256" >> expected-checksums.txt
+          fi
+          if [ "${TARGET_LINUX_AARCH64}" = "true" ]; then
+            echo "nito-${VERSION}-aarch64-linux-gnu.tar.gz" >> expected-artifacts.txt
+            echo "nito-${VERSION}-aarch64-linux-gnu.sha256" >> expected-checksums.txt
+          fi
+          if [ "${TARGET_WINDOWS}" = "true" ]; then
+            echo "nito-${VERSION}-win64.zip" >> expected-artifacts.txt
+            echo "nito-${VERSION}-win64-setup.exe" >> expected-artifacts.txt
+            echo "nito-${VERSION}-win64.sha256" >> expected-checksums.txt
+          fi
+          if [ "${TARGET_MACOS}" = "true" ]; then
+            echo "nito-${VERSION}-arm64-apple-darwin.tar.gz" >> expected-artifacts.txt
+            echo "nito-${VERSION}-arm64-apple-darwin.dmg" >> expected-artifacts.txt
+            echo "nito-${VERSION}-arm64-apple-darwin.sha256" >> expected-checksums.txt
+          fi
+          if ! [ -s expected-artifacts.txt ]; then
+            echo "::error title=No artifacts selected::The release index stage requires at least one selected target."
+            exit 1
+          fi
+
+          missing=0
+          while IFS= read -r artifact; do
+            if [ -s "$artifact" ]; then
+              echo "Verified: $artifact"
+            else
+              echo "::error title=Missing release artifact::$artifact was not produced or is empty"
+              missing=1
+            fi
+          done < expected-artifacts.txt
+          while IFS= read -r checksum; do
+            if [ -s "$checksum" ]; then
+              echo "Verified checksum artifact: $checksum"
+            else
+              echo "::error title=Missing checksum artifact::$checksum was not produced or is empty"
+              missing=1
+            fi
+          done < expected-checksums.txt
+
+          {
+            echo "### Release artifact gate"
+            echo "- Linux matrix result: \`${{ needs.linux.result }}\`"
+            echo "- Windows result: \`${{ needs.windows.result }}\`"
+            echo "- macOS result: \`${{ needs['macos-arm64'].result }}\`"
+            echo
+            echo "#### Expected artifacts"
+            while IFS= read -r artifact; do
+              if [ -s "$artifact" ]; then
+                echo "- OK: \`$artifact\`"
+              else
+                echo "- MISSING: \`$artifact\`"
+              fi
+            done < expected-artifacts.txt
+            echo
+            echo "#### Expected checksum artifacts"
+            while IFS= read -r checksum; do
+              if [ -s "$checksum" ]; then
+                echo "- OK: \`$checksum\`"
+              else
+                echo "- MISSING: \`$checksum\`"
+              fi
+            done < expected-checksums.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$missing" -ne 0 ]; then
+            echo "::endgroup::"
+            exit 1
+          fi
+
+          echo "::group::[NITO.NETWORK] Verify portable archive layout"
+          while IFS= read -r artifact; do
+            case "$artifact" in
+              *-sources.tar.gz)
+                tar -tzf "$artifact" > "${artifact}.contents.txt"
+                for entry in SOURCE.md COPYING configure.ac src/private/orchard_ffi/Cargo.lock .cargo/config.toml release-notices/source-manifest.json; do
+                  grep -Fxq "nito-${VERSION}/${entry}" "${artifact}.contents.txt"
+                done
+                grep -q "^nito-${VERSION}/depends/sources/qt-" "${artifact}.contents.txt"
+                grep -q "^nito-${VERSION}/src/private/orchard_ffi/vendor/" "${artifact}.contents.txt"
+                ;;
+              *.tar.gz)
+                tar -tzf "$artifact" > "${artifact}.contents.txt"
+                grep -Fxq 'bin/nitod' "${artifact}.contents.txt"
+                grep -Fxq 'bin/nito-cli' "${artifact}.contents.txt"
+                grep -Fxq 'bin/nito-qt' "${artifact}.contents.txt"
+                for entry in bin/LICENSE.txt bin/THIRD_PARTY_LICENSES.txt; do
+                  grep -Fxq "$entry" "${artifact}.contents.txt"
+                done
+                if grep -Ev '^bin/$|^bin/(nitod|nito-cli|nito-tx|nito-wallet|nito-util|nito-qt|nito-node|LICENSE\.txt|THIRD_PARTY_LICENSES\.txt)$' \
+                    "${artifact}.contents.txt"; then
+                  echo "::error title=Unexpected archive entry::$artifact may contain only release binaries and the two license files inside bin."
+                  exit 1
+                fi
+                ;;
+              *-win64.zip)
+                unzip -Z1 "$artifact" > "${artifact}.contents.txt"
+                for entry in bin/LICENSE.txt bin/THIRD_PARTY_LICENSES.txt; do
+                  grep -Fxq "$entry" "${artifact}.contents.txt"
+                done
+                for item in nitod.exe nito-cli.exe nito-tx.exe nito-wallet.exe nito-util.exe nito-qt.exe; do
+                  grep -Fxq "bin/${item}" "${artifact}.contents.txt"
+                done
+                if grep -Ev '^bin/$|^bin/(nitod|nito-cli|nito-tx|nito-wallet|nito-util|nito-qt|nito-node)\.exe$|^bin/(LICENSE|THIRD_PARTY_LICENSES)\.txt$' \
+                    "${artifact}.contents.txt"; then
+                  echo "::error title=Unexpected archive entry::$artifact may contain only release binaries and the two license files inside bin."
+                  exit 1
+                fi
+                ;;
+            esac
+          done < expected-artifacts.txt
+          echo "::endgroup::"
+
+          echo "::group::[NITO.NETWORK] Verify per-target checksums"
+          while IFS= read -r checksum; do
+            sha256sum -c "$checksum"
+          done < expected-checksums.txt
+          echo "::endgroup::"
+
+          sha256sum $(cat expected-artifacts.txt) > SHA256SUMS
+
+          {
+            echo "Nito.network release manifest"
+            echo "Version: ${VERSION}"
+            echo "Commit: ${GITHUB_SHA}"
+            echo "Ref: ${GITHUB_REF}"
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "Signing: UNSIGNED"
+            echo
+            echo "Artifacts:"
+            cat expected-artifacts.txt
+            echo
+            echo "SHA256:"
+            cat SHA256SUMS
+          } > release-manifest.txt
+
+          cat release-manifest.txt
+          echo "::endgroup::"
+
+      - name: Optionally sign release index with Minisign
+        if: env.RUN_INDEX == 'true'
+        shell: bash
+        env:
+          NITO_RELEASE_SIGNING_KEY: ${{ secrets.NITO_RELEASE_SIGNING_KEY }}
+          NITO_RELEASE_SIGNING_PASSWORD: ${{ secrets.NITO_RELEASE_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          cd release-artifacts
+          if [ -z "${NITO_RELEASE_SIGNING_KEY}" ] || [ -z "${NITO_RELEASE_SIGNING_PASSWORD}" ]; then
+            echo "::notice title=Unsigned release index::Minisign secrets are not both configured; SHA256SUMS and release-manifest.txt remain explicitly UNSIGNED."
+            echo "- Signing: \`UNSIGNED\` (Minisign secrets not both configured)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+          umask 077
+          signing_key="$(mktemp)"
+          trap 'rm -f "$signing_key"' EXIT
+          printf '%s\n' "$NITO_RELEASE_SIGNING_KEY" > "$signing_key"
+          sed -i 's/^Signing: UNSIGNED$/Signing: MINISIGN/' release-manifest.txt
+          printf '%s\n' "$NITO_RELEASE_SIGNING_PASSWORD" | minisign -S -s "$signing_key" -m SHA256SUMS -x SHA256SUMS.minisig -t "Nito.network ${VERSION} SHA256SUMS"
+          printf '%s\n' "$NITO_RELEASE_SIGNING_PASSWORD" | minisign -S -s "$signing_key" -m release-manifest.txt -x release-manifest.txt.minisig -t "Nito.network ${VERSION} release manifest"
+          test -s SHA256SUMS.minisig
+          test -s release-manifest.txt.minisig
+          echo "- Signing: \`MINISIGN\` (release index signatures generated)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload checksum and manifest
+        if: env.RUN_INDEX == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nito-${{ env.VERSION }}-release-index
+          path: |
+            release-artifacts/SHA256SUMS
+            release-artifacts/release-manifest.txt
+            release-artifacts/*.minisig
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Release index summary
+        if: env.RUN_INDEX == 'true'
+        shell: bash
+        run: |
+          {
+            echo "### Release verification"
+            echo "- All expected artifacts were present and non-empty."
+            echo "- \`SHA256SUMS\` generated."
+            echo "- \`release-manifest.txt\` generated."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-github-release:
+    name: Publish draft GitHub Release
+    needs: release-index
+    if: github.ref_type == 'tag' && needs.release-index.result == 'success'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Select draft release publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalize_list() {
+            printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '; ' ',,' | tr -s ',' | sed 's/^,//; s/,$//'
+          }
+          list_has() {
+            case ",$1," in
+              *,all,*|*,$2,*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          targets="$(normalize_list "${TARGETS}")"
+          stages="$(normalize_list "${STAGES}")"
+          targets="${targets#targets=}"
+          stages="${stages#stages=}"
+          publish_release=false
+          if list_has "$stages" index \
+            && list_has "$targets" linux-x86_64 \
+            && list_has "$targets" linux-aarch64 \
+            && list_has "$targets" windows \
+            && list_has "$targets" macos; then
+            publish_release=true
+          fi
+          echo "PUBLISH_RELEASE=${publish_release}" >> "$GITHUB_ENV"
+          if [ "$publish_release" != "true" ]; then
+            {
+              echo "### Draft GitHub Release"
+              echo "- Skipped: draft release publishing requires tag build, all targets and the index stage."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Download all release artifacts
+        if: env.PUBLISH_RELEASE == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: nito-${{ env.VERSION }}-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Download Windows zip without extraction
+        if: env.PUBLISH_RELEASE == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nito-${{ env.VERSION }}-win64.zip
+          path: release-artifacts
+          skip-decompress: true
+
+      - name: Show release files
+        if: env.PUBLISH_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::[NITO.NETWORK] Files attached to draft release"
+          find release-artifacts -maxdepth 1 -type f -print | sort
+          echo "::endgroup::"
+
+      - name: Create draft release
+        if: env.PUBLISH_RELEASE == 'true'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          draft: true
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'ci') || contains(github.ref_name, 'test') }}
+          files: |
+            release-artifacts/nito-${{ env.VERSION }}-x86_64-linux-gnu.tar.gz
+            release-artifacts/nito-${{ env.VERSION }}-aarch64-linux-gnu.tar.gz
+            release-artifacts/nito-${{ env.VERSION }}-win64.zip
+            release-artifacts/nito-${{ env.VERSION }}-win64-setup.exe
+            release-artifacts/nito-${{ env.VERSION }}-arm64-apple-darwin.tar.gz
+            release-artifacts/nito-${{ env.VERSION }}-arm64-apple-darwin.dmg
+            release-artifacts/nito-${{ env.VERSION }}-sources.tar.gz
+            release-artifacts/SHA256SUMS
+            release-artifacts/release-manifest.txt
+            release-artifacts/*.minisig
+          body_path: release-artifacts/release-manifest.txt

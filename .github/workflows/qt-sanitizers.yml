@@ -1,0 +1,763 @@
+name: Nito.network Qt sanitizer validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Native target to validate"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - linux-x86_64
+          - linux-aarch64
+          - windows
+          - macos
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nito-core-exclusive-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  MAKEJOBS: "4"
+  RUST_TOOLCHAIN: "1.97.0"
+  CARGO_TERM_COLOR: always
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
+jobs:
+  linux-x86_64:
+    name: Linux x86_64 Qt ASan/UBSan + TSan
+    if: ${{ inputs.target == 'all' || inputs.target == 'linux-x86_64' }}
+    runs-on: ubuntu-22.04
+    container:
+      image: ubuntu:22.04
+      # Allow the process-local ADDR_NO_RANDOMIZE personality used by TSan.
+      options: --security-opt seccomp=unconfined
+    timeout-minutes: 360
+    env:
+      HOME: /root
+      CARGO_HOME: /root/.cargo
+      DOCKER_CONFIG: /tmp/.docker
+      RUSTUP_HOME: /root/.rustup
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      NITO_TSAN_CC: gcc-12
+      NITO_TSAN_CXX: g++-12
+
+    steps:
+      - name: Prepare Ubuntu 22.04 container
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt_retry() {
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              sleep "$((attempt * 10))"
+            done
+            "$@"
+          }
+          apt_retry apt-get -o APT::Update::Error-Mode=any update
+          apt_retry env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git
+
+      - name: Checkout exact revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          token: ${{ github.token }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install native build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt_retry() {
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              sleep "$((attempt * 10))"
+            done
+            "$@"
+          }
+          apt_retry apt-get -o APT::Update::Error-Mode=any update
+          apt_retry env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            automake bison bsdmainutils build-essential g++-12 cmake cpio curl file git \
+            doxygen gettext gperf graphviz libtool libxml2-utils ninja-build \
+            patch perl pkg-config python3 python3-tomli qt6-base-dev-tools qt6-l10n-tools unzip \
+            x11-xkb-utils xutils-dev xvfb zip
+          for dir in /usr/lib/qt6/bin /usr/lib/qt6/libexec /usr/lib/x86_64-linux-gnu/qt6/bin; do
+            if [ -d "$dir" ]; then
+              echo "$dir" >> "$GITHUB_PATH"
+            fi
+          done
+
+      - name: Test build diagnostic gate
+        shell: bash
+        run: python3 .github/tests/test_warning_clean_run.py
+
+      - name: Probe ThreadSanitizer timed waits and race detection
+        shell: bash
+        run: bash .github/scripts/probe-qt-tsan.sh
+
+      - name: Install pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --no-modify-path \
+                --default-toolchain "$RUST_TOOLCHAIN"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          rustc --version
+          cargo --version
+
+      - name: Cache Depends
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            depends/built
+            depends/sources
+            depends/x86_64-pc-linux-gnu
+          key: nito.network-depends-linux-bdb-x86_64-pc-linux-gnu-${{ hashFiles('depends/packages/*', 'depends/patches/**') }}
+          restore-keys: |
+            nito.network-depends-linux-bdb-x86_64-pc-linux-gnu-
+
+      - name: Cache Cargo
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/private/orchard_ffi/target
+          key: nito.network-cargo-linux-x86_64-pc-linux-gnu-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/private/orchard_ffi/Cargo.lock') }}
+          restore-keys: |
+            nito.network-cargo-linux-x86_64-pc-linux-gnu-
+
+      - name: Build pinned native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sanitizer-logs
+          df -h . | tee sanitizer-logs/disk-before-depends.log
+          WARNING_CLEAN_LOG=sanitizer-logs/depends.log \
+            bash .github/scripts/warning-clean-run.sh \
+              make -C depends HOST=x86_64-pc-linux-gnu BUILD=x86_64-pc-linux-gnu \
+                JOBS=${MAKEJOBS} -j${MAKEJOBS}
+
+      - name: Record Linux x86_64 disk usage
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sanitizer-logs
+          df -h . | tee sanitizer-logs/disk-after-depends.log
+          du -h -d 2 depends | sort -h | tee sanitizer-logs/depends-disk-usage.log
+
+      - name: Run instrumented Qt lifetime suites
+        shell: bash
+        env:
+          NITO_HOST: x86_64-pc-linux-gnu
+          NITO_QT_PLATFORM: minimal
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          bash .github/scripts/run-qt-sanitizers-autotools.sh
+
+      - name: Upload Linux x86_64 sanitizer evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: qt-sanitizers-linux-x86_64-${{ github.sha }}
+          path: |
+            sanitizer-logs
+            **/config.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  linux-aarch64:
+    name: Linux aarch64 Qt ASan/UBSan + TSan
+    if: ${{ inputs.target == 'all' || inputs.target == 'linux-aarch64' }}
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ubuntu:22.04
+      # ThreadSanitizer requires personality(ADDR_NO_RANDOMIZE) at runtime
+      # init; the default Docker seccomp profile rejects that syscall, which
+      # made libtsan CHECK-fail before any test ran.
+      options: --security-opt seccomp=unconfined
+    timeout-minutes: 360
+    env:
+      HOME: /root
+      CARGO_HOME: /root/.cargo
+      DOCKER_CONFIG: /tmp/.docker
+      RUSTUP_HOME: /root/.rustup
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      NITO_TSAN_CC: gcc-12
+      NITO_TSAN_CXX: g++-12
+
+    steps:
+      - name: Prepare native arm64 Ubuntu 22.04 container
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "aarch64"
+          apt_retry() {
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              sleep "$((attempt * 10))"
+            done
+            "$@"
+          }
+          apt_retry apt-get -o APT::Update::Error-Mode=any update
+          apt_retry env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git
+
+      - name: Checkout exact revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          token: ${{ github.token }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install native build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt_retry() {
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              sleep "$((attempt * 10))"
+            done
+            "$@"
+          }
+          apt_retry apt-get -o APT::Update::Error-Mode=any update
+          apt_retry env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            automake bison bsdmainutils build-essential g++-12 cmake cpio curl file git \
+            doxygen gettext gperf graphviz libtool libxml2-utils ninja-build \
+            patch perl pkg-config python3 python3-tomli qt6-base-dev-tools qt6-l10n-tools unzip \
+            x11-xkb-utils xutils-dev xvfb zip
+          for dir in /usr/lib/qt6/bin /usr/lib/qt6/libexec /usr/lib/aarch64-linux-gnu/qt6/bin; do
+            if [ -d "$dir" ]; then
+              echo "$dir" >> "$GITHUB_PATH"
+            fi
+          done
+
+      - name: Probe ThreadSanitizer timed waits and race detection
+        shell: bash
+        run: bash .github/scripts/probe-qt-tsan.sh
+
+      - name: Install pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --no-modify-path \
+                --default-toolchain "$RUST_TOOLCHAIN"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          rustc --version
+          cargo --version
+
+      - name: Cache Depends
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            depends/built
+            depends/sources
+            depends/aarch64-linux-gnu
+          key: nito.network-sanitizer-depends-linux-aarch64-${{ hashFiles('depends/Makefile', 'depends/funcs.mk', 'depends/config.site.in', 'depends/config.guess', 'depends/config.sub', 'depends/builders/**', 'depends/hosts/**', 'depends/packages/**', 'depends/patches/**') }}
+          restore-keys: |
+            nito.network-sanitizer-depends-linux-aarch64-
+
+      - name: Cache Cargo
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/private/orchard_ffi/target
+          key: nito.network-sanitizer-cargo-linux-aarch64-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/private/orchard_ffi/Cargo.lock') }}
+          restore-keys: |
+            nito.network-sanitizer-cargo-linux-aarch64-
+
+      - name: Build pinned native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sanitizer-logs
+          WARNING_CLEAN_LOG=sanitizer-logs/depends.log \
+            bash .github/scripts/warning-clean-run.sh \
+              make -C depends HOST=aarch64-linux-gnu BUILD=aarch64-linux-gnu \
+                JOBS=${MAKEJOBS} -j${MAKEJOBS}
+
+      - name: Run instrumented Qt lifetime suites
+        shell: bash
+        env:
+          NITO_HOST: aarch64-linux-gnu
+          NITO_QT_PLATFORM: minimal
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env"
+          fi
+          bash .github/scripts/run-qt-sanitizers-autotools.sh
+
+      - name: Upload Linux aarch64 sanitizer evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: qt-sanitizers-linux-aarch64-${{ github.sha }}
+          path: |
+            sanitizer-logs
+            **/config.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  macos-arm64:
+    name: macOS arm64 Qt ASan/UBSan
+    if: ${{ inputs.target == 'all' || inputs.target == 'macos' }}
+    runs-on: macos-15
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          token: ${{ github.token }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install macOS bootstrap tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          if brew list --formula bicep >/dev/null 2>&1; then
+            brew uninstall --formula --ignore-dependencies bicep
+          fi
+          for tap in aws/tap azure/bicep; do
+            if brew tap | grep -Fxq "$tap"; then
+              brew untap --force "$tap"
+            fi
+          done
+          install_formula() {
+            if ! brew list --formula "$1" >/dev/null 2>&1; then
+              brew install "$1"
+            fi
+          }
+          for formula in automake bison cmake gperf libtool ninja pkg-config gettext gcc@14; do
+            install_formula "$formula"
+          done
+
+      - name: Install pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if command -v rustup >/dev/null 2>&1; then
+            rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          else
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --no-modify-path \
+                  --default-toolchain "$RUST_TOOLCHAIN"
+          fi
+          rustup default "$RUST_TOOLCHAIN"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustc --version
+          cargo --version
+
+      - name: Cache Depends
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            depends/built
+            depends/sources
+            depends/arm64-apple-darwin
+          key: nito.network-depends-macos-arm64-${{ hashFiles('depends/Makefile', 'depends/funcs.mk', 'depends/config.site.in', 'depends/config.guess', 'depends/config.sub', 'depends/builders/**', 'depends/hosts/**', 'depends/packages/**', 'depends/patches/**') }}
+          restore-keys: |
+            nito.network-depends-macos-arm64-
+
+      - name: Cache Cargo
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/private/orchard_ffi/target
+          key: nito.network-cargo-macos-arm64-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/private/orchard_ffi/Cargo.lock') }}
+          restore-keys: |
+            nito.network-cargo-macos-arm64-
+
+      - name: Build pinned native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p sanitizer-logs
+          legacy_bdb_cc="$(brew --prefix gcc@14)/bin/gcc-14"
+          test -x "$legacy_bdb_cc"
+          legacy_bdb_cc_version="$("$legacy_bdb_cc" -dumpfullversion)"
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix gettext)/bin:$HOME/.cargo/bin:$PATH"
+          WARNING_CLEAN_LOG=sanitizer-logs/depends.log \
+            bash .github/scripts/warning-clean-run.sh \
+              make -C depends HOST=arm64-apple-darwin BUILD=arm64-apple-darwin \
+                bdb_cc="$legacy_bdb_cc" \
+                HOST_ID_SALT="nito-macos-bdb-gcc-${legacy_bdb_cc_version}" \
+                NO_USDT=1 install JOBS=${MAKEJOBS} -j${MAKEJOBS}
+
+      - name: Run instrumented Qt lifetime suites
+        shell: bash
+        env:
+          NITO_HOST: arm64-apple-darwin
+          NITO_QT_PLATFORM: cocoa
+          NITO_CONFIGURE_EXTRA: "--with-qt-translationdir=${{ github.workspace }}/depends/arm64-apple-darwin/translations --with-miniupnpc --with-natpmp"
+        run: |
+          set -euo pipefail
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix gettext)/bin:$HOME/.cargo/bin:$PATH"
+          bash .github/scripts/run-qt-sanitizers-autotools.sh
+
+      - name: Upload macOS arm64 sanitizer evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: qt-sanitizers-macos-arm64-${{ github.sha }}
+          path: |
+            sanitizer-logs
+            **/config.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  windows-x86_64:
+    name: Windows x64 Qt MSVC ASan
+    if: ${{ inputs.target == 'all' || inputs.target == 'windows' }}
+    runs-on: windows-2022
+    timeout-minutes: 360
+    env:
+      QT_VERSION: "6.8.4"
+      QT_SHA256: "532dfbf3fa3cbc68fa37441ea9e81c5009da044eaecda78ffaeafd8bd125532f"
+      QTTOOLS_SHA256: "c6030ea66d7be1ca7e3b40578beb35b0f4ff4014277d8e051d3219759f6ab399"
+      QTBASEDIR: C:\Qt6_static
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          token: ${{ github.token }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install pinned Rust
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal
+          rustup default $env:RUST_TOOLCHAIN
+          rustc --version
+          cargo --version
+
+      - name: Cache static Qt
+        id: cache_qt
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: C:\Qt6_static
+          key: nito.network-sanitizer-qt-msvc-${{ env.QT_VERSION }}-${{ hashFiles('depends/packages/qt.mk', 'depends/patches/qt/**', 'build_msvc/common.qt.init.vcxproj', 'build_msvc/README.md') }}
+
+      - name: Cache Cargo
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            src\private\orchard_ffi\target
+          key: nito.network-sanitizer-cargo-windows-x64-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/private/orchard_ffi/Cargo.lock') }}
+
+      - name: Build pinned static Qt
+        if: steps.cache_qt.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -version "[17.0,18.0)" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "Visual Studio C++ toolchain not found" }
+          Import-Module (Join-Path $vs "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+
+          $archive = Join-Path $env:RUNNER_TEMP "qtbase-everywhere-opensource-src-$env:QT_VERSION.tar.xz"
+          $url = "https://download.qt.io/archive/qt/6.8/$env:QT_VERSION/submodules/qtbase-everywhere-opensource-src-$env:QT_VERSION.tar.xz"
+          $sourceRoot = Join-Path $env:RUNNER_TEMP "qt-source"
+          $buildRoot = Join-Path $env:RUNNER_TEMP "qt-build"
+          $intermediateTar = Join-Path $env:RUNNER_TEMP "qtbase-everywhere-opensource-src-$env:QT_VERSION.tar"
+          $watcher = Join-Path $env:GITHUB_WORKSPACE ".github\scripts\run-watched-cmd.ps1"
+
+          # 7-Zip is preinstalled on GitHub Windows runners; fail fast if absent.
+          $sevenZip = Join-Path ${env:ProgramFiles} "7-Zip\7z.exe"
+          if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) {
+            throw "7z.exe not found at $sevenZip"
+          }
+
+          & $watcher `
+            -Phase windows-qt-download `
+            -Command ('curl.exe --fail --location --retry 5 --output "' + $archive + '" "' + $url + '"') `
+            -WorkDir $env:RUNNER_TEMP -HeartbeatSeconds 30 -StallTimeoutSeconds 900 `
+            -WatchedProcesses @('curl')
+
+          Write-Host "[sha256] verifying downloaded archive..."
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          Write-Host "[sha256] expected=$env:QT_SHA256"
+          Write-Host "[sha256] actual  =$actual"
+          if ($actual -ne $env:QT_SHA256) {
+            throw "Qt SHA256 mismatch: expected $env:QT_SHA256, got $actual"
+          }
+          Write-Host "[sha256] OK"
+
+          New-Item -ItemType Directory -Force $sourceRoot, $buildRoot | Out-Null
+
+          # Pass 1: .tar.xz -> .tar.
+          & $watcher `
+            -Phase windows-qt-extract-xz `
+            -Command ('"' + $sevenZip + '" x "' + $archive + '" -o"' + $env:RUNNER_TEMP + '" -y') `
+            -WorkDir $env:RUNNER_TEMP -HeartbeatSeconds 30 -StallTimeoutSeconds 1200 `
+            -WatchedProcesses @('7z')
+
+          # Pass 2: .tar -> source tree.
+          & $watcher `
+            -Phase windows-qt-extract-tar `
+            -Command ('"' + $sevenZip + '" x "' + $intermediateTar + '" -o"' + $sourceRoot + '" -y') `
+            -WorkDir $env:RUNNER_TEMP -HeartbeatSeconds 30 -StallTimeoutSeconds 1200 `
+            -WatchedProcesses @('7z')
+
+          Remove-Item -LiteralPath $intermediateTar -Force
+
+          $source = Get-ChildItem $sourceRoot -Directory | Select-Object -First 1
+          if (-not $source) { throw "Qt source directory not found" }
+
+          foreach ($name in @('md4c_reference_definition_init.patch', 'qhttpheaders_compare_views.patch', 'qmimemagicrule_compare_views.patch', 'CVE-2026-78253.patch', 'CVE-2026-76151.patch', 'CVE-2026-19248.patch')) {
+            $patchFile = Join-Path $env:GITHUB_WORKSPACE "depends\patches\qt\$name"
+            & git -C $source.FullName apply --unidiff-zero -p2 -- $patchFile
+            if ($LASTEXITCODE -ne 0) { throw "Qt patch failed: $name" }
+          }
+
+          Push-Location $buildRoot
+          try {
+            $configureCmd = '"' + (Join-Path $source.FullName "configure.bat") + '" -release -opensource -confirm-license -static -static-runtime -prefix ' + "$env:QTBASEDIR" + ' -cmake-generator Ninja -nomake examples -nomake tests -no-openssl -no-dbus -no-icu -no-opengl -no-feature-printsupport -no-feature-sql -no-feature-vulkan -qt-harfbuzz -qt-libpng -qt-pcre -qt-zlib'
+            & $watcher `
+              -Phase windows-qt-configure -Command $configureCmd -WorkDir (Get-Location).Path `
+              -HeartbeatSeconds 60 -StallTimeoutSeconds 1200
+            & $watcher `
+              -Phase windows-qt-build -Command ('cmake --build . --parallel ' + $env:NUMBER_OF_PROCESSORS) -WorkDir (Get-Location).Path `
+              -HeartbeatSeconds 60 -StallTimeoutSeconds 1200
+            & $watcher `
+              -Phase windows-qt-install -Command 'cmake --install .' -WorkDir (Get-Location).Path `
+              -HeartbeatSeconds 60 -StallTimeoutSeconds 1200
+          } finally {
+            Pop-Location
+          }
+
+      - name: Ensure pinned QtTools lrelease
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $lrelease = Join-Path $env:QTBASEDIR "bin\lrelease.exe"
+          if (Test-Path -LiteralPath $lrelease -PathType Leaf) {
+            Write-Host "[qttools] lrelease already present, skipping."
+            return
+          }
+
+          # Same VS bootstrap as the main Qt build step: this is a separate
+          # process, so cl.exe is only resolvable after importing DevShell.
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -version "[17.0,18.0)" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "Visual Studio C++ toolchain not found" }
+          Import-Module (Join-Path $vs "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+          $cl = Get-Command cl.exe -ErrorAction SilentlyContinue
+          if (-not $cl) { throw "cl.exe not resolvable after VS DevShell import" }
+          Write-Host "[qttools] compiler: $($cl.Source)"
+
+          $sevenZip = Join-Path ${env:ProgramFiles} "7-Zip\7z.exe"
+          if (-not (Test-Path -LiteralPath $sevenZip -PathType Leaf)) {
+            throw "7z.exe not found at $sevenZip"
+          }
+          $watcher = Join-Path $env:GITHUB_WORKSPACE ".github\scripts\run-watched-cmd.ps1"
+
+          $archive = Join-Path $env:RUNNER_TEMP "qttools-everywhere-opensource-src-$env:QT_VERSION.tar.xz"
+          $url = "https://download.qt.io/archive/qt/6.8/$env:QT_VERSION/submodules/qttools-everywhere-opensource-src-$env:QT_VERSION.tar.xz"
+          $intermediateTar = Join-Path $env:RUNNER_TEMP "qttools-everywhere-opensource-src-$env:QT_VERSION.tar"
+          $sourceRoot = Join-Path $env:RUNNER_TEMP "qttools-source"
+
+          & $watcher `
+            -Phase windows-qttools-download `
+            -Command ('curl.exe --fail --location --retry 5 --output "' + $archive + '" "' + $url + '"') `
+            -WorkDir $env:RUNNER_TEMP -HeartbeatSeconds 30 -StallTimeoutSeconds 900 `
+            -WatchedProcesses @('curl')
+
+          Write-Host "[sha256] verifying qttools archive..."
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          Write-Host "[sha256] expected=$env:QTTOOLS_SHA256"
+          Write-Host "[sha256] actual  =$actual"
+          if ($actual -ne $env:QTTOOLS_SHA256) {
+            throw "Qt tools SHA256 mismatch: expected $env:QTTOOLS_SHA256, got $actual"
+          }
+          Write-Host "[sha256] OK"
+
+          New-Item -ItemType Directory -Force $sourceRoot | Out-Null
+
+          & $watcher `
+            -Phase windows-qttools-extract-xz `
+            -Command ('"' + $sevenZip + '" x "' + $archive + '" -o"' + $env:RUNNER_TEMP + '" -y') `
+            -WorkDir $env:RUNNER_TEMP -HeartbeatSeconds 30 -StallTimeoutSeconds 1200 `
+            -WatchedProcesses @('7z')
+
+          & $watcher `
+            -Phase windows-qttools-extract-tar `
+            -Command ('"' + $sevenZip + '" x "' + $intermediateTar + '" -o"' + $sourceRoot + '" -y') `
+            -WorkDir $env:RUNNER_TEMP -HeartbeatSeconds 30 -StallTimeoutSeconds 1200 `
+            -WatchedProcesses @('7z')
+
+          Remove-Item -LiteralPath $intermediateTar -Force
+
+          $toolsSource = Get-ChildItem $sourceRoot -Directory | Select-Object -First 1
+          if (-not $toolsSource) { throw "Qt tools source directory not found" }
+          $toolsBuild = Join-Path $env:RUNNER_TEMP "qttools-build"
+          New-Item -ItemType Directory -Force $toolsBuild | Out-Null
+
+          # Build only lrelease against QtCore from the static prefix.
+            # Force MSVC explicitly: CMake's Ninja discovery can pick the
+            # MinGW g++ ("c++.exe") from Git usr/bin ahead of cl on runners.
+            & $watcher `
+            -Phase windows-qttools-lrelease `
+            -Command ('cmake -S "' + $toolsSource.FullName + '" -B "' + $toolsBuild + '" -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=' + "$env:QTBASEDIR" + ' && cmake --build "' + $toolsBuild + '" --target lrelease --parallel %NUMBER_OF_PROCESSORS%') `
+            -WorkDir $toolsBuild -HeartbeatSeconds 30 -StallTimeoutSeconds 1200 `
+            -WatchedProcesses @('cmake','ninja','cl','link')
+
+          Copy-Item (Join-Path $toolsBuild "bin\lrelease.exe") (Join-Path $env:QTBASEDIR "bin\lrelease.exe") -Force
+          if (-not (Test-Path -LiteralPath $lrelease -PathType Leaf)) {
+            throw "lrelease.exe was not installed into $env:QTBASEDIR\bin"
+          }
+          Write-Host "[qttools] lrelease installed into $env:QTBASEDIR\bin"
+
+      - name: Verify static Qt contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @(
+            "$env:QTBASEDIR\bin\moc.exe",
+            "$env:QTBASEDIR\bin\lrelease.exe",
+            "$env:QTBASEDIR\lib\Qt6Core.lib",
+            "$env:QTBASEDIR\lib\Qt6Test.lib",
+            "$env:QTBASEDIR\plugins\platforms\qminimal.lib",
+            "$env:QTBASEDIR\plugins\platforms\qwindows.lib"
+          ) | ForEach-Object {
+            if (-not (Test-Path -LiteralPath $_ -PathType Leaf)) {
+              throw "Missing static Qt component: $_"
+            }
+          }
+
+      - name: Build native Qt tests with MSVC AddressSanitizer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -version "[17.0,18.0)" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "Visual Studio C++ toolchain not found" }
+          Import-Module (Join-Path $vs "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+
+          python build_msvc\msvc-autogen.py
+          if ($LASTEXITCODE -ne 0) { throw "MSVC project generation failed" }
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT "vcpkg.exe"
+          & $vcpkg integrate install
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg integration failed" }
+
+          # Install outside MSBuild: recovered mirror errors must not override
+          # vcpkg's final exit code. Keep the complete dependency log.
+          $vcpkgManifest = Join-Path $env:GITHUB_WORKSPACE "build_msvc"
+          $vcpkgInstalled = Join-Path $vcpkgManifest "vcpkg_installed"
+          & $vcpkg install --x-wait-for-lock --triplet x64-windows-static `
+            "--x-manifest-root=$vcpkgManifest" "--x-install-root=$vcpkgInstalled" 2>&1 |
+              Tee-Object -FilePath windows-asan-vcpkg-install.log
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency installation failed" }
+
+          msbuild build_msvc\nito.sln /m /t:test_nito-qt `
+            /p:Configuration=Release /p:Platform=x64 `
+            /p:VcpkgManifestInstall=false "/p:VcpkgInstalledDir=$vcpkgInstalled" `
+            /p:NitoEnableAddressSanitizer=true `
+            /bl:windows-asan.binlog /v:minimal 2>&1 |
+              Tee-Object -FilePath windows-asan-build.log
+          if ($LASTEXITCODE -ne 0) { throw "MSVC AddressSanitizer build failed" }
+
+          $exe = "build_msvc\x64\Release\test_nito-qt.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "Sanitized Qt test executable is missing"
+          }
+          dumpbin /imports $exe 2>&1 | Tee-Object -FilePath windows-asan-imports.log
+          if ($LASTEXITCODE -ne 0) { throw "dumpbin failed" }
+          if (-not (Select-String -Path windows-asan-imports.log -Pattern "clang_rt\.asan" -Quiet)) {
+            throw "The Windows Qt test executable is not linked to the MSVC AddressSanitizer runtime"
+          }
+
+      - name: Run native instrumented lifetime suites
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -version "[17.0,18.0)" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Import-Module (Join-Path $vs "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+
+          $env:QT_QPA_PLATFORM = "minimal"
+          $env:ASAN_OPTIONS = "halt_on_error=1:alloc_dealloc_mismatch=1"
+          $env:ASAN_SAVE_DUMPS = "$env:GITHUB_WORKSPACE\windows-asan-crash.dmp"
+          $exe = "build_msvc\x64\Release\test_nito-qt.exe"
+          foreach ($suite in @("AppTests", "WalletTests")) {
+            $env:NITO_QT_TEST_SUITE = $suite
+            $log = "windows-asan-$($suite.ToLowerInvariant()).log"
+            $runtimeLog = "windows-asan-$($suite.ToLowerInvariant())-runtime.log"
+            # Windows Qt can route its default report to the debugger instead
+            # of redirected stdout. Require a real QtTest report as evidence,
+            # and retain sanitizer stdout/stderr in a separate artifact.
+            & $exe -o "${log},txt" 2>&1 | Tee-Object -FilePath $runtimeLog
+            $testExit = $LASTEXITCODE
+            if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }
+            if ($testExit -ne 0) {
+              throw "$suite failed under MSVC AddressSanitizer"
+            }
+            $case = if ($suite -eq "AppTests") { "appTests" } else { "walletTests" }
+            if (-not (Test-Path -LiteralPath $log) -or
+                -not (Select-String -LiteralPath $log -Pattern "^PASS\s+: ${suite}::${case}\(\)" -Quiet) -or
+                -not (Select-String -LiteralPath $log -Pattern '^Totals:\s+[1-9][0-9]* passed, 0 failed, 0 skipped, 0 blacklisted,' -Quiet)) {
+              throw "$suite did not produce a complete passing QtTest report"
+            }
+          }
+
+      - name: Upload Windows sanitizer evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: qt-sanitizers-windows-x64-${{ github.sha }}
+          path: |
+            windows-asan*.log
+            windows-asan*.binlog
+            windows-asan*.dmp
+            windows-qt-*.log
+          if-no-files-found: warn
+          retention-days: 7

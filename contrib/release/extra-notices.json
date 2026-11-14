@@ -1,0 +1,72 @@
+{
+  "blake2b_simd-1.0.4": {
+    "repository": "https://github.com/oconnor663/blake2_simd",
+    "commit": "6a94ae2e18985c7c35bada8a4d438bfe9ab0d0c0",
+    "files": [
+      {
+        "path": "contrib/release/extra-notices/blake2b_simd-1.0.4/LICENSE",
+        "url": "https://raw.githubusercontent.com/oconnor663/blake2_simd/6a94ae2e18985c7c35bada8a4d438bfe9ab0d0c0/LICENSE",
+        "sha256": "27e0387973d6b8507cb15f825f6f26e0278d4d5857082c1f56b49a7b39a90183"
+      }
+    ]
+  },
+  "halo2_proofs-0.3.2": {
+    "repository": "https://github.com/zcash/halo2",
+    "commit": "f6200adaa6ca064d8d2eaa6fcc5e2671232d7249",
+    "files": [
+      {
+        "path": "contrib/release/extra-notices/halo2_proofs-0.3.2/LICENSE-MIT",
+        "url": "https://raw.githubusercontent.com/zcash/halo2/f6200adaa6ca064d8d2eaa6fcc5e2671232d7249/LICENSE-MIT",
+        "sha256": "cc6e3688129428de0b1f9e35d796955f0c826671700097b26a920b3112a7a697"
+      },
+      {
+        "path": "contrib/release/extra-notices/halo2_proofs-0.3.2/LICENSE-APACHE",
+        "url": "https://raw.githubusercontent.com/zcash/halo2/f6200adaa6ca064d8d2eaa6fcc5e2671232d7249/LICENSE-APACHE",
+        "sha256": "3708458dee7f359ac6c9c5558023ed481be87e5372c43ebd7f2ca7ad23c12026"
+      }
+    ]
+  },
+  "halo2_poseidon-0.1.0": {
+    "repository": "https://github.com/zcash/halo2",
+    "commit": "f066ace1f234d7fe1908851ed86b1801e0b1ffea",
+    "files": [
+      {
+        "path": "contrib/release/extra-notices/halo2_poseidon-0.1.0/LICENSE-MIT",
+        "url": "https://raw.githubusercontent.com/zcash/halo2/f066ace1f234d7fe1908851ed86b1801e0b1ffea/LICENSE-MIT",
+        "sha256": "cc6e3688129428de0b1f9e35d796955f0c826671700097b26a920b3112a7a697"
+      },
+      {
+        "path": "contrib/release/extra-notices/halo2_poseidon-0.1.0/LICENSE-APACHE",
+        "url": "https://raw.githubusercontent.com/zcash/halo2/f066ace1f234d7fe1908851ed86b1801e0b1ffea/LICENSE-APACHE",
+        "sha256": "3708458dee7f359ac6c9c5558023ed481be87e5372c43ebd7f2ca7ad23c12026"
+      }
+    ]
+  },
+  "halo2_gadgets-0.5.0": {
+    "repository": "https://github.com/zcash/halo2",
+    "commit": "d751768afe0d2105b349dd93f73fde7f2eade088",
+    "files": [
+      {
+        "path": "contrib/release/extra-notices/halo2_gadgets-0.5.0/LICENSE-MIT",
+        "url": "https://raw.githubusercontent.com/zcash/halo2/d751768afe0d2105b349dd93f73fde7f2eade088/LICENSE-MIT",
+        "sha256": "cc6e3688129428de0b1f9e35d796955f0c826671700097b26a920b3112a7a697"
+      },
+      {
+        "path": "contrib/release/extra-notices/halo2_gadgets-0.5.0/LICENSE-APACHE",
+        "url": "https://raw.githubusercontent.com/zcash/halo2/d751768afe0d2105b349dd93f73fde7f2eade088/LICENSE-APACHE",
+        "sha256": "3708458dee7f359ac6c9c5558023ed481be87e5372c43ebd7f2ca7ad23c12026"
+      }
+    ]
+  },
+  "uint-0.9.5": {
+    "repository": "https://github.com/paritytech/parity-common",
+    "commit": "c41d51df8a314150c46cbbff31f8140a35dfb02c",
+    "files": [
+      {
+        "path": "contrib/release/extra-notices/uint-0.9.5/LICENSE-MIT",
+        "url": "https://raw.githubusercontent.com/paritytech/parity-common/c41d51df8a314150c46cbbff31f8140a35dfb02c/LICENSE-MIT",
+        "sha256": "4fd70c448a560ab3226168373907c277e610a6cc21f8d618decee144421070ca"
+      }
+    ]
+  }
+}
