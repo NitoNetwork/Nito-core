@@ -5,12 +5,17 @@
 
 #include <chainparams.h>
 #include <consensus/validation.h>
+#include <index/orchardindex.h>
+#include <index/transparenthistoryindex.h>
 #include <interfaces/chain.h>
+#include <test/util/index.h>
 #include <test/util/setup_common.h>
 #include <script/solver.h>
 #include <validation.h>
+#include <validationinterface.h>
 
 #include <boost/test/unit_test.hpp>
+#include <memory>
 
 using interfaces::FoundBlock;
 
@@ -161,6 +166,54 @@ BOOST_AUTO_TEST_CASE(hasBlocks)
     BOOST_CHECK(chain->hasBlocks(active.Tip()->GetBlockHash(), 6, 49));
     BOOST_CHECK(!chain->hasBlocks(active.Tip()->GetBlockHash(), 5, 49));
     BOOST_CHECK(!chain->hasBlocks(active.Tip()->GetBlockHash(), 6, 50));
+}
+
+BOOST_AUTO_TEST_CASE(history_indexes_reject_stale_branch)
+{
+    const auto make_chain = [&] { return interfaces::MakeChain(m_node); };
+    BOOST_REQUIRE(InitTransparentHistoryIndex(make_chain, 1 << 20, true));
+    const auto stop_transparent = [](TransparentHistoryIndex* index) {
+        index->Interrupt();
+        index->Stop();
+        DestroyTransparentHistoryIndex();
+    };
+    std::unique_ptr<TransparentHistoryIndex, decltype(stop_transparent)> transparent{
+        GetTransparentHistoryIndex(), stop_transparent};
+    BOOST_REQUIRE(InitOrchardIndex(make_chain, 1 << 20, true));
+    const auto stop_orchard = [](OrchardIndex* index) {
+        index->Interrupt();
+        index->Stop();
+        DestroyOrchardIndex();
+    };
+    std::unique_ptr<OrchardIndex, decltype(stop_orchard)> orchard{GetOrchardIndex(), stop_orchard};
+    BOOST_REQUIRE(transparent->Init());
+    BOOST_REQUIRE(orchard->Init());
+    BOOST_REQUIRE(transparent->StartBackgroundSync());
+    BOOST_REQUIRE(orchard->StartBackgroundSync());
+    IndexWaitSynced(*transparent, *Assert(m_node.shutdown));
+    IndexWaitSynced(*orchard, *Assert(m_node.shutdown));
+    SyncWithValidationInterfaceQueue();
+    const auto& chain = m_node.chain;
+    BOOST_CHECK_EQUAL(chain->getSyncedTransparentHistoryIndexHeight().value_or(-1), 100);
+    BOOST_CHECK_EQUAL(chain->getSyncedOrchardIndexHeight().value_or(-1), 100);
+
+    // Leave both indexes at the old tip while the active chain reorganizes.
+    // A matching height alone cannot prove that an index covers the new branch.
+    transparent->Stop();
+    orchard->Stop();
+    auto& chainman = *Assert(m_node.chainman);
+    CBlockIndex* old_tip{WITH_LOCK(cs_main, return chainman.ActiveChain().Tip())};
+    BlockValidationState state;
+    BOOST_REQUIRE(chainman.ActiveChainstate().InvalidateBlock(state, old_tip));
+    coinbaseKey.MakeNewKey(true);
+    const CScript replacement_script{GetScriptForRawPubKey(coinbaseKey.GetPubKey())};
+    const auto replacement{CreateAndProcessBlock({}, replacement_script)};
+    BOOST_REQUIRE(replacement.GetHash() != old_tip->GetBlockHash());
+    BOOST_REQUIRE_EQUAL(WITH_LOCK(cs_main, return chainman.ActiveChain().Height()), 100);
+    BOOST_CHECK(!chain->getSyncedTransparentHistoryIndexHeight().has_value());
+    BOOST_CHECK(!chain->getSyncedOrchardIndexHeight().has_value());
+    BOOST_CHECK(!chain->getTransparentHistory({replacement_script}, 100, 100).has_value());
+    SyncWithValidationInterfaceQueue();
 }
 
 BOOST_AUTO_TEST_SUITE_END()

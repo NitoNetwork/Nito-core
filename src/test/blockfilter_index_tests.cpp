@@ -71,7 +71,9 @@ CBlock BuildChainTestingSetup::CreateBlock(const CBlockIndex* prev,
     std::unique_ptr<CBlockTemplate> pblocktemplate = BlockAssembler{m_node.chainman->ActiveChainstate(), m_node.mempool.get()}.CreateNewBlock(scriptPubKey);
     CBlock& block = pblocktemplate->block;
     block.hashPrevBlock = prev->GetBlockHash();
-    block.nTime = prev->nTime + 1;
+    block.nTime = prev->nTime + 2 * m_node.chainman->GetConsensus().nPowTargetSpacing + 1;
+    block.nBits = GetNextWorkRequired(prev, &block, m_node.chainman->GetConsensus());
+    block.nNonce = 0;
 
     // Replace mempool-selected txns with just coinbase plus passed-in txns:
     block.vtx.resize(1);

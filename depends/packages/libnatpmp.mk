@@ -3,7 +3,7 @@ $(package)_version=07004b97cf691774efebe70404cf22201e4d330d
 $(package)_download_path=https://github.com/miniupnp/libnatpmp/archive
 $(package)_file_name=$($(package)_version).tar.gz
 $(package)_sha256_hash=9321953ceb39d07c25463e266e50d0ae7b64676bb3a986d932b18881ed94f1fb
-$(package)_patches=no_libtool.patch
+$(package)_patches=no_libtool.patch mingw_warning_free.patch
 
 define $(package)_set_vars
   $(package)_build_opts=CC="$($(package)_cc)"
@@ -12,7 +12,8 @@ define $(package)_set_vars
 endef
 
 define $(package)_preprocess_cmds
-  patch -p1 < $($(package)_patch_dir)/no_libtool.patch
+  patch -p1 < $($(package)_patch_dir)/no_libtool.patch && \
+  patch -p1 < $($(package)_patch_dir)/mingw_warning_free.patch
 endef
 
 define $(package)_build_cmds

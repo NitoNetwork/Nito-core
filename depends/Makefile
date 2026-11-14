@@ -47,6 +47,7 @@ MULTIPROCESS ?=
 LTO ?=
 NO_HARDEN ?=
 FALLBACK_DOWNLOAD_PATH ?= https://bitcoincore.org/depends-sources
+MIRROR_PATHS ?= https://ftp.netbsd.org/pub/pkgsrc/distfiles https://ftp.osuosl.org/pub/blfs/conglomeration/%
 
 C_STANDARD ?= c11
 CXX_STANDARD ?= c++20
@@ -157,10 +158,11 @@ libevent_packages_$(NO_LIBEVENT) = $(libevent_packages)
 qrencode_packages_$(NO_QR) = $(qrencode_$(host_os)_packages)
 
 qt_packages_$(NO_QT) = $(qt_packages) $(qt_$(host_os)_packages) $(qt_$(host_arch)_$(host_os)_packages) $(qrencode_packages_)
+qt_native_packages_$(NO_QT) = $(qt_native_packages) $(qt_$(host_os)_native_packages) $(qt_$(host_arch)_$(host_os)_native_packages)
 
 bdb_packages_$(NO_BDB) = $(bdb_packages)
 sqlite_packages_$(NO_SQLITE) = $(sqlite_packages)
-wallet_packages_$(NO_WALLET) = $(bdb_packages_) $(sqlite_packages_)
+wallet_packages_$(NO_WALLET) = $(bdb_packages_) $(sqlite_packages_) $(utf8proc_packages)
 
 upnp_packages_$(NO_UPNP) = $(upnp_packages)
 natpmp_packages_$(NO_NATPMP) = $(natpmp_packages)
@@ -170,7 +172,7 @@ multiprocess_packages_$(MULTIPROCESS) = $(multiprocess_packages)
 usdt_packages_$(NO_USDT) = $(usdt_$(host_os)_packages)
 
 packages += $($(host_arch)_$(host_os)_packages) $($(host_os)_packages) $(boost_packages_) $(libevent_packages_) $(qt_packages_) $(wallet_packages_) $(upnp_packages_) $(natpmp_packages_) $(usdt_packages_)
-native_packages += $($(host_arch)_$(host_os)_native_packages) $($(host_os)_native_packages)
+native_packages += $($(host_arch)_$(host_os)_native_packages) $($(host_os)_native_packages) $(qt_native_packages_)
 
 ifneq ($(zmq_packages_),)
 packages += $(zmq_packages)

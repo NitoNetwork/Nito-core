@@ -1,427 +1,902 @@
 <TS version="2.1" language="mr_IN">
-<context>
-    <name>AddressBookPage</name>
-    <message>
-        <source>Right-click to edit address or label</source>
-        <translation type="unfinished">पत्ता किंवा लेबल संपादित करण्यासाठी उजवे बटण क्लिक करा.</translation>
-    </message>
-    <message>
-        <source>Create a new address</source>
-        <translation type="unfinished">एक नवीन पत्ता तयार करा</translation>
-    </message>
-    <message>
-        <source>&amp;New</source>
-        <translation type="unfinished">&amp;नवा</translation>
-    </message>
-    <message>
-        <source>Copy the currently selected address to the system clipboard</source>
-        <translation type="unfinished">सध्याचा निवडलेला पत्ता सिस्टीम क्लिपबोर्डावर कॉपी करा</translation>
-    </message>
-    <message>
-        <source>&amp;Copy</source>
-        <translation type="unfinished">&amp;कॉपी</translation>
-    </message>
-    <message>
-        <source>C&amp;lose</source>
-        <translation type="unfinished">&amp;बंद करा</translation>
-    </message>
-    <message>
-        <source>Delete the currently selected address from the list</source>
-        <translation type="unfinished">सध्याचा निवडलेला पत्ता यादीमधून काढून टाका</translation>
-    </message>
-    <message>
-        <source>Enter address or label to search</source>
-        <translation type="unfinished">शोधण्यासाठी पत्ता किंवा लेबल दाखल करा</translation>
-    </message>
-    <message>
-        <source>Export the data in the current tab to a file</source>
-        <translation type="unfinished">सध्याच्या टॅबमधील डेटा एका फाईलमध्ये एक्स्पोर्ट करा</translation>
-    </message>
-    <message>
-        <source>&amp;Export</source>
-        <translation type="unfinished">&amp;एक्स्पोर्ट</translation>
-    </message>
-    <message>
-        <source>&amp;Delete</source>
-        <translation type="unfinished">&amp;काढून टाका</translation>
-    </message>
-    <message>
-        <source>Choose the address to send coins to</source>
-        <translation type="unfinished">ज्या पत्त्यावर नाणी पाठवायची आहेत तो निवडा</translation>
-    </message>
-    <message>
-        <source>Choose the address to receive coins with</source>
-        <translation type="unfinished">ज्या पत्त्यावर नाणी प्राप्त करायची आहेत तो</translation>
-    </message>
-    <message>
-        <source>C&amp;hoose</source>
-        <translation type="unfinished">&amp;निवडा</translation>
-    </message>
-    <message>
-        <source>These are your Nito addresses for sending payments. Always check the amount and the receiving address before sending coins.</source>
-        <translation type="unfinished">पैसे पाठविण्यासाठीचे हे तुमचे बिटकॉईन पत्त्ते आहेत. नाणी पाठविण्यापूर्वी नेहमी रक्कम आणि प्राप्त होणारा पत्ता तपासून पहा.</translation>
-    </message>
-    <message>
-        <source>&amp;Copy Address</source>
-        <translation type="unfinished">&amp;पत्ता कॉपी करा</translation>
-    </message>
-    <message>
-        <source>Copy &amp;Label</source>
-        <translation type="unfinished">शिक्का कॉपी करा</translation>
-    </message>
-    <message>
-        <source>&amp;Edit</source>
-        <translation type="unfinished">&amp;संपादित</translation>
-    </message>
-    <message>
-        <source>Export Address List</source>
-        <translation type="unfinished">पत्त्याची निर्यात करा</translation>
-    </message>
-    <message>
-        <source>Comma separated file</source>
-        <extracomment>Expanded name of the CSV file format. See: https://en.wikipedia.org/wiki/Comma-separated_values.</extracomment>
-        <translation type="unfinished">कॉमा सेपरेटेड फ़ाइल</translation>
-    </message>
-    <message>
-        <source>There was an error trying to save the address list to %1. Please try again.</source>
-        <extracomment>An error message. %1 is a stand-in argument for the name of the file we attempted to save to.</extracomment>
-        <translation type="unfinished">पत्ता सूची  वर जतन करण्याचा प्रयत्न करताना त्रुटी आली. कृपया पुन्हा प्रयत्न करा.%1</translation>
-    </message>
-    <message>
-        <source>Exporting Failed</source>
-        <translation type="unfinished">निर्यात अयशस्वी</translation>
-    </message>
-</context>
-<context>
-    <name>AddressTableModel</name>
-    <message>
-        <source>Label</source>
-        <translation type="unfinished">लेबल</translation>
-    </message>
-    <message>
-        <source>Address</source>
-        <translation type="unfinished">पत्ता</translation>
-    </message>
-    <message>
-        <source>(no label)</source>
-        <translation type="unfinished">(लेबल नाही)</translation>
-    </message>
-</context>
-<context>
-    <name>AskPassphraseDialog</name>
-    <message>
-        <source>Passphrase Dialog</source>
-        <translation type="unfinished">पासफ़्रेज़ डाएलोग</translation>
-    </message>
-    <message>
-        <source>Enter passphrase</source>
-        <translation type="unfinished">पासफ़्रेज़  प्रविष्ट करा</translation>
-    </message>
-    <message>
-        <source>New passphrase</source>
-        <translation type="unfinished">नवीन पासफ़्रेज़ </translation>
-    </message>
-    <message>
-        <source>Repeat new passphrase</source>
-        <translation type="unfinished">नवीन पासफ़्रेज़  पुनरावृत्ती करा</translation>
-    </message>
-    <message>
-        <source>Show passphrase</source>
-        <translation type="unfinished">पासफ़्रेज़ दाखवा</translation>
-    </message>
-    <message>
-        <source>Encrypt wallet</source>
-        <translation type="unfinished">वॉलेट एनक्रिप्ट करा</translation>
-    </message>
-    <message>
-        <source>This operation needs your wallet passphrase to unlock the wallet.</source>
-        <translation type="unfinished">वॉलेट अनलॉक करण्यासाठी या ऑपरेशनला तुमच्या वॉलेट पासफ़्रेज़ची आवश्यकता आहे.</translation>
-    </message>
-    <message>
-        <source>Unlock wallet</source>
-        <translation type="unfinished">वॉलेट अनलॉक करा</translation>
-    </message>
-    <message>
-        <source>Change passphrase</source>
-        <translation type="unfinished">पासफ़्रेज़ बदला</translation>
-    </message>
-    <message>
-        <source>Confirm wallet encryption</source>
-        <translation type="unfinished">वॉलेट एन्क्रिप्शनची पुष्टी करा
+    <context>
+        <name>AddressBookPage</name>
+        <message>
+            <source>Right-click to edit address or label</source>
+            <translation>पत्ता किंवा लेबल संपादित करण्यासाठी उजवे बटण क्लिक करा.</translation>
+        </message>
+        <message>
+            <source>Create a new address</source>
+            <translation>एक नवीन पत्ता तयार करा</translation>
+        </message>
+        <message>
+            <source>&amp;New</source>
+            <translation>&amp;नवा</translation>
+        </message>
+        <message>
+            <source>Copy the currently selected address to the system clipboard</source>
+            <translation>सध्याचा निवडलेला पत्ता सिस्टीम क्लिपबोर्डावर कॉपी करा</translation>
+        </message>
+        <message>
+            <source>&amp;Copy</source>
+            <translation>&amp;कॉपी</translation>
+        </message>
+        <message>
+            <source>C&amp;lose</source>
+            <translation>&amp;बंद करा</translation>
+        </message>
+        <message>
+            <source>Delete the currently selected address from the list</source>
+            <translation>सध्याचा निवडलेला पत्ता यादीमधून काढून टाका</translation>
+        </message>
+        <message>
+            <source>Enter address or label to search</source>
+            <translation>शोधण्यासाठी पत्ता किंवा लेबल दाखल करा</translation>
+        </message>
+        <message>
+            <source>Export the data in the current tab to a file</source>
+            <translation>सध्याच्या टॅबमधील डेटा एका फाईलमध्ये एक्स्पोर्ट करा</translation>
+        </message>
+        <message>
+            <source>&amp;Export</source>
+            <translation>&amp;एक्स्पोर्ट</translation>
+        </message>
+        <message>
+            <source>&amp;Delete</source>
+            <translation>&amp;काढून टाका</translation>
+        </message>
+        <message>
+            <source>Choose the address to send coins to</source>
+            <translation>ज्या पत्त्यावर नाणी पाठवायची आहेत तो निवडा</translation>
+        </message>
+        <message>
+            <source>Choose the address to receive coins with</source>
+            <translation>ज्या पत्त्यावर नाणी प्राप्त करायची आहेत तो</translation>
+        </message>
+        <message>
+            <source>C&amp;hoose</source>
+            <translation>&amp;निवडा</translation>
+        </message>
+        <message>
+            <source>These are your Nito addresses for sending payments. Always check the amount and the receiving address before sending coins.</source>
+            <translation>पैसे पाठविण्यासाठीचे हे तुमचे बिटकॉईन पत्त्ते आहेत. नाणी पाठविण्यापूर्वी नेहमी रक्कम आणि प्राप्त होणारा पत्ता तपासून पहा.</translation>
+        </message>
+        <message>
+            <source>&amp;Copy Address</source>
+            <translation>&amp;पत्ता कॉपी करा</translation>
+        </message>
+        <message>
+            <source>Copy &amp;Label</source>
+            <translation>शिक्का कॉपी करा</translation>
+        </message>
+        <message>
+            <source>&amp;Edit</source>
+            <translation>&amp;संपादित</translation>
+        </message>
+        <message>
+            <source>Export Address List</source>
+            <translation>पत्त्याची निर्यात करा</translation>
+        </message>
+        <message>
+            <source>Comma separated file</source>
+            <extracomment>Expanded name of the CSV file format. See: https://en.wikipedia.org/wiki/Comma-separated_values.</extracomment>
+            <translation>कॉमा सेपरेटेड फ़ाइल</translation>
+        </message>
+        <message>
+            <source>There was an error trying to save the address list to %1. Please try again.</source>
+            <extracomment>An error message. %1 is a stand-in argument for the name of the file we attempted to save to.</extracomment>
+            <translation>पत्ता सूची  वर जतन करण्याचा प्रयत्न करताना त्रुटी आली. कृपया पुन्हा प्रयत्न करा.%1</translation>
+        </message>
+        <message>
+            <source>Exporting Failed</source>
+            <translation>निर्यात अयशस्वी</translation>
+        </message>
+    </context>
+    <context>
+        <name>AddressTableModel</name>
+        <message>
+            <source>Label</source>
+            <translation>लेबल</translation>
+        </message>
+        <message>
+            <source>Address</source>
+            <translation>पत्ता</translation>
+        </message>
+        <message>
+            <source>(no label)</source>
+            <translation>(लेबल नाही)</translation>
+        </message>
+    </context>
+    <context>
+        <name>AskPassphraseDialog</name>
+        <message>
+            <source>Passphrase Dialog</source>
+            <translation>पासफ़्रेज़ डाएलोग</translation>
+        </message>
+        <message>
+            <source>Enter passphrase</source>
+            <translation>पासफ़्रेज़  प्रविष्ट करा</translation>
+        </message>
+        <message>
+            <source>New passphrase</source>
+            <translation>नवीन पासफ़्रेज़ </translation>
+        </message>
+        <message>
+            <source>Repeat new passphrase</source>
+            <translation>नवीन पासफ़्रेज़  पुनरावृत्ती करा</translation>
+        </message>
+        <message>
+            <source>Show passphrase</source>
+            <translation>पासफ़्रेज़ दाखवा</translation>
+        </message>
+        <message>
+            <source>Encrypt wallet</source>
+            <translation>वॉलेट एनक्रिप्ट करा</translation>
+        </message>
+        <message>
+            <source>This operation needs your wallet passphrase to unlock the wallet.</source>
+            <translation>वॉलेट अनलॉक करण्यासाठी या ऑपरेशनला तुमच्या वॉलेट पासफ़्रेज़ची आवश्यकता आहे.</translation>
+        </message>
+        <message>
+            <source>Unlock wallet</source>
+            <translation>वॉलेट अनलॉक करा</translation>
+        </message>
+        <message>
+            <source>Change passphrase</source>
+            <translation>पासफ़्रेज़ बदला</translation>
+        </message>
+        <message>
+            <source>Confirm wallet encryption</source>
+            <translation>वॉलेट एन्क्रिप्शनची पुष्टी करा
  </translation>
-    </message>
+        </message>
     </context>
-<context>
-    <name>NitoApplication</name>
-    <message>
-        <source>A fatal error occurred. %1 can no longer continue safely and will quit.</source>
-        <translation type="unfinished">एक गंभीर त्रुटी आली. %1यापुढे सुरक्षितपणे सुरू ठेवू शकत नाही आणि संपेल.</translation>
-    </message>
-    <message>
-        <source>Internal error</source>
-        <translation type="unfinished">अंतर्गत त्रुटी</translation>
-    </message>
+    <context>
+        <name>NitoApplication</name>
+        <message>
+            <source>A fatal error occurred. %1 can no longer continue safely and will quit.</source>
+            <translation>एक गंभीर त्रुटी आली. %1यापुढे सुरक्षितपणे सुरू ठेवू शकत नाही आणि संपेल.</translation>
+        </message>
+        <message>
+            <source>Internal error</source>
+            <translation>अंतर्गत त्रुटी</translation>
+        </message>
     </context>
-<context>
-    <name>QObject</name>
-    <message>
-        <source>%1 didn't yet exit safely…</source>
-        <translation type="unfinished">%1अजून सुरक्षितपणे बाहेर पडलो नाही...</translation>
-    </message>
-    <message numerus="yes">
-        <source>%n second(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n minute(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n hour(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n day(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n week(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n year(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
+    <context>
+        <name>QObject</name>
+        <message>
+            <source>%1 didn't yet exit safely…</source>
+            <translation>%1अजून सुरक्षितपणे बाहेर पडलो नाही...</translation>
+        </message>
+        <message numerus="yes">
+            <source>%n second(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n minute(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n hour(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n day(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n week(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n year(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
     </context>
-<context>
-    <name>NitoGUI</name>
-    <message>
-        <source>&amp;Minimize</source>
-        <translation type="unfinished">&amp;मिनीमाइज़</translation>
-    </message>
-    <message>
-        <source>&amp;Options…</source>
-        <translation type="unfinished">&amp;पर्याय</translation>
-    </message>
-    <message>
-        <source>&amp;Encrypt Wallet…</source>
-        <translation type="unfinished">&amp;एनक्रिप्ट वॉलेट</translation>
-    </message>
-    <message>
-        <source>&amp;Backup Wallet…</source>
-        <translation type="unfinished">&amp;बॅकअप वॉलेट...</translation>
-    </message>
-    <message>
-        <source>&amp;Change Passphrase…</source>
-        <translation type="unfinished">&amp;पासफ्रेज बदला...</translation>
-    </message>
-    <message>
-        <source>Sign &amp;message…</source>
-        <translation type="unfinished">स्वाक्षरी आणि संदेश...</translation>
-    </message>
-    <message>
-        <source>&amp;Verify message…</source>
-        <translation type="unfinished">&amp;संदेश सत्यापित करा...</translation>
-    </message>
-    <message>
-        <source>&amp;Load PSBT from file…</source>
-        <translation type="unfinished">फाइलमधून PSBT &amp;लोड करा...</translation>
-    </message>
-    <message>
-        <source>Close Wallet…</source>
-        <translation type="unfinished">वॉलेट बंद करा...</translation>
-    </message>
-    <message>
-        <source>Create Wallet…</source>
-        <translation type="unfinished">वॉलेट तयार करा...</translation>
-    </message>
-    <message>
-        <source>Close All Wallets…</source>
-        <translation type="unfinished">सर्व वॉलेट बंद करा...</translation>
-    </message>
-    <message>
-        <source>Syncing Headers (%1%)…</source>
-        <translation type="unfinished">शीर्षलेख समक्रमित करत आहे (%1%)…</translation>
-    </message>
-    <message>
-        <source>Synchronizing with network…</source>
-        <translation type="unfinished">नेटवर्कसह सिंक्रोनाइझ करत आहे...</translation>
-    </message>
-    <message>
-        <source>Indexing blocks on disk…</source>
-        <translation type="unfinished">डिस्कवर ब्लॉक अनुक्रमित करत आहे...</translation>
-    </message>
-    <message>
-        <source>Processing blocks on disk…</source>
-        <translation type="unfinished">डिस्कवर ब्लॉक्सवर प्रक्रिया करत आहे...</translation>
-    </message>
-    <message numerus="yes">
-        <source>Processed %n block(s) of transaction history.</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n active connection(s) to Nito network.</source>
-        <extracomment>A substring of the tooltip.</extracomment>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
+    <context>
+        <name>NitoGUI</name>
+        <message>
+            <source>&amp;Minimize</source>
+            <translation>&amp;मिनीमाइज़</translation>
+        </message>
+        <message>
+            <source>&amp;Options…</source>
+            <translation>&amp;पर्याय</translation>
+        </message>
+        <message>
+            <source>&amp;Encrypt Wallet…</source>
+            <translation>&amp;एनक्रिप्ट वॉलेट</translation>
+        </message>
+        <message>
+            <source>&amp;Backup Wallet…</source>
+            <translation>&amp;बॅकअप वॉलेट...</translation>
+        </message>
+        <message>
+            <source>&amp;Change Passphrase…</source>
+            <translation>&amp;पासफ्रेज बदला...</translation>
+        </message>
+        <message>
+            <source>Sign &amp;message…</source>
+            <translation>स्वाक्षरी आणि संदेश...</translation>
+        </message>
+        <message>
+            <source>&amp;Verify message…</source>
+            <translation>&amp;संदेश सत्यापित करा...</translation>
+        </message>
+        <message>
+            <source>&amp;Load PSBT from file…</source>
+            <translation>फाइलमधून PSBT &amp;लोड करा...</translation>
+        </message>
+        <message>
+            <source>Close Wallet…</source>
+            <translation>वॉलेट बंद करा...</translation>
+        </message>
+        <message>
+            <source>Create Wallet…</source>
+            <translation>वॉलेट तयार करा...</translation>
+        </message>
+        <message>
+            <source>Close All Wallets…</source>
+            <translation>सर्व वॉलेट बंद करा...</translation>
+        </message>
+        <message>
+            <source>Syncing Headers (%1%)…</source>
+            <translation>शीर्षलेख समक्रमित करत आहे (%1%)…</translation>
+        </message>
+        <message>
+            <source>Synchronizing with network…</source>
+            <translation>नेटवर्कसह सिंक्रोनाइझ करत आहे...</translation>
+        </message>
+        <message>
+            <source>Indexing blocks on disk…</source>
+            <translation>डिस्कवर ब्लॉक अनुक्रमित करत आहे...</translation>
+        </message>
+        <message>
+            <source>Processing blocks on disk…</source>
+            <translation>डिस्कवर ब्लॉक्सवर प्रक्रिया करत आहे...</translation>
+        </message>
+        <message numerus="yes">
+            <source>Processed %n block(s) of transaction history.</source>
+            <translation>
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n active connection(s) to Nito network.</source>
+            <extracomment>A substring of the tooltip.</extracomment>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message>
+            <source>Show Recovery Phrase…</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Show the wallet's BIP39 recovery phrase</source>
+            <translation>Show the wallet's BIP39 recovery phrase</translation>
+        </message>
+        <message>
+            <source>Open Wallet</source>
+            <translation>Open Wallet</translation>
+        </message>
+        <message>
+            <source>&amp;Overview</source>
+            <translation>&amp;Overview</translation>
+        </message>
+        <message>
+            <source>&amp;Settings</source>
+            <translation>&amp;Settings</translation>
+        </message>
     </context>
-<context>
-    <name>CoinControlDialog</name>
-    <message>
-        <source>(no label)</source>
-        <translation type="unfinished">(लेबल नाही)</translation>
-    </message>
+    <context>
+        <name>CoinControlDialog</name>
+        <message>
+            <source>(no label)</source>
+            <translation>(लेबल नाही)</translation>
+        </message>
     </context>
-<context>
-    <name>Intro</name>
-    <message numerus="yes">
-        <source>%n GB of space available</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>(of %n GB needed)</source>
-        <translation type="unfinished">
-            <numerusform>(of %n GB needed)</numerusform>
-            <numerusform>(of %n GB needed)</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>(%n GB needed for full chain)</source>
-        <translation type="unfinished">
-            <numerusform>(%n GB needed for full chain)</numerusform>
-            <numerusform>(%n GB needed for full chain)</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>(sufficient to restore backups %n day(s) old)</source>
-        <extracomment>Explanatory text on the capability of the current prune target.</extracomment>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
+    <context>
+        <name>Intro</name>
+        <message numerus="yes">
+            <source>%n GB of space available</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>(of %n GB needed)</source>
+            <translation>
+                <numerusform>(of %n GB needed)</numerusform>
+                <numerusform>(of %n GB needed)</numerusform>
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>(%n GB needed for full chain)</source>
+            <translation>
+                <numerusform>(%n GB needed for full chain)</numerusform>
+                <numerusform>(%n GB needed for full chain)</numerusform>
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>(sufficient to restore backups %n day(s) old)</source>
+            <extracomment>Explanatory text on the capability of the current prune target.</extracomment>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
     </context>
-<context>
-    <name>PeerTableModel</name>
-    <message>
-        <source>Address</source>
-        <extracomment>Title of Peers Table column which contains the IP/Onion/I2P address of the connected peer.</extracomment>
-        <translation type="unfinished">पत्ता</translation>
-    </message>
+    <context>
+        <name>PeerTableModel</name>
+        <message>
+            <source>Address</source>
+            <extracomment>Title of Peers Table column which contains the IP/Onion/I2P address of the connected peer.</extracomment>
+            <translation>पत्ता</translation>
+        </message>
     </context>
-<context>
-    <name>RecentRequestsTableModel</name>
-    <message>
-        <source>Label</source>
-        <translation type="unfinished">लेबल</translation>
-    </message>
-    <message>
-        <source>(no label)</source>
-        <translation type="unfinished">(लेबल नाही)</translation>
-    </message>
+    <context>
+        <name>RecentRequestsTableModel</name>
+        <message>
+            <source>Label</source>
+            <translation>लेबल</translation>
+        </message>
+        <message>
+            <source>(no label)</source>
+            <translation>(लेबल नाही)</translation>
+        </message>
     </context>
-<context>
-    <name>SendCoinsDialog</name>
-    <message numerus="yes">
-        <source>Estimated to begin confirmation within %n block(s).</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message>
-        <source>(no label)</source>
-        <translation type="unfinished">(लेबल नाही)</translation>
-    </message>
-</context>
-<context>
-    <name>TransactionDesc</name>
-    <message numerus="yes">
-        <source>matures in %n more block(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
+    <context>
+        <name>SendCoinsDialog</name>
+        <message numerus="yes">
+            <source>Estimated to begin confirmation within %n block(s).</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message>
+            <source>(no label)</source>
+            <translation>(लेबल नाही)</translation>
+        </message>
+        <message>
+            <source>Spend Bech32x private notes. Leave unchecked to spend transparent UTXOs.</source>
+            <translation>Spend Bech32x private notes. Leave unchecked to spend transparent UTXOs.</translation>
+        </message>
+        <message>
+            <source>Use private balance</source>
+            <translation>Use private balance</translation>
+        </message>
+        <message>
+            <source>Transparent:</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Private:</source>
+            <translation>Private:</translation>
+        </message>
+        <message>
+            <source>Total balance:</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Private balance</source>
+            <translation>Private balance</translation>
+        </message>
+        <message>
+            <source>Transparent balance</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Creating private transaction proof...</source>
+            <translation>Creating private transaction proof...</translation>
+        </message>
     </context>
-<context>
-    <name>TransactionTableModel</name>
-    <message>
-        <source>Label</source>
-        <translation type="unfinished">लेबल</translation>
-    </message>
-    <message>
-        <source>(no label)</source>
-        <translation type="unfinished">(लेबल नाही)</translation>
-    </message>
+    <context>
+        <name>TransactionDesc</name>
+        <message numerus="yes">
+            <source>matures in %n more block(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message>
+            <source>Source address unavailable</source>
+            <translation>Source address unavailable</translation>
+        </message>
+        <message>
+            <source>%1 input addresses</source>
+            <translation>%1 input addresses</translation>
+        </message>
+        <message>
+            <source>Show input addresses</source>
+            <translation>Show input addresses</translation>
+        </message>
+        <message>
+            <source>Hide input addresses</source>
+            <translation>Hide input addresses</translation>
+        </message>
+        <message>
+            <source>Some input addresses are unavailable.</source>
+            <translation>Some input addresses are unavailable.</translation>
+        </message>
     </context>
-<context>
-    <name>TransactionView</name>
-    <message>
-        <source>Comma separated file</source>
-        <extracomment>Expanded name of the CSV file format. See: https://en.wikipedia.org/wiki/Comma-separated_values.</extracomment>
-        <translation type="unfinished">कॉमा सेपरेटेड फ़ाइल</translation>
-    </message>
-    <message>
-        <source>Label</source>
-        <translation type="unfinished">लेबल</translation>
-    </message>
-    <message>
-        <source>Address</source>
-        <translation type="unfinished">पत्ता</translation>
-    </message>
-    <message>
-        <source>Exporting Failed</source>
-        <translation type="unfinished">निर्यात अयशस्वी</translation>
-    </message>
+    <context>
+        <name>TransactionTableModel</name>
+        <message>
+            <source>Label</source>
+            <translation>लेबल</translation>
+        </message>
+        <message>
+            <source>(no label)</source>
+            <translation>(लेबल नाही)</translation>
+        </message>
+        <message>
+            <source>Bech32x private note</source>
+            <translation>Bech32x private note</translation>
+        </message>
+        <message>
+            <source>Bech32x to transparent</source>
+            <translation>Bech32x to transparent</translation>
+        </message>
+        <message>
+            <source>Private received</source>
+            <translation>Private received</translation>
+        </message>
+        <message>
+            <source>Private sent</source>
+            <translation>Private sent</translation>
+        </message>
+        <message>
+            <source>Internal transfer</source>
+            <translation>Internal transfer</translation>
+        </message>
+        <message>
+            <source>own wallet</source>
+            <translation>own wallet</translation>
+        </message>
     </context>
-<context>
-    <name>WalletView</name>
-    <message>
-        <source>&amp;Export</source>
-        <translation type="unfinished">&amp;एक्स्पोर्ट</translation>
-    </message>
-    <message>
-        <source>Export the data in the current tab to a file</source>
-        <translation type="unfinished">सध्याच्या टॅबमधील डेटा एका फाईलमध्ये एक्स्पोर्ट करा</translation>
-    </message>
+    <context>
+        <name>TransactionView</name>
+        <message>
+            <source>Comma separated file</source>
+            <extracomment>Expanded name of the CSV file format. See: https://en.wikipedia.org/wiki/Comma-separated_values.</extracomment>
+            <translation>कॉमा सेपरेटेड फ़ाइल</translation>
+        </message>
+        <message>
+            <source>Label</source>
+            <translation>लेबल</translation>
+        </message>
+        <message>
+            <source>Address</source>
+            <translation>पत्ता</translation>
+        </message>
+        <message>
+            <source>Exporting Failed</source>
+            <translation>निर्यात अयशस्वी</translation>
+        </message>
     </context>
-<context>
-    <name>nito-core</name>
-    <message>
-        <source>Settings file could not be read</source>
-        <translation type="unfinished">सेटिंग्ज फाइल वाचता आली नाही</translation>
-    </message>
-    <message>
-        <source>Settings file could not be written</source>
-        <translation type="unfinished">सेटिंग्ज फाइल लिहिता आली नाही</translation>
-    </message>
-</context>
+    <context>
+        <name>WalletView</name>
+        <message>
+            <source>&amp;Export</source>
+            <translation>&amp;एक्स्पोर्ट</translation>
+        </message>
+        <message>
+            <source>Export the data in the current tab to a file</source>
+            <translation>सध्याच्या टॅबमधील डेटा एका फाईलमध्ये एक्स्पोर्ट करा</translation>
+        </message>
+        <message>
+            <source>Recovery Phrase</source>
+            <translation>Recovery Phrase</translation>
+        </message>
+        <message>
+            <source>Show Recovery Phrase</source>
+            <translation>Show Recovery Phrase</translation>
+        </message>
+        <message>
+            <source>Write these words down in order. Anyone with this phrase can spend funds derived from this wallet seed.</source>
+            <translation>Write these words down in order. Anyone with this phrase can spend funds derived from this wallet seed.</translation>
+        </message>
+        <message>
+            <source>Rebuild &amp;Transaction History</source>
+            <translation>Rebuild &amp;Transaction History</translation>
+        </message>
+        <message>
+            <source>Rebuild this wallet's full sent and received transaction history from its recovery phrase</source>
+            <translation>Rebuild this wallet's full sent and received transaction history from its recovery phrase</translation>
+        </message>
+        <message>
+            <source>Rebuild Transaction History</source>
+            <translation>Rebuild Transaction History</translation>
+        </message>
+        <message>
+            <source>This will scan the blockchain to rebuild the wallet's full sent and received transaction history. Available funds stay spendable during the rebuild, but the transaction list may change when it completes.
+
+Continue?</source>
+            <translation>This will scan the blockchain to rebuild the wallet's full sent and received transaction history. Available funds stay spendable during the rebuild, but the transaction list may change when it completes.
+
+Continue?</translation>
+        </message>
+        <message>
+            <source>Wallet transaction history was rebuilt through block %1.</source>
+            <translation>Wallet transaction history was rebuilt through block %1.</translation>
+        </message>
+        <message>
+            <source>Wallet transaction history was already complete through block %1.</source>
+            <translation>Wallet transaction history was already complete through block %1.</translation>
+        </message>
+        <message>
+            <source>The recovery phrase gives full control over this wallet's funds. Only reveal it in a private place and store it offline.</source>
+            <translation>The recovery phrase gives full control over this wallet's funds. Only reveal it in a private place and store it offline.</translation>
+        </message>
+    </context>
+    <context>
+        <name>nito-core</name>
+        <message>
+            <source>Settings file could not be read</source>
+            <translation>सेटिंग्ज फाइल वाचता आली नाही</translation>
+        </message>
+        <message>
+            <source>Settings file could not be written</source>
+            <translation>सेटिंग्ज फाइल लिहिता आली नाही</translation>
+        </message>
+        <message>
+            <source>A wallet restored from a recovery phrase cannot use an external signer.</source>
+            <translation>A wallet restored from a recovery phrase cannot use an external signer.</translation>
+        </message>
+        <message>
+            <source>A wallet restored from a recovery phrase must have private keys enabled.</source>
+            <translation>A wallet restored from a recovery phrase must have private keys enabled.</translation>
+        </message>
+        <message>
+            <source>BIP39 mnemonic entropy is not valid Nito HD seed key material.</source>
+            <translation>BIP39 mnemonic entropy is not valid Nito HD seed key material.</translation>
+        </message>
+        <message>
+            <source>Current spendable balance discovered.</source>
+            <translation>Current spendable balance discovered.</translation>
+        </message>
+        <message>
+            <source>Discovering current spendable balance...</source>
+            <translation>Discovering current spendable balance...</translation>
+        </message>
+        <message>
+            <source>Expected a BIP39 English mnemonic with 12 or 24 words, got %u words.</source>
+            <translation>Expected a BIP39 English mnemonic with 12 or 24 words, got %u words.</translation>
+        </message>
+        <message>
+            <source>Invalid BIP39 mnemonic checksum.</source>
+            <translation>Invalid BIP39 mnemonic checksum.</translation>
+        </message>
+        <message>
+            <source>Nito.network mnemonic export requires 16-byte or 32-byte BIP39 entropy.</source>
+            <translation>Nito.network mnemonic export requires 16-byte or 32-byte BIP39 entropy.</translation>
+        </message>
+        <message>
+            <source>Nito.network mnemonic export requires a 32-byte HD seed metadata key.</source>
+            <translation>Nito.network mnemonic export requires a 32-byte HD seed metadata key.</translation>
+        </message>
+        <message>
+            <source>Nito.network mnemonic metadata requires 12-word or 24-word BIP39 entropy.</source>
+            <translation>Nito.network mnemonic metadata requires 12-word or 24-word BIP39 entropy.</translation>
+        </message>
+        <message>
+            <source>Nito.network mnemonic seed metadata checksum is invalid.</source>
+            <translation>Nito.network mnemonic seed metadata checksum is invalid.</translation>
+        </message>
+        <message>
+            <source>Preparing wallet recovery...</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Restoring private balance...</source>
+            <translation>Restoring private balance...</translation>
+        </message>
+        <message>
+            <source>This descriptor wallet does not contain exportable Nito.network seed metadata. Create a new wallet from a recovery phrase before using dumpmnemonic.</source>
+            <translation>This descriptor wallet does not contain exportable Nito.network seed metadata. Create a new wallet from a recovery phrase before using dumpmnemonic.</translation>
+        </message>
+        <message>
+            <source>Unable to access the Nito.network wallet seed. Unlock the wallet or restore from the recovery phrase.</source>
+            <translation>Unable to access the Nito.network wallet seed. Unlock the wallet or restore from the recovery phrase.</translation>
+        </message>
+        <message>
+            <source>Unknown BIP39 English mnemonic word: %s</source>
+            <translation>Unknown BIP39 English mnemonic word: %s</translation>
+        </message>
+        <message>
+            <source>Wallet created but could not be unlocked to restore the recovery phrase.</source>
+            <translation>Wallet created but could not be unlocked to restore the recovery phrase.</translation>
+        </message>
+        <message>
+            <source>Wallet created but recovery phrase restore failed: %s</source>
+            <translation>Wallet created but recovery phrase restore failed: %s</translation>
+        </message>
+        <message>
+            <source>Wallet recovery complete.</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase but could not be opened.</source>
+            <translation>Wallet restored from recovery phrase but could not be opened.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but current UTXO discovery could not complete. Current transparent balance may be incomplete until you rescan.</source>
+            <translation>Wallet restored from recovery phrase, but current UTXO discovery could not complete. Current transparent balance may be incomplete until you rescan.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but current UTXO discovery could not start because another rescan is already running.</source>
+            <translation>Wallet restored from recovery phrase, but current UTXO discovery could not start because another rescan is already running.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but current UTXO discovery was aborted. Current transparent balance may be incomplete until you rescan.</source>
+            <translation>Wallet restored from recovery phrase, but current UTXO discovery was aborted. Current transparent balance may be incomplete until you rescan.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but current UTXO discovery was skipped because the chain height is not available yet. Keep the node running until it is synced, then rescan.</source>
+            <translation>Wallet restored from recovery phrase, but current UTXO discovery was skipped because the chain height is not available yet. Keep the node running until it is synced, then rescan.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but private balance recovery could not complete. Current private balance may be incomplete until the wallet rescans private notes.</source>
+            <translation>Wallet restored from recovery phrase, but private balance recovery could not complete. Current private balance may be incomplete until the wallet rescans private notes.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but private balance recovery was aborted. Current private balance may be incomplete until the wallet rescans private notes.</source>
+            <translation>Wallet restored from recovery phrase, but private balance recovery was aborted. Current private balance may be incomplete until the wallet rescans private notes.</translation>
+        </message>
+        <message>
+            <source>No spendable private notes are available.</source>
+            <translation>No spendable private notes are available.</translation>
+        </message>
+        <message>
+            <source>Private funds are waiting for confirmation. Wait for the next block before spending private notes.</source>
+            <translation>Private funds are waiting for confirmation. Wait for the next block before spending private notes.</translation>
+        </message>
+        <message>
+            <source>The selected private notes are waiting for confirmation. Wait for the next block before spending them.</source>
+            <translation>The selected private notes are waiting for confirmation. Wait for the next block before spending them.</translation>
+        </message>
+        <message>
+            <source>The selected private notes do not cover the transaction target.</source>
+            <translation>The selected private notes do not cover the transaction target.</translation>
+        </message>
+        <message>
+            <source>Some private funds are still waiting for confirmation. Wait for the next block or spend a smaller confirmed amount.</source>
+            <translation>Some private funds are still waiting for confirmation. Wait for the next block or spend a smaller confirmed amount.</translation>
+        </message>
+        <message>
+            <source>Insufficient confirmed private funds. Available private balance: %s; required: %s.</source>
+            <translation>Insufficient confirmed private funds. Available private balance: %s; required: %s.</translation>
+        </message>
+        <message>
+            <source>A selected private note has already been spent by another transaction. Wait for the wallet to synchronize or for the next block, then create a new private transaction.</source>
+            <translation>A selected private note has already been spent by another transaction. Wait for the wallet to synchronize or for the next block, then create a new private transaction.</translation>
+        </message>
+        <message>
+            <source>Rebuilding transaction history...</source>
+            <translation>Rebuilding transaction history...</translation>
+        </message>
+        <message>
+            <source>The transparent history index is not available. Restart Nito Core with -transparenthistoryindex=1 before rebuilding wallet history.</source>
+            <translation>The transparent history index is not available. Restart Nito Core with -transparenthistoryindex=1 before rebuilding wallet history.</translation>
+        </message>
+        <message>
+            <source>The transparent history index is being prepared. Progress: %.1f%% (%d/%d). Try again in a few minutes.</source>
+            <translation>The transparent history index is being prepared. Progress: %.1f%% (%d/%d). Try again in a few minutes.</translation>
+        </message>
+        <message>
+            <source>The private wallet index is not available. Restart Nito Core with private wallet indexing enabled (-orchardindex=1) before rebuilding private transaction history.</source>
+            <translation>The private wallet index is not available. Restart Nito Core with private wallet indexing enabled (-orchardindex=1) before rebuilding private transaction history.</translation>
+        </message>
+        <message>
+            <source>The private wallet index is being prepared. Progress: %.1f%% (%d/%d). Try again in a few minutes before rebuilding private transaction history.</source>
+            <translation>The private wallet index is being prepared. Progress: %.1f%% (%d/%d). Try again in a few minutes before rebuilding private transaction history.</translation>
+        </message>
+        <message>
+            <source>Private receiving address metadata is not available yet for this encrypted wallet. Unlock the wallet once or restore it from the recovery phrase to prepare private receiving addresses.</source>
+            <translation>Private receiving address metadata is not available yet for this encrypted wallet. Unlock the wallet once or restore it from the recovery phrase to prepare private receiving addresses.</translation>
+        </message>
+    </context>
+    <context>
+        <name>OverviewPage</name>
+        <message>
+            <source>Transparent:</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Private:</source>
+            <translation>Private:</translation>
+        </message>
+        <message>
+            <source>Wallet scan in progress. Transparent and private balances may still be loading.</source>
+            <translation>Wallet scan in progress. Transparent and private balances may still be loading.</translation>
+        </message>
+    </context>
+    <context>
+        <name>ReceiveCoinsDialog</name>
+        <message>
+            <source>Bech32x</source>
+            <translation>Bech32x</translation>
+        </message>
+        <message>
+            <source>Generates a private Bech32x receiving address starting with nito1x.</source>
+            <translation>Generates a private Bech32x receiving address starting with nito1x.</translation>
+        </message>
+        <message>
+            <source>Generates a P2SH-wrapped SegWit address starting with 3.</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Generates a legacy address starting with 1.</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Generates a native segwit address.</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Legacy (P2PKH)</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Nito.network private transactions activate at block %1. Current block: %2.</source>
+            <translation>Nito.network private transactions activate at block %1. Current block: %2.</translation>
+        </message>
+        <message>
+            <source>P2SH-SegWit</source>
+            <translation type="unfinished" />
+        </message>
+    </context>
+    <context>
+        <name>WalletModel</name>
+        <message>
+            <source>Nito.network private transactions activate at block %1. Current block: %2.</source>
+            <translation>Nito.network private transactions activate at block %1. Current block: %2.</translation>
+        </message>
+        <message>
+            <source>Nito.network private transactions are not active on this network.</source>
+            <translation>Nito.network private transactions are not active on this network.</translation>
+        </message>
+    </context>
+    <context>
+        <name>OptionsDialog</name>
+        <message>
+            <source>Enable private Bech32x receiving addresses</source>
+            <translation>Enable private Bech32x receiving addresses</translation>
+        </message>
+        <message>
+            <source>Enable Legacy/P2SH receiving addresses</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Show Bech32x private receiving addresses, private balances and private balance controls after the activation block.</source>
+            <translation>Show Bech32x private receiving addresses, private balances and private balance controls after the activation block.</translation>
+        </message>
+        <message>
+            <source>Show Legacy (P2PKH) and P2SH-SegWit in the receiving address type selector.</source>
+            <translation type="unfinished" />
+        </message>
+    </context>
+    <context>
+        <name>CreateWalletDialog</name>
+        <message>
+            <source>Create this wallet from a BIP39 recovery phrase. The wallet restores currently spendable funds first; full visible history can be rebuilt from the Transactions page after it opens.</source>
+            <translation>Create this wallet from a BIP39 recovery phrase. The wallet restores currently spendable funds first; full visible history can be rebuilt from the Transactions page after it opens.</translation>
+        </message>
+        <message>
+            <source>Recovery phrase</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Restore</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Restore from recovery phrase</source>
+            <translation>Restore from recovery phrase</translation>
+        </message>
+        <message>
+            <source>word1 word2 ... word12/24</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Create or Restore Wallet</source>
+            <translation>Create or Restore Wallet</translation>
+        </message>
+        <message>
+            <source>Create a new wallet or restore an existing wallet.</source>
+            <translation>Create a new wallet or restore an existing wallet.</translation>
+        </message>
+        <message>
+            <source>Provide a wallet name, then choose how to continue.</source>
+            <translation>Provide a wallet name, then choose how to continue.</translation>
+        </message>
+        <message>
+            <source>Restore this wallet from an existing wallet.dat backup file. This keeps the wallet history stored in that file.</source>
+            <translation>Restore this wallet from an existing wallet.dat backup file. This keeps the wallet history stored in that file.</translation>
+        </message>
+        <message>
+            <source>Restore from wallet.dat file</source>
+            <translation>Restore from wallet.dat file</translation>
+        </message>
+        <message>
+            <source>Enter 12 or 24 BIP39 English words separated by spaces. This restores currently spendable funds. Older spent transaction history is not imported during seed restore; use the Transactions page after the wallet opens if you want to rebuild visible history.</source>
+            <translation>Enter 12 or 24 BIP39 English words separated by spaces. This restores currently spendable funds. Older spent transaction history is not imported during seed restore; use the Transactions page after the wallet opens if you want to rebuild visible history.</translation>
+        </message>
+    </context>
+    <context>
+        <name>CreateWalletActivity</name>
+        <message>
+            <source>Restore Wallet</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Restoring Wallet &lt;b&gt;%1&lt;/b&gt; from recovery phrase…</source>
+            <translation>Restoring Wallet &lt;b&gt;%1&lt;/b&gt; from recovery phrase…</translation>
+        </message>
+        <message>
+            <source>Restoring available funds for Wallet &lt;b&gt;%1&lt;/b&gt; from recovery phrase...</source>
+            <translation>Restoring available funds for Wallet &lt;b&gt;%1&lt;/b&gt; from recovery phrase...</translation>
+        </message>
+        <message>
+            <source>Restoring Wallet &lt;b&gt;%1&lt;/b&gt; from backup file...</source>
+            <translation>Restoring Wallet &lt;b&gt;%1&lt;/b&gt; from backup file...</translation>
+        </message>
+        <message>
+            <source>Restore wallet failed</source>
+            <translation>Restore wallet failed</translation>
+        </message>
+        <message>
+            <source>Restore wallet warning</source>
+            <translation>Restore wallet warning</translation>
+        </message>
+    </context>
+    <context>
+        <name>WalletFrame</name>
+        <message>
+            <source>Import or create a wallet</source>
+            <translation>Import or create a wallet</translation>
+        </message>
+    </context>
+    <context>
+        <name>ModalOverlay</name>
+        <message>
+            <source>Wallet history index</source>
+            <translation>Wallet history index</translation>
+        </message>
+        <message>
+            <source>Unknown...</source>
+            <translation>Unknown...</translation>
+        </message>
+        <message>
+            <source>Recent transactions may not yet be visible, and therefore your wallet's balance might be incorrect. This information will be correct once your wallet has finished synchronizing with the Nito network, as detailed below.</source>
+            <translation>Recent transactions may not yet be visible, and therefore your wallet's balance might be incorrect. This information will be correct once your wallet has finished synchronizing with the Nito network, as detailed below.</translation>
+        </message>
+    </context>
+    <context>
+        <name>LoadWalletsActivity</name>
+    </context>
 </TS>

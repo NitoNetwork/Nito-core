@@ -24,11 +24,20 @@ void MacNotificationHandler::showNotification(const QString &title, const QStrin
 {
     // check if users OS has support for NSUserNotification
     if(this->hasUserNotificationCenterSupport()) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+        // Keep the legacy notification bridge stable until the UI is moved to
+        // UserNotifications.framework.
         NSUserNotification* userNotification = [[NSUserNotification alloc] init];
         userNotification.title = title.toNSString();
         userNotification.informativeText = text.toNSString();
         [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification: userNotification];
         [userNotification release];
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
     }
 }
 

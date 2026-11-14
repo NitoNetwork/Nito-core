@@ -16,12 +16,15 @@
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
 
+#include <chainparams.h>
 #include <common/system.h>
+#include <consensus/params.h>
 #include <interfaces/node.h>
 #include <node/chainstatemanager_args.h>
 #include <netbase.h>
 #include <txdb.h>
 
+#include <algorithm>
 #include <chrono>
 
 #include <QApplication>
@@ -171,7 +174,7 @@ OptionsDialog::OptionsDialog(QWidget* parent, bool enableWallet)
         if(langStr.contains("_"))
         {
             /** display language strings as "native language - native country (locale name)", e.g. "Deutsch - Deutschland (de)" */
-            ui->lang->addItem(locale.nativeLanguageName() + QString(" - ") + locale.nativeCountryName() + QString(" (") + langStr + QString(")"), QVariant(langStr));
+            ui->lang->addItem(locale.nativeLanguageName() + QString(" - ") + locale.nativeTerritoryName() + QString(" (") + langStr + QString(")"), QVariant(langStr));
         }
         else
         {
@@ -206,6 +209,7 @@ OptionsDialog::OptionsDialog(QWidget* parent, bool enableWallet)
     }
 
     setupFontOptions(ui->moneyFont, ui->moneyFont_preview);
+    updateBech32xOrchardOptionVisibility();
 
     GUIUtil::handleCloseWindowShortcut(this);
 }
@@ -218,6 +222,14 @@ OptionsDialog::~OptionsDialog()
 void OptionsDialog::setClientModel(ClientModel* client_model)
 {
     m_client_model = client_model;
+    updateBech32xOrchardOptionVisibility();
+
+    if (m_client_model) {
+        connect(m_client_model, &ClientModel::numBlocksChanged, this,
+            [this](int, const QDateTime&, double, SyncType, SynchronizationState) {
+                updateBech32xOrchardOptionVisibility();
+            });
+    }
 }
 
 void OptionsDialog::setModel(OptionsModel *_model)
@@ -247,6 +259,7 @@ void OptionsDialog::setModel(OptionsModel *_model)
         setFontChoice(ui->moneyFont, font_for_money);
 
         updateDefaultProxyNets();
+        updateBech32xOrchardOptionVisibility();
     }
 
     /* warn when one of the following settings changes by user action (placed here so init via mapper doesn't trigger them) */
@@ -295,6 +308,8 @@ void OptionsDialog::setMapper()
     mapper->addMapping(ui->subFeeFromAmount, OptionsModel::SubFeeFromAmount);
     mapper->addMapping(ui->externalSignerPath, OptionsModel::ExternalSignerPath);
     mapper->addMapping(ui->m_enable_psbt_controls, OptionsModel::EnablePSBTControls);
+    mapper->addMapping(ui->m_enable_legacy_receive_address_types, OptionsModel::EnableLegacyReceiveAddressTypes);
+    mapper->addMapping(ui->m_enable_bech32x_orchard_receive_addresses, OptionsModel::EnableBech32xOrchardReceiveAddresses);
 
     /* Network */
     mapper->addMapping(ui->mapPortUpnp, OptionsModel::MapPortUPnP);
@@ -469,6 +484,21 @@ void OptionsDialog::updateDefaultProxyNets()
 
     has_proxy = model->node().getProxy(NET_ONION, proxy);
     ui->proxyReachTor->setChecked(has_proxy && proxy.proxy == ui_proxy);
+}
+
+void OptionsDialog::updateBech32xOrchardOptionVisibility()
+{
+    auto has_orchard_index = [](const ClientModel& client_model) {
+        const auto statuses{client_model.getWalletIndexStatuses()};
+        return std::any_of(statuses.begin(), statuses.end(), [](const interfaces::IndexStatus& status) {
+            return status.name == "orchardindex";
+        });
+    };
+
+    const bool active = m_client_model &&
+        Consensus::PrivateTxActive(Params().GetConsensus(), m_client_model->getNumBlocks()) &&
+        has_orchard_index(*m_client_model);
+    ui->m_enable_bech32x_orchard_receive_addresses->setVisible(active);
 }
 
 ProxyAddressValidator::ProxyAddressValidator(QObject *parent) :

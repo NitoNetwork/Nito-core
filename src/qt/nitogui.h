@@ -56,6 +56,7 @@ class QComboBox;
 class QDateTime;
 class QProgressBar;
 class QProgressDialog;
+class QTimer;
 QT_END_NAMESPACE
 
 namespace GUIUtil {
@@ -150,6 +151,7 @@ private:
     QAction* optionsAction = nullptr;
     QAction* encryptWalletAction = nullptr;
     QAction* backupWalletAction = nullptr;
+    QAction* showMnemonicAction = nullptr;
     QAction* changePassphraseAction = nullptr;
     QAction* aboutQtAction = nullptr;
     QAction* openRPCConsoleAction = nullptr;
@@ -203,6 +205,7 @@ private:
 
     /** Enable or disable all wallet-related actions */
     void setWalletActionsEnabled(bool enabled);
+    void updateOpenWalletAction();
 
     /** Connect core signals to GUI client */
     void subscribeToCoreSignals();

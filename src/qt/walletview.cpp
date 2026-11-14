@@ -21,13 +21,19 @@
 
 #include <interfaces/node.h>
 #include <node/interface_ui.h>
-#include <util/strencodings.h>
+#include <util/translation.h>
 
 #include <QAction>
+#include <QCoreApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QHBoxLayout>
+#include <QLabel>
+#include <QMessageBox>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QTextEdit>
 #include <QVBoxLayout>
 
 WalletView::WalletView(WalletModel* wallet_model, const PlatformStyle* _platformStyle, QWidget* parent)
@@ -40,6 +46,19 @@ WalletView::WalletView(WalletModel* wallet_model, const PlatformStyle* _platform
     // Create tabs
     overviewPage = new OverviewPage(platformStyle);
     overviewPage->setWalletModel(walletModel);
+
+    lockedPage = new QWidget(this);
+    auto* lockedLayout = new QVBoxLayout(lockedPage);
+    auto* lockedLabel = new QLabel(QCoreApplication::translate("NitoGUI", "Wallet is <b>encrypted</b> and currently <b>locked</b>"), lockedPage);
+    auto* unlockButton = new QPushButton(QCoreApplication::translate("AskPassphraseDialog", "Unlock wallet"), lockedPage);
+    lockedLabel->setAlignment(Qt::AlignCenter);
+    lockedLabel->setTextFormat(Qt::RichText);
+    lockedLabel->setWordWrap(true);
+    lockedLayout->addStretch();
+    lockedLayout->addWidget(lockedLabel, 0, Qt::AlignCenter);
+    lockedLayout->addWidget(unlockButton, 0, Qt::AlignCenter);
+    lockedLayout->addStretch();
+    connect(unlockButton, &QPushButton::clicked, this, &WalletView::unlockWalletForDisplay);
 
     transactionsPage = new QWidget(this);
     QVBoxLayout *vbox = new QVBoxLayout();
@@ -71,6 +90,7 @@ WalletView::WalletView(WalletModel* wallet_model, const PlatformStyle* _platform
     usedReceivingAddressesPage->setModel(walletModel->getAddressTableModel());
 
     addWidget(overviewPage);
+    addWidget(lockedPage);
     addWidget(transactionsPage);
     addWidget(receiveCoinsPage);
     addWidget(sendCoinsPage);
@@ -100,16 +120,25 @@ WalletView::WalletView(WalletModel* wallet_model, const PlatformStyle* _platform
     connect(walletModel, &WalletModel::message, this, &WalletView::message);
 
     // Handle changes in encryption status
-    connect(walletModel, &WalletModel::encryptionStatusChanged, this, &WalletView::encryptionStatusChanged);
+    connect(walletModel, &WalletModel::encryptionStatusChanged, this, [this] {
+        if (isLockedForDisplay()) {
+            setCurrentWidget(lockedPage);
+        } else if (currentWidget() == lockedPage) {
+            setCurrentWidget(overviewPage);
+        }
+        Q_EMIT encryptionStatusChanged();
+    });
 
-    // Balloon pop-up for new transaction
-    connect(walletModel->getTransactionTableModel(), &TransactionTableModel::rowsInserted, this, &WalletView::processNewTransaction);
+    // Balloon pop-up for new transactions, excluding technical row rebuilds.
+    connect(walletModel->getTransactionTableModel(), &TransactionTableModel::transactionInserted, this, &WalletView::processNewTransaction);
 
     // Ask for passphrase if needed
     connect(walletModel, &WalletModel::requireUnlock, this, &WalletView::unlockWallet);
 
     // Show progress dialog
     connect(walletModel, &WalletModel::showProgress, this, &WalletView::showProgress);
+
+    showLockedPageIfNeeded();
 }
 
 WalletView::~WalletView() = default;
@@ -125,6 +154,8 @@ void WalletView::setClientModel(ClientModel *_clientModel)
 
 void WalletView::processNewTransaction(const QModelIndex& parent, int start, int /*end*/)
 {
+    if (isLockedForDisplay()) return;
+
     // Prevent balloon-spam when initial block download is in progress
     if (!clientModel || clientModel->node().isInitialBlockDownload()) {
         return;
@@ -146,21 +177,25 @@ void WalletView::processNewTransaction(const QModelIndex& parent, int start, int
 
 void WalletView::gotoOverviewPage()
 {
+    if (showLockedPageIfNeeded()) return;
     setCurrentWidget(overviewPage);
 }
 
 void WalletView::gotoHistoryPage()
 {
+    if (showLockedPageIfNeeded()) return;
     setCurrentWidget(transactionsPage);
 }
 
 void WalletView::gotoReceiveCoinsPage()
 {
+    if (showLockedPageIfNeeded()) return;
     setCurrentWidget(receiveCoinsPage);
 }
 
 void WalletView::gotoSendCoinsPage(QString addr)
 {
+    if (showLockedPageIfNeeded()) return;
     setCurrentWidget(sendCoinsPage);
 
     if (!addr.isEmpty())
@@ -169,6 +204,8 @@ void WalletView::gotoSendCoinsPage(QString addr)
 
 void WalletView::gotoSignMessageTab(QString addr)
 {
+    if (showLockedPageIfNeeded()) return;
+
     // calls show() in showTab_SM()
     SignVerifyMessageDialog *signVerifyMessageDialog = new SignVerifyMessageDialog(platformStyle, this);
     signVerifyMessageDialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -181,6 +218,8 @@ void WalletView::gotoSignMessageTab(QString addr)
 
 void WalletView::gotoVerifyMessageTab(QString addr)
 {
+    if (showLockedPageIfNeeded()) return;
+
     // calls show() in showTab_VM()
     SignVerifyMessageDialog *signVerifyMessageDialog = new SignVerifyMessageDialog(platformStyle, this);
     signVerifyMessageDialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -193,6 +232,7 @@ void WalletView::gotoVerifyMessageTab(QString addr)
 
 bool WalletView::handlePaymentRequest(const SendCoinsRecipient& recipient)
 {
+    if (isLockedForDisplay()) return false;
     return sendCoinsPage->handlePaymentRequest(recipient);
 }
 
@@ -201,12 +241,59 @@ void WalletView::showOutOfSyncWarning(bool fShow)
     overviewPage->showOutOfSyncWarning(fShow);
 }
 
+bool WalletView::isLockedForDisplay() const
+{
+    return walletModel && !walletModel->isDisplayAuthorized();
+}
+
+bool WalletView::showLockedPageIfNeeded()
+{
+    if (!isLockedForDisplay()) return false;
+    setCurrentWidget(lockedPage);
+    return true;
+}
+
 void WalletView::encryptWallet()
 {
     auto dlg = new AskPassphraseDialog(AskPassphraseDialog::Encrypt, this);
     dlg->setModel(walletModel);
-    connect(dlg, &QDialog::finished, this, &WalletView::encryptionStatusChanged);
+    connect(dlg, &QDialog::finished, this, [this](int result) {
+        if (result == QDialog::Accepted && walletModel->getEncryptionStatus() == WalletModel::Unlocked) {
+            walletModel->setDisplayAuthorized(true);
+            if (!walletModel->setWalletLockedForDisplay()) {
+                walletModel->setDisplayAuthorized(false);
+            }
+        }
+        walletModel->updateStatus();
+        if (isLockedForDisplay()) {
+            setCurrentWidget(lockedPage);
+        } else if (currentWidget() == lockedPage) {
+            setCurrentWidget(overviewPage);
+        }
+        Q_EMIT encryptionStatusChanged();
+    });
     GUIUtil::ShowModalDialogAsynchronously(dlg);
+}
+
+void WalletView::unlockWalletForDisplay()
+{
+    if (!walletModel || walletModel->isDisplayAuthorized()) return;
+
+    if (walletModel->getEncryptionStatus() == WalletModel::Locked) {
+        AskPassphraseDialog dlg(AskPassphraseDialog::Unlock, this);
+        dlg.setModel(walletModel);
+        if (dlg.exec() != QDialog::Accepted) return;
+        walletModel->setDisplayAuthorized(true);
+        if (!walletModel->setWalletLockedForDisplay()) {
+            walletModel->setDisplayAuthorized(false);
+            return;
+        }
+        walletModel->updateStatus();
+        walletModel->forceBalanceUpdate();
+    } else {
+        walletModel->setDisplayAuthorized(true);
+    }
+    gotoOverviewPage();
 }
 
 void WalletView::backupWallet()
@@ -229,6 +316,65 @@ void WalletView::backupWallet()
     }
 }
 
+void WalletView::showHDSeedMnemonic()
+{
+    const bool bip39_passphrase_required{walletModel->isBIP39PassphraseEnabled()};
+    QString confirmation_text{tr("The recovery phrase controls the funds derived from its documented scope. Keep wallet.dat backups for V3 or imported transparent keys. Only reveal the phrase in a private place and store it offline.")};
+    if (bip39_passphrase_required) {
+        confirmation_text += QLatin1String("\n\n") + tr("This wallet requires the BIP39 passphrase you saved separately. The passphrase is not shown here. Restoring with the recovery phrase alone opens a different wallet.");
+    }
+    QMessageBox confirmation(QMessageBox::Warning,
+        tr("Show Recovery Phrase"),
+        confirmation_text,
+        QMessageBox::Ok | QMessageBox::Cancel,
+        this);
+    confirmation.setDefaultButton(QMessageBox::Cancel);
+    GUIUtil::PolishMessageBox(&confirmation);
+    const auto confirmed = static_cast<QMessageBox::StandardButton>(confirmation.exec());
+    if (confirmed != QMessageBox::Ok) return;
+
+    WalletModel::UnlockContext ctx(walletModel->requestUnlock());
+    if (!ctx.isValid()) return;
+
+    QString mnemonic;
+    QString error;
+    if (!walletModel->getHDSeedMnemonic(mnemonic, error)) {
+        Q_EMIT message(tr("Recovery Phrase"), error, CClientUIInterface::MSG_ERROR);
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Recovery Phrase"));
+    auto* layout = new QVBoxLayout(&dialog);
+
+    QString warning_text{tr("Write these words down in order. Anyone with this phrase can spend the funds it covers. A wallet upgraded from V3 still requires its wallet.dat backup for older transparent keys.")};
+    if (bip39_passphrase_required) {
+        warning_text += QLatin1String("\n\n") + tr("BIP39 passphrase required: the passphrase is not displayed or stored with these words. You need the exact passphrase saved separately; the recovery phrase alone opens a different wallet.");
+    }
+    auto* warning = new QLabel(warning_text);
+    warning->setWordWrap(true);
+    layout->addWidget(warning);
+
+    auto* phrase = new QTextEdit(&dialog);
+    phrase->setPlainText(mnemonic);
+    phrase->setReadOnly(true);
+    phrase->setLineWrapMode(QTextEdit::WidgetWidth);
+    phrase->setMinimumWidth(520);
+    phrase->setMinimumHeight(130);
+    layout->addWidget(phrase);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    GUIUtil::PolishDialogButtonBox(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    dialog.exec();
+    phrase->setPlainText(QString(mnemonic.size(), QChar{0}));
+    phrase->clear();
+    mnemonic.fill(QChar{0});
+    mnemonic.clear();
+}
+
 void WalletView::changePassphrase()
 {
     auto dlg = new AskPassphraseDialog(AskPassphraseDialog::ChangePass, this);
@@ -245,6 +391,10 @@ void WalletView::unlockWallet()
         // A modal dialog must be synchronous here as expected
         // in the WalletModel::requestUnlock() function.
         dlg.exec();
+        walletModel->updateStatus();
+        if (!isLockedForDisplay() && currentWidget() == lockedPage) {
+            setCurrentWidget(overviewPage);
+        }
     }
 }
 
@@ -261,11 +411,14 @@ void WalletView::usedReceivingAddresses()
 void WalletView::showProgress(const QString &title, int nProgress)
 {
     if (nProgress == 0) {
-        progressDialog = new QProgressDialog(title, tr("Cancel"), 0, 100);
+        progressDialog = new QProgressDialog(title, tr("Cancel"), 0, 100, window());
         GUIUtil::PolishProgressDialog(progressDialog);
-        progressDialog->setWindowModality(Qt::ApplicationModal);
+        progressDialog->setWindowTitle(title);
+        progressDialog->setWindowModality(Qt::WindowModal);
         progressDialog->setAutoClose(false);
         progressDialog->setValue(0);
+        progressDialog->show();
+        GUIUtil::CenterDialogOnParent(progressDialog, this);
     } else if (nProgress == 100) {
         if (progressDialog) {
             progressDialog->close();

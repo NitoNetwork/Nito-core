@@ -42,17 +42,17 @@ verifies that spending coins sent to all these address types works.
 
 ## Change type test
 
-Test that the nodes generate the correct change address type:
-    - node0 always uses a legacy change address.
-    - node1 uses a bech32 addresses for change if any destination address is bech32.
-    - node2 always uses a bech32 address for change
-    - node3 always uses a bech32 address for change
-    - node4 always uses p2sh/segwit output for change.
+Test that the nodes generate fresh internal, solvable change outputs using the
+Bitcoin Core recipient-adaptive policy. Explicit `-changetype` and legacy
+`-addresstype` take priority; otherwise supported recipient types are preferred
+in the order Taproot, native SegWit key hash, P2SH, legacy. `getrawchangeaddress`
+still checks exact address-type generation independently of recipients.
 """
 
 from decimal import Decimal
 import itertools
 
+from test_framework.address import ADDRESS_NRT1_UNSPENDABLE
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import NitoTestFramework
 from test_framework.descriptors import (
@@ -212,6 +212,10 @@ class AddressTypeTest(NitoTestFramework):
             assert False
 
     def test_change_output_type(self, node_sender, destinations, expected_type):
+        available_before = {
+            (utxo["txid"], utxo["vout"]): utxo.get("address")
+            for utxo in self.nodes[node_sender].listunspent(minconf=0)
+        }
         txid = self.nodes[node_sender].sendmany(dummy="", amounts=dict.fromkeys(destinations, 0.001))
         tx = self.nodes[node_sender].gettransaction(txid=txid, verbose=True)['decoded']
 
@@ -223,13 +227,36 @@ class AddressTypeTest(NitoTestFramework):
         change_addresses = [d for d in output_addresses if d not in destinations]
         assert_equal(len(change_addresses), 1)
 
+        info = self.nodes[node_sender].getaddressinfo(change_addresses[0])
+        assert info.get('ismine')
+        assert info.get('solvable')
+        assert_equal(info.get('ischange'), True)
+        selected_source_addresses = {
+            available_before.get((txin["txid"], txin["vout"]))
+            for txin in tx["vin"]
+        }
+        selected_source_addresses.discard(None)
+        assert change_addresses[0] not in selected_source_addresses
         self.log.debug("Check if change address " + change_addresses[0] + " is " + expected_type)
         self.test_address(node_sender, change_addresses[0], multisig=False, typ=expected_type)
+        if self.options.descriptors:
+            purpose = {"legacy": 44, "p2sh-segwit": 49, "bech32": 84, "bech32m": 86}[expected_type]
+            assert info["hdkeypath"].startswith(f"m/{purpose}h/1h/0h/1/")
+        return change_addresses[0]
 
     def run_test(self):
-        # Mine 101 blocks on node5 to bring nodes out of IBD and make sure that
-        # no coinbases are maturing for the nodes-under-test during the test
-        self.generate(self.nodes[5], COINBASE_MATURITY + 1)
+        # Mine on node5 to bring nodes out of IBD. Send confirming coinbases to
+        # an unspendable address outside the wallets under test; any cached
+        # rewards that still mature during the send matrix are accounted below.
+        mining_addr = ADDRESS_NRT1_UNSPENDABLE
+        self.generatetoaddress(self.nodes[5], COINBASE_MATURITY + 1, mining_addr)
+
+        def mine_until_confirmed(tx_node, txid):
+            for _ in range(10):
+                self.generatetoaddress(self.nodes[5], 1, mining_addr)
+                if tx_node.gettransaction(txid)['confirmations'] > 0:
+                    return
+            raise AssertionError("Transaction {} was not mined".format(txid))
 
         uncompressed_1 = "0496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52da7589379515d4e0a604f8141781e62294721166bf621e73a82cbf2342c858ee"
         uncompressed_2 = "047211a824f55b505228e4c3d5194c1fcfaa15a456abdf37f9b9d97a4040afc073dee6c89064984f03385237d92167c13e236446b417ab79a0fcae412ae3316b77"
@@ -265,6 +292,7 @@ class AddressTypeTest(NitoTestFramework):
                     address_type = 'legacy'
             self.log.info("Sending from node {} ({}) with{} multisig using {}".format(from_node, self.extra_args[from_node], "" if multisig else "out", "default" if address_type is None else address_type))
             old_balances = self.get_balances()
+            old_immature_balances = self.get_balances('immature')
             self.log.debug("Old balances are {}".format(old_balances))
             to_send = (old_balances[from_node] / (COINBASE_MATURITY + 1)).quantize(Decimal("0.00000001"))
             sends = {}
@@ -302,7 +330,7 @@ class AddressTypeTest(NitoTestFramework):
                 addresses[to_node] = (address, typ)
 
             self.log.debug("Sending: {}".format(sends))
-            self.nodes[from_node].sendmany("", sends)
+            txid = self.nodes[from_node].sendmany("", sends)
             self.sync_mempools()
 
             unconf_balances = self.get_balances('untrusted_pending')
@@ -312,8 +340,9 @@ class AddressTypeTest(NitoTestFramework):
                 to_node %= 4
                 assert_equal(unconf_balances[to_node], to_send * 10 * (2 + n))
 
-            # node5 collects fee and block subsidy to keep accounting simple
-            self.generate(self.nodes[5], 1)
+            # node5 confirms the transaction while sending the subsidy outside
+            # the wallets under test to keep accounting simple.
+            mine_until_confirmed(self.nodes[from_node], txid)
 
             # Verify that the receiving wallet contains a UTXO with the expected address, and expected descriptor
             for n, to_node in enumerate(range(from_node, from_node + 4)):
@@ -324,43 +353,67 @@ class AddressTypeTest(NitoTestFramework):
                         found = True
                         self.test_desc(to_node, addresses[to_node][0], multisig, addresses[to_node][1], utxo)
                         break
+                if not found:
+                    tx = self.nodes[from_node].gettransaction(txid=txid, verbose=True)['decoded']
+                    self.log.info("Missing expected UTXO on node %d for address %s; listunspent addresses: %s",
+                                  to_node,
+                                  addresses[to_node][0],
+                                  [utxo.get('address') for utxo in self.nodes[to_node].listunspent()])
+                    self.log.info("Transaction outputs: %s", [vout['scriptPubKey'].get('address') for vout in tx["vout"]])
                 assert found
 
             new_balances = self.get_balances()
+            new_immature_balances = self.get_balances('immature')
+            matured_balances = [max(old - new, Decimal("0")) for old, new in zip(old_immature_balances, new_immature_balances)]
             self.log.debug("Check new balances: {}".format(new_balances))
             # We don't know what fee was set, so we can only check bounds on the balance of the sending node
-            assert_greater_than(new_balances[from_node], to_send * 10)
-            assert_greater_than(to_send * 11, new_balances[from_node])
+            assert_greater_than(new_balances[from_node], to_send * 10 + matured_balances[from_node])
+            assert_greater_than(to_send * 11 + matured_balances[from_node], new_balances[from_node])
             for n, to_node in enumerate(range(from_node + 1, from_node + 4)):
                 to_node %= 4
-                assert_equal(new_balances[to_node], old_balances[to_node] + to_send * 10 * (2 + n))
+                assert_equal(new_balances[to_node], old_balances[to_node] + to_send * 10 * (2 + n) + matured_balances[to_node])
 
-        # Get one p2sh/segwit address from node2 and two bech32 addresses from node3:
+        # Receive addresses of each transparent type are independent of inputs.
+        to_address_legacy = self.nodes[0].getnewaddress()
         to_address_p2sh = self.nodes[2].getnewaddress()
         to_address_bech32_1 = self.nodes[3].getnewaddress()
         to_address_bech32_2 = self.nodes[3].getnewaddress()
 
         # Fund node 4:
-        self.nodes[5].sendtoaddress(self.nodes[4].getnewaddress(), Decimal("1"))
-        self.generate(self.nodes[5], 1)
+        txid = self.nodes[0].sendtoaddress(self.nodes[4].getnewaddress(), Decimal("1"))
+        mine_until_confirmed(self.nodes[0], txid)
         assert_equal(self.nodes[4].getbalance(), 1)
 
-        self.log.info("Nodes with addresstype=legacy never use a P2WPKH change output (unless changetype is set otherwise):")
-        self.test_change_output_type(0, [to_address_bech32_1], 'legacy')
+        self.log.info("Legacy default receive type takes priority over recipient types")
+        first_change = self.test_change_output_type(0, [to_address_bech32_1], "legacy")
 
-        self.log.info("Nodes with addresstype=p2sh-segwit match the change output")
-        self.test_change_output_type(1, [to_address_p2sh], 'p2sh-segwit')
-        self.test_change_output_type(1, [to_address_bech32_1], 'bech32')
-        self.test_change_output_type(1, [to_address_p2sh, to_address_bech32_1], 'bech32')
-        self.test_change_output_type(1, [to_address_bech32_1, to_address_bech32_2], 'bech32')
+        self.log.info("Automatic change follows supported recipient types and remains fresh")
+        second_change = self.test_change_output_type(1, [to_address_p2sh], "p2sh-segwit")
+        third_change = self.test_change_output_type(1, [to_address_bech32_1], "bech32")
+        self.test_change_output_type(1, [to_address_legacy], "legacy")
+        self.test_change_output_type(1, [to_address_legacy, to_address_p2sh], "p2sh-segwit")
+        self.test_change_output_type(1, [to_address_p2sh, to_address_bech32_1], "bech32")
+        self.test_change_output_type(1, [to_address_bech32_1, to_address_bech32_2], "bech32")
+        assert_equal(len({first_change, second_change, third_change}), 3)
 
-        self.log.info("Nodes with change_type=bech32 always use a P2WPKH change output:")
-        self.test_change_output_type(2, [to_address_bech32_1], 'bech32')
-        self.test_change_output_type(2, [to_address_p2sh], 'bech32')
+        self.log.info("Change output remains valid when -changetype=bech32 is configured:")
+        self.test_change_output_type(2, [to_address_bech32_1], "bech32")
+        self.test_change_output_type(2, [to_address_p2sh], "bech32")
 
-        self.log.info("Nodes with addresstype=bech32 match the change output (unless changetype is set otherwise):")
-        self.test_change_output_type(3, [to_address_bech32_1], 'bech32')
-        self.test_change_output_type(3, [to_address_p2sh], 'p2sh-segwit')
+        self.log.info("Change output remains valid for bech32 wallets:")
+        self.test_change_output_type(3, [to_address_bech32_1], "bech32")
+        self.test_change_output_type(3, [to_address_p2sh], "p2sh-segwit")
+
+        if self.options.descriptors:
+            self.log.info("Taproot recipients take priority unless an operator override applies")
+            to_address_taproot = self.nodes[5].getnewaddress("", "bech32m")
+            taproot_change = self.test_change_output_type(1, [to_address_taproot], "bech32m")
+            next_taproot_change = self.test_change_output_type(1, [to_address_taproot], "bech32m")
+            assert taproot_change != next_taproot_change
+            self.test_change_output_type(3, [to_address_legacy, to_address_p2sh, to_address_bech32_1, to_address_taproot], "bech32m")
+            self.test_change_output_type(0, [to_address_taproot], "legacy")
+            self.test_change_output_type(2, [to_address_taproot], "bech32")
+            self.test_change_output_type(4, [to_address_taproot], "p2sh-segwit")
 
         self.log.info('getrawchangeaddress defaults to addresstype if -changetype is not set and argument is absent')
         self.test_address(3, self.nodes[3].getrawchangeaddress(), multisig=False, typ='bech32')
@@ -371,8 +424,8 @@ class AddressTypeTest(NitoTestFramework):
         assert_raises_rpc_error(-5, "Unknown address type ''", self.nodes[3].getrawchangeaddress, '')
         assert_raises_rpc_error(-5, "Unknown address type 'bech23'", self.nodes[3].getrawchangeaddress, 'bech23')
 
-        self.log.info("Nodes with changetype=p2sh-segwit never use a P2WPKH change output")
-        self.test_change_output_type(4, [to_address_bech32_1], 'p2sh-segwit')
+        self.log.info("Change output remains valid when -changetype=p2sh-segwit is configured")
+        self.test_change_output_type(4, [to_address_bech32_1], "p2sh-segwit")
         self.test_address(4, self.nodes[4].getrawchangeaddress(), multisig=False, typ='p2sh-segwit')
         self.log.info("Except for getrawchangeaddress if specified:")
         self.test_address(4, self.nodes[4].getrawchangeaddress(), multisig=False, typ='p2sh-segwit')

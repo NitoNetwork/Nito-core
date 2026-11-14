@@ -24,7 +24,11 @@ if test -z "$with_qt_translationdir"; then
   with_qt_translationdir="${depends_prefix}/translations"
 fi
 if test -z "$with_qt_bindir" && test -z "@no_qt@"; then
-  with_qt_bindir="${depends_prefix}/native/bin"
+  if test -x "${depends_prefix}/native/bin/moc"; then
+    with_qt_bindir="${depends_prefix}/native/bin"
+  else
+    with_qt_bindir="${depends_prefix}/bin"
+  fi
 fi
 if test -z "$with_mpgen" && test -n "@multiprocess@"; then
   with_mpgen="${depends_prefix}/native"
@@ -63,7 +67,7 @@ if test -z "$with_gui" && test -n "@no_qt@"; then
 fi
 
 if test -n "@debug@" && test -z "@no_qt@" && test "$with_gui" != "no"; then
-  with_gui=qt5_debug
+  with_gui=qt6_debug
 fi
 
 if test -z "$enable_zmq" && test -n "@no_zmq@"; then
@@ -76,6 +80,13 @@ fi
 
 if test "@host_os@" = darwin; then
   BREW=no
+fi
+
+if test "@host_os@" = mingw32; then
+  # Static MinGW builds do not need the MSVC manifest tool. Setting the
+  # Autoconf variable explicitly also prevents nested configure scripts from
+  # falling back to an unrelated host `mt` binary.
+  MANIFEST_TOOL=:
 fi
 
 if test -z "$enable_hardening" && test -n "@no_harden@"; then

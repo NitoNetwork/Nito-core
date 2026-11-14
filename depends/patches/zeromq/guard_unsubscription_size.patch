@@ -1,0 +1,13 @@
+--- a/src/xpub.cpp
++++ b/src/xpub.cpp
+@@ -383,6 +383,10 @@
+     if (self_->options.type != ZMQ_PUB) {
+         //  Place the unsubscription to the queue of pending (un)subscriptions
+         //  to be retrieved by the user later on.
++        if (unlikely (size_ == static_cast<size_t> (-1))) {
++            zmq_assert (size_ != static_cast<size_t> (-1));
++            return;
++        }
+         blob_t unsub (size_ + 1);
+         *unsub.data () = 0;
+         if (size_ > 0)

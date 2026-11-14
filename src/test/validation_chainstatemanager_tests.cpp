@@ -35,7 +35,7 @@ BOOST_FIXTURE_TEST_SUITE(validation_chainstatemanager_tests, TestingSetup)
 //! Basic tests for ChainstateManager.
 //!
 //! First create a legacy (IBD) chainstate, then create a snapshot chainstate.
-BOOST_FIXTURE_TEST_CASE(chainstatemanager, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(chainstatemanager, PrePrivateTestChain100Setup)
 {
     ChainstateManager& manager = *m_node.chainman;
     std::vector<Chainstate*> chainstates;
@@ -107,7 +107,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager, TestChain100Setup)
 }
 
 //! Test rebalancing the caches associated with each chainstate.
-BOOST_FIXTURE_TEST_CASE(chainstatemanager_rebalance_caches, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(chainstatemanager_rebalance_caches, PrePrivateTestChain100Setup)
 {
     ChainstateManager& manager = *m_node.chainman;
 
@@ -159,19 +159,47 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_rebalance_caches, TestChain100Setup)
     BOOST_CHECK_CLOSE(c2.m_coinsdb_cache_size_bytes, max_cache * 0.95, 1);
 }
 
-struct SnapshotTestSetup : TestChain100Setup {
+BOOST_FIXTURE_TEST_CASE(post_private_activation_utxo_snapshots_are_rejected, TestChain100Setup)
+{
+    ChainstateManager& chainman{*Assert(m_node.chainman)};
+    mineBlocks(10);
+    BOOST_REQUIRE_EQUAL(WITH_LOCK(chainman.GetMutex(), return chainman.ActiveHeight()), 110);
+
+    const fs::path dump_path{m_path_root / "post_private_snapshot.dat"};
+    {
+        FILE* outfile{fsbridge::fopen(dump_path, "wb")};
+        AutoFile auto_outfile{outfile};
+        BOOST_REQUIRE(!auto_outfile.IsNull());
+        BOOST_CHECK_THROW(
+            CreateUTXOSnapshot(m_node, chainman.ActiveChainstate(), auto_outfile, dump_path, dump_path),
+            UniValue);
+    }
+
+    const auto snapshot_data{Params().AssumeutxoForHeight(110)};
+    BOOST_REQUIRE(snapshot_data);
+    BOOST_REQUIRE_EQUAL(
+        WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip()->GetBlockHash()),
+        snapshot_data->blockhash);
+
+    const fs::path load_path{m_path_root / "post_private_snapshot_load.dat"};
+    FILE* infile{fsbridge::fopen(load_path, "wb+")};
+    AutoFile auto_infile{infile};
+    BOOST_REQUIRE(!auto_infile.IsNull());
+    const SnapshotMetadata metadata{snapshot_data->blockhash, /*coins_count=*/0};
+    BOOST_CHECK(!chainman.ActivateSnapshot(auto_infile, metadata, /*in_memory=*/true));
+    BOOST_CHECK(!chainman.SnapshotBlockhash());
+}
+
+struct SnapshotTestSetup : PrePrivateTestChain100Setup {
     // Run with coinsdb on the filesystem to support, e.g., moving invalidated
     // chainstate dirs to "*_invalid".
     //
     // Note that this means the tests run considerably slower than in-memory DB
     // tests, but we can't otherwise test this functionality since it relies on
     // destructive filesystem operations.
-    SnapshotTestSetup() : TestChain100Setup{
-                              {},
-                              {},
+    SnapshotTestSetup() : PrePrivateTestChain100Setup{
                               /*coins_db_in_memory=*/false,
-                              /*block_tree_db_in_memory=*/false,
-                          }
+                              /*block_tree_db_in_memory=*/false}
     {
     }
 
@@ -387,6 +415,7 @@ struct SnapshotTestSetup : TestChain100Setup {
             };
             const BlockManager::Options blockman_opts{
                 .chainparams = chainman_opts.chainparams,
+                .datadir = chainman_opts.datadir,
                 .blocks_dir = m_args.GetBlocksDirPath(),
                 .notifications = chainman_opts.notifications,
             };

@@ -11,6 +11,10 @@
 #include <primitives/block.h>
 #include <uint256.h>
 
+static constexpr int64_t NITO_RETARGET_TIMESPAN{60};
+static constexpr int64_t NITO_MIN_RETARGET_TIMESPAN{45};
+static constexpr int64_t NITO_MAX_RETARGET_TIMESPAN{90};
+
 bool AllowMinDifficultyForBlock(const CBlockIndex* pindexLast, const CBlockHeader *pblock, const Consensus::Params& params)
 {
     // check if the chain allows minimum difficulty blocks
@@ -23,7 +27,6 @@ bool AllowMinDifficultyForBlock(const CBlockIndex* pindexLast, const CBlockHeade
 
 unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHeader *pblock, const Consensus::Params& params)
 {
-    int nHeight = pindexLast->nHeight + 1;
 	int blockstogoback = 0;
     unsigned int nProofOfWorkLimit = UintToArith256(params.powLimit).GetCompact();
 
@@ -34,8 +37,12 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
         return nProofOfWorkLimit;
     }
 
+    if (params.fPowNoRetargeting) {
+        return pindexLast->nBits;
+    }
+
 	//set default values
-	int64_t retargetTimespan = 60;
+	int64_t retargetTimespan = NITO_RETARGET_TIMESPAN;
 	int64_t retargetInterval = 1;
 
 	// Only change once per interval
@@ -63,15 +70,16 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     int64_t MaxTimespan;
     
     // Min timespan
-    MinTimespan = retargetTimespan - 15; // 0:45 Min
+    MinTimespan = NITO_MIN_RETARGET_TIMESPAN; // 0:45 Min
     // Max timespan
-    MaxTimespan = retargetTimespan + 30; // 1:30 Min
+    MaxTimespan = NITO_MAX_RETARGET_TIMESPAN; // 1:30 Min
 
     // Limit adjustment step
-    if (NTimespan < MinTimespan)
+    if (NTimespan < MinTimespan) {
         NTimespan = MinTimespan;
-    else if (NTimespan > MaxTimespan)
+    } else if (NTimespan > MaxTimespan) {
         NTimespan = MaxTimespan;
+    }
 
 	arith_uint256 bnNew;
 	bnNew.SetCompact(pindexLast->nBits);
@@ -116,48 +124,45 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
 {
     if (params.fPowAllowMinDifficultyBlocks) return true;
 
-    if (height % params.DifficultyAdjustmentInterval() == 0) {
-        int64_t smallest_timespan = params.nPowTargetTimespan/4;
-        int64_t largest_timespan = params.nPowTargetTimespan*4;
+    if (params.fPowNoRetargeting) return old_nbits == new_nbits;
 
-        const arith_uint256 pow_limit = UintToArith256(params.powLimit);
-        arith_uint256 observed_new_target;
-        observed_new_target.SetCompact(new_nbits);
+    const arith_uint256 pow_limit = UintToArith256(params.powLimit);
 
-        // Calculate the largest difficulty value possible:
-        arith_uint256 largest_difficulty_target;
-        largest_difficulty_target.SetCompact(old_nbits);
-        largest_difficulty_target *= largest_timespan;
-        largest_difficulty_target /= params.nPowTargetTimespan;
+    bool old_negative{false};
+    bool old_overflow{false};
+    arith_uint256 old_target;
+    old_target.SetCompact(old_nbits, &old_negative, &old_overflow);
+    if (old_negative || old_target == 0 || old_overflow || old_target > pow_limit) return false;
 
-        if (largest_difficulty_target > pow_limit) {
-            largest_difficulty_target = pow_limit;
-        }
+    bool new_negative{false};
+    bool new_overflow{false};
+    arith_uint256 observed_new_target;
+    observed_new_target.SetCompact(new_nbits, &new_negative, &new_overflow);
+    if (new_negative || observed_new_target == 0 || new_overflow || observed_new_target > pow_limit) return false;
 
-        // Round and then compare this new calculated value to what is
-        // observed.
-        arith_uint256 maximum_new_target;
-        maximum_new_target.SetCompact(largest_difficulty_target.GetCompact());
-        if (maximum_new_target < observed_new_target) return false;
-
-        // Calculate the smallest difficulty value possible:
-        arith_uint256 smallest_difficulty_target;
-        smallest_difficulty_target.SetCompact(old_nbits);
-        smallest_difficulty_target *= smallest_timespan;
-        smallest_difficulty_target /= params.nPowTargetTimespan;
-
-        if (smallest_difficulty_target > pow_limit) {
-            smallest_difficulty_target = pow_limit;
-        }
-
-        // Round and then compare this new calculated value to what is
-        // observed.
-        arith_uint256 minimum_new_target;
-        minimum_new_target.SetCompact(smallest_difficulty_target.GetCompact());
-        if (minimum_new_target > observed_new_target) return false;
-    } else if (old_nbits != new_nbits) {
-        return false;
+    // Nito retargets every block and clamps the smoothed timespan to [45s, 90s].
+    arith_uint256 largest_difficulty_target{old_target};
+    largest_difficulty_target *= NITO_MAX_RETARGET_TIMESPAN;
+    largest_difficulty_target /= NITO_RETARGET_TIMESPAN;
+    if (largest_difficulty_target > pow_limit) {
+        largest_difficulty_target = pow_limit;
     }
+
+    arith_uint256 maximum_new_target;
+    maximum_new_target.SetCompact(largest_difficulty_target.GetCompact());
+    if (maximum_new_target < observed_new_target) return false;
+
+    arith_uint256 smallest_difficulty_target{old_target};
+    smallest_difficulty_target *= NITO_MIN_RETARGET_TIMESPAN;
+    smallest_difficulty_target /= NITO_RETARGET_TIMESPAN;
+    if (smallest_difficulty_target > pow_limit) {
+        smallest_difficulty_target = pow_limit;
+    }
+
+    arith_uint256 minimum_new_target;
+    minimum_new_target.SetCompact(smallest_difficulty_target.GetCompact());
+    if (minimum_new_target > observed_new_target) return false;
+
     return true;
 }
 

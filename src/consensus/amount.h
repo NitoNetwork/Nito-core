@@ -26,5 +26,14 @@ static constexpr CAmount COIN = 100000000;
  * */
 static constexpr CAmount MAX_MONEY = 1284565890LL * COIN;
 inline bool MoneyRange(const CAmount& nValue) { return (nValue >= 0 && nValue <= MAX_MONEY); }
+inline bool MoneyRangeSigned(const CAmount& nValue) { return (nValue >= -MAX_MONEY && nValue <= MAX_MONEY); }
+
+inline bool MoneyAddSigned(const CAmount& a, const CAmount& b, CAmount& out)
+{
+    if (b > 0 && a > MAX_MONEY - b) return false;
+    if (b < 0 && a < -MAX_MONEY - b) return false;
+    out = a + b;
+    return MoneyRangeSigned(out);
+}
 
 #endif // BITCOIN_CONSENSUS_AMOUNT_H

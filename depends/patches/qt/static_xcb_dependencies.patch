@@ -1,0 +1,20 @@
+--- a/qtbase/cmake/3rdparty/extra-cmake-modules/find-modules/FindXCB.cmake
++++ b/qtbase/cmake/3rdparty/extra-cmake-modules/find-modules/FindXCB.cmake
+@@ -188,6 +188,17 @@ ecm_find_package_handle_library_components(XCB
+     COMPONENTS ${XCB_components}
+ )
+ 
++# The imported target created by ECM contains the primary XCB archive and its
++# XCB component dependencies, but omits public non-XCB dependencies reported
++# by pkg-config. This matters for static libxcb, which requires libXau.
++if(TARGET XCB::XCB AND PKG_XCB_XCB_LINK_LIBRARIES)
++    set(_xcb_external_link_libraries ${PKG_XCB_XCB_LINK_LIBRARIES})
++    list(REMOVE_ITEM _xcb_external_link_libraries "${XCB_XCB_LIBRARY}")
++    if(_xcb_external_link_libraries)
++        set_property(TARGET XCB::XCB APPEND PROPERTY INTERFACE_LINK_LIBRARIES "${_xcb_external_link_libraries}")
++    endif()
++endif()
++
+ find_package_handle_standard_args(XCB
+     FOUND_VAR
+         XCB_FOUND

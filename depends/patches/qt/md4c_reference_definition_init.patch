@@ -1,0 +1,11 @@
+--- a/qtbase/src/3rdparty/md4c/md4c.c
++++ b/qtbase/src/3rdparty/md4c/md4c.c
+@@ -2149,7 +2149,7 @@ md_is_link_reference_definition(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lin
+ {
+     OFF label_contents_beg;
+     OFF label_contents_end;
+-    MD_SIZE label_contents_line_index;
++    MD_SIZE label_contents_line_index = 0;
+     int label_is_multiline = FALSE;
+     OFF dest_contents_beg;
+     OFF dest_contents_end;

@@ -27,7 +27,8 @@ class TransactionDesc: public QObject
     Q_OBJECT
 
 public:
-    static QString toHTML(interfaces::Node& node, interfaces::Wallet& wallet, TransactionRecord* rec, NitoUnit unit);
+    static QString toHTML(interfaces::Node& node, interfaces::Wallet& wallet, TransactionRecord* rec, NitoUnit unit, bool expand_input_addresses = false);
+    static QString FormatInputAddresses(const interfaces::WalletTx& wtx, bool expanded = false);
 
 private:
     TransactionDesc() {}

@@ -1,0 +1,11 @@
+--- a/cmake/AddEventLibrary.cmake
++++ b/cmake/AddEventLibrary.cmake
+@@ -20,7 +20,7 @@ macro(generate_pkgconfig LIB_NAME)
+ 
+     set(LIBS         "")
+     foreach (LIB ${LIB_PLATFORM})
+-        set(LIBS "${LIBS} -L${LIB}")
++        set(LIBS "${LIBS} -l${LIB}")
+     endforeach()
+ 
+     set(OPENSSL_LIBS "")

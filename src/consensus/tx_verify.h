@@ -7,6 +7,7 @@
 #define BITCOIN_CONSENSUS_TX_VERIFY_H
 
 #include <consensus/amount.h>
+#include <consensus/private_tx_verify.h>
 
 #include <stdint.h>
 #include <vector>
@@ -23,9 +24,11 @@ namespace Consensus {
  * Check whether all inputs of this transaction are valid (no double spends and amounts)
  * This does not modify the UTXO set. This does not check scripts and sigs.
  * @param[out] txfee Set to the transaction fee if successful.
+ * @param[in] check_private_proofs Set false only for mempool prechecks that
+ * defer expensive Orchard authorization until after fee policy checks.
  * Preconditions: tx.IsCoinBase() is false.
  */
-[[nodiscard]] bool CheckTxInputs(const CTransaction& tx, TxValidationState& state, const CCoinsViewCache& inputs, int nSpendHeight, CAmount& txfee);
+[[nodiscard]] bool CheckTxInputs(const CTransaction& tx, TxValidationState& state, const CCoinsViewCache& inputs, int nSpendHeight, CAmount& txfee, bool check_private_proofs = true, PrivateProofCacheMode private_proof_cache_mode = PrivateProofCacheMode::BYPASS);
 } // namespace Consensus
 
 /** Auxiliary functions for transaction validation (ideally should not be exposed) */

@@ -25,7 +25,7 @@ namespace common {
 //!       getInt<int64_t>(), get_bool(), isNum(), isBool(), isFalse(), isTrue() and
 //!       isNull() methods can be substituted if there's a need to move away
 //!       from UniValue. (An implementation with boost::variant was posted at
-//!       https://github.com/nito/nito/pull/15934/files#r337691812)
+//!       https://github.com/bitcoin/bitcoin/pull/15934/files#r337691812)
 using SettingsValue = UniValue;
 
 //! Stored settings. This struct combines settings from the command line, a

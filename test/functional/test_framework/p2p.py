@@ -72,6 +72,7 @@ from test_framework.messages import (
     MSG_WTX,
     msg_wtxidrelay,
     NODE_NETWORK,
+    NODE_NITO_PRIVATE,
     NODE_WITNESS,
     MAGIC_BYTES,
     sha256,
@@ -93,9 +94,9 @@ logger = logging.getLogger("TestFramework.p2p")
 MIN_P2P_VERSION_SUPPORTED = 60001
 # The P2P version that this test framework implements and sends in its `version` message
 # Version 70016 supports wtxid relay
-P2P_VERSION = 70016
+P2P_VERSION = 70017
 # The services that this test framework offers in its `version` message
-P2P_SERVICES = NODE_NETWORK | NODE_WITNESS
+P2P_SERVICES = NODE_NETWORK | NODE_WITNESS | NODE_NITO_PRIVATE
 # The P2P user agent string that this test framework sends in its `version` message
 P2P_SUBVERSION = "/python-p2p-tester:0.0.3/"
 # Value for relay that this test framework sends in its `version` message
@@ -165,6 +166,7 @@ class P2PConnection(asyncio.Protocol):
         # The underlying transport of the connection.
         # Should only call methods on this from the NetworkThread, c.f. call_soon_threadsafe
         self._transport = None
+        self.connection_opened = False
         # This lock is acquired before sending messages over the socket. There's an implied lock order and
         # p2p_lock must not be acquired after _send_lock as it could result in deadlocks.
         self._send_lock = threading.Lock()
@@ -181,6 +183,7 @@ class P2PConnection(asyncio.Protocol):
 
     def peer_connect_helper(self, dstaddr, dstport, net, timeout_factor):
         assert not self.is_connected
+        self.connection_opened = False
         self.timeout_factor = timeout_factor
         self.dstaddr = dstaddr
         self.dstport = dstport
@@ -219,6 +222,7 @@ class P2PConnection(asyncio.Protocol):
         assert not self._transport
         logger.debug("Connected & Listening: %s:%d" % (self.dstaddr, self.dstport))
         self._transport = transport
+        self.connection_opened = True
         # in an inbound connection to the TestNode with P2PConnection as the initiator, [TestNode <---- P2PConnection]
         # send the initial handshake immediately
         if self.supports_v2_p2p and self.v2_state.initiating and not self.v2_state.tried_v2_handshake:
@@ -439,7 +443,7 @@ class P2PInterface(P2PConnection):
 
     Individual testcases should subclass this and override the on_* methods
     if they want to alter message handling behaviour."""
-    def __init__(self, support_addrv2=False, wtxidrelay=True):
+    def __init__(self, support_addrv2=False, wtxidrelay=True, version=P2P_VERSION):
         super().__init__()
 
         # Track number of messages of each type received.
@@ -461,11 +465,12 @@ class P2PInterface(P2PConnection):
 
         # If the peer supports wtxid-relay
         self.wtxidrelay = wtxidrelay
+        self.p2p_version = version
 
     def peer_connect_send_version(self, services):
         # Send a version msg
         vt = msg_version()
-        vt.nVersion = P2P_VERSION
+        vt.nVersion = self.p2p_version
         vt.strSubVer = P2P_SUBVERSION
         vt.relay = P2P_VERSION_RELAY
         vt.nServices = services

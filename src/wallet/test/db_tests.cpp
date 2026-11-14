@@ -14,6 +14,7 @@
 #include <util/fs.h>
 #include <util/translation.h>
 #ifdef USE_BDB
+#include <db_cxx.h>
 #include <wallet/bdb.h>
 #endif
 #ifdef USE_SQLITE
@@ -22,6 +23,8 @@
 #include <wallet/test/util.h>
 #include <wallet/walletutil.h> // for WALLET_FLAG_DESCRIPTORS
 
+#include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -63,6 +66,37 @@ static void CheckPrefix(DatabaseBatch& batch, Span<const std::byte> prefix, Mock
 }
 
 BOOST_FIXTURE_TEST_SUITE(db_tests, BasicTestingSetup)
+
+#ifdef USE_BDB
+BOOST_AUTO_TEST_CASE(bdb_new_pages_do_not_disclose_cached_data)
+{
+    const fs::path path{m_path_root / "bdb_page_cache"};
+    fs::create_directories(path);
+    DbEnv env{DB_CXX_NO_EXCEPTIONS};
+    BOOST_REQUIRE_EQUAL(env.set_cachesize(0, 1024 * 1024, 1), 0);
+    BOOST_REQUIRE_EQUAL(env.open(fs::PathToString(path).c_str(), DB_CREATE | DB_PRIVATE | DB_INIT_MPOOL, 0600), 0);
+    Db db{&env, DB_CXX_NO_EXCEPTIONS};
+    constexpr uint32_t page_size{4096};
+    BOOST_REQUIRE_EQUAL(db.set_pagesize(page_size), 0);
+    BOOST_REQUIRE_EQUAL(db.open(nullptr, "pages.dat", "main", DB_BTREE, DB_CREATE, 0600), 0);
+
+    // Fill more than the cache can hold, so new pages reuse buffers containing
+    // the previous page's data. Header-only clearing leaks that data into slack.
+    size_t contaminated_pages{0};
+    for (int i{0}; i < 1024; ++i) {
+        db_pgno_t page_number{0};
+        void* raw{nullptr};
+        BOOST_REQUIRE_EQUAL(db.get_mpf()->get(&page_number, nullptr, DB_MPOOL_NEW, &raw), 0);
+        auto* page{static_cast<unsigned char*>(raw)};
+        contaminated_pages += !std::all_of(page, page + page_size, [](unsigned char byte) { return byte == 0; });
+        std::memset(page, 0x5a, page_size);
+        BOOST_REQUIRE_EQUAL(db.get_mpf()->put(raw, DB_PRIORITY_UNCHANGED, 0), 0);
+    }
+    BOOST_CHECK_EQUAL(db.close(0), 0);
+    BOOST_CHECK_EQUAL(env.close(0), 0);
+    BOOST_CHECK_MESSAGE(contaminated_pages == 0, "Berkeley DB must include the full-page clearing patch from depends/patches/bdb.");
+}
+#endif
 
 static std::shared_ptr<BerkeleyEnvironment> GetWalletEnv(const fs::path& path, fs::path& database_filename)
 {

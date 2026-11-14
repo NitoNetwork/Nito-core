@@ -1,0 +1,16 @@
+diff --git a/natpmp.c b/natpmp.c
+index 4c5b8b0..d2e9f63 100644
+--- a/natpmp.c
++++ b/natpmp.c
+@@ -125 +125 @@ int sendpendingrequest(natpmp_t * p)
+-	r = (int)send(p->s, p->pending_request, p->pending_request_len, 0);
++	r = (int)send(p->s, (const char *)p->pending_request, p->pending_request_len, 0);
+@@ -217 +217 @@ NATPMP_LIBSPEC int readnatpmpresponse(natpmp_t * p, natpmpresp_t * response)
+-	n = recvfrom(p->s, buf, sizeof(buf), 0,
++	n = recvfrom(p->s, (char *)buf, sizeof(buf), 0,
+diff --git a/wingettimeofday.c b/wingettimeofday.c
+index 90f6c46..50f4f5a 100644
+--- a/wingettimeofday.c
++++ b/wingettimeofday.c
+@@ -50,0 +51 @@ int natpmp_gettimeofday(struct timeval* p, void* tz /* IGNORED */) {
++  (void)tz;

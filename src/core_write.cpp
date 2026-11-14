@@ -254,7 +254,21 @@ void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry
     }
     entry.pushKV("vout", vout);
 
+    if (tx.HasPrivateBundle()) {
+        UniValue private_bundle(UniValue::VOBJ);
+        private_bundle.pushKV("version", tx.m_private_bundle->effects.version);
+        private_bundle.pushKV("flags", static_cast<int>(tx.m_private_bundle->effects.flags));
+        private_bundle.pushKV("actions", static_cast<int64_t>(tx.m_private_bundle->effects.actions.size()));
+        private_bundle.pushKV("value_balance", ValueFromAmount(tx.m_private_bundle->effects.value_balance));
+        private_bundle.pushKV("has_auth", tx.HasPrivateAuth());
+        entry.pushKV("has_private_bundle", true);
+        entry.pushKV("private_bundle", private_bundle);
+    }
+
     if (have_undo) {
+        if (tx.HasPrivateBundle()) {
+            CHECK_NONFATAL(MoneyAddSigned(amt_total_in, tx.m_private_bundle->GetValueBalance(), amt_total_in));
+        }
         const CAmount fee = amt_total_in - amt_total_out;
         CHECK_NONFATAL(MoneyRange(fee));
         entry.pushKV("fee", ValueFromAmount(fee));

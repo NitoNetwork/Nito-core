@@ -12,9 +12,26 @@
 #include <wallet/rpc/util.h>
 #include <wallet/wallet.h>
 
+#include <optional>
+
 using interfaces::FoundBlock;
 
 namespace wallet {
+namespace {
+constexpr const char* AVAILABLE_BALANCE_CURRENT_TX_KEY{"nito_available_balance_current"};
+
+bool IsAvailableBalanceCurrent(const CWalletTx& wtx)
+{
+    return wtx.mapValue.count(AVAILABLE_BALANCE_CURRENT_TX_KEY) != 0;
+}
+} // namespace
+
+static bool CanExposePrivateWalletData(const CWallet& wallet)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    return !wallet.IsLocked() && IsPrivateTxActiveForWallet(wallet) && HasPrivateWalletIndex(wallet);
+}
+
 static void WalletTxToJSON(const CWallet& wallet, const CWalletTx& wtx, UniValue& entry)
     EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
@@ -55,8 +72,20 @@ static void WalletTxToJSON(const CWallet& wallet, const CWalletTx& wtx, UniValue
     }
     entry.pushKV("bip125-replaceable", rbfStatus);
 
-    for (const std::pair<const std::string, std::string>& item : wtx.mapValue)
+    if (wtx.tx->HasPrivateBundle() && CanExposePrivateWalletData(wallet)) {
+        entry.pushKV("has_private_bundle", true);
+        entry.pushKV("private_value_balance", ValueFromAmount(CachedTxGetPrivateValueBalance(wtx)));
+        entry.pushKV("private_credit", ValueFromAmount(CachedTxGetPrivateCredit(wallet, wtx)));
+        entry.pushKV("private_external_credit", ValueFromAmount(CachedTxGetPrivateExternalCredit(wallet, wtx)));
+        entry.pushKV("private_internal_credit", ValueFromAmount(CachedTxGetPrivateInternalCredit(wallet, wtx)));
+        entry.pushKV("private_debit", ValueFromAmount(CachedTxGetPrivateDebit(wallet, wtx)));
+    }
+
+    for (const std::pair<const std::string, std::string>& item : wtx.mapValue) {
+        if (item.first.rfind("nito_private_", 0) == 0) continue;
+        if (item.first.rfind("nito_available_balance_", 0) == 0) continue;
         entry.pushKV(item.first, item.second);
+    }
 }
 
 struct tallyitem
@@ -325,13 +354,174 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
     std::list<COutputEntry> listReceived;
     std::list<COutputEntry> listSent;
 
-    CachedTxGetAmounts(wallet, wtx, listReceived, listSent, nFee, filter_ismine, include_change);
+    const bool available_balance_current = IsAvailableBalanceCurrent(wtx);
+    CachedTxGetAmounts(wallet, wtx, listReceived, listSent, nFee, filter_ismine, include_change || available_balance_current);
 
     bool involvesWatchonly = CachedTxIsFromMe(wallet, wtx, ISMINE_WATCH_ONLY);
+    const bool expose_private = CanExposePrivateWalletData(wallet);
+    const CAmount private_external_credit = expose_private ? CachedTxGetPrivateExternalCredit(wallet, wtx) : 0;
+    const CAmount private_internal_credit = expose_private ? CachedTxGetPrivateInternalCredit(wallet, wtx) : 0;
+    const CAmount private_debit = expose_private ? CachedTxGetPrivateDebit(wallet, wtx) : 0;
+    const CAmount transparent_debit = CachedTxGetDebit(wallet, wtx, filter_ismine);
+    const CAmount private_value_balance = expose_private ? CachedTxGetPrivateValueBalance(wtx) : 0;
+    CAmount public_sent_amount{0};
+    for (const COutputEntry& s : listSent) {
+        public_sent_amount += s.amount;
+    }
+
+    if (available_balance_current) {
+        if (wallet.GetTxDepthInMainChain(wtx) < nMinDepth) return;
+
+        if (private_external_credit > 0) {
+            UniValue entry(UniValue::VOBJ);
+            if (involvesWatchonly) {
+                entry.pushKV("involvesWatchonly", true);
+            }
+            entry.pushKV("address", "bech32x");
+            entry.pushKV("category", "receive");
+            entry.pushKV("amount", ValueFromAmount(private_external_credit));
+            entry.pushKV("private", true);
+            entry.pushKV("vout", -1);
+            entry.pushKV("abandoned", wtx.isAbandoned());
+            if (fLong) {
+                WalletTxToJSON(wallet, wtx, entry);
+            }
+            ret.push_back(entry);
+        }
+
+        for (const COutputEntry& r : listReceived) {
+            if (r.amount <= 0) continue;
+
+            std::string label;
+            const auto* address_book_entry = wallet.FindAddressBookEntry(r.destination);
+            if (address_book_entry) {
+                label = address_book_entry->GetLabel();
+            }
+            if (filter_label.has_value() && label != filter_label.value()) {
+                continue;
+            }
+
+            UniValue entry(UniValue::VOBJ);
+            if (involvesWatchonly || (wallet.IsMine(r.destination) & ISMINE_WATCH_ONLY)) {
+                entry.pushKV("involvesWatchonly", true);
+            }
+            MaybePushAddress(entry, r.destination);
+            PushParentDescriptors(wallet, wtx.tx->vout.at(r.vout).scriptPubKey, entry);
+            if (wtx.IsCoinBase()) {
+                if (wallet.GetTxDepthInMainChain(wtx) < 1)
+                    entry.pushKV("category", "orphan");
+                else if (wallet.IsTxImmatureCoinBase(wtx))
+                    entry.pushKV("category", "immature");
+                else
+                    entry.pushKV("category", "generate");
+            } else {
+                entry.pushKV("category", "receive");
+            }
+            entry.pushKV("amount", ValueFromAmount(r.amount));
+            if (address_book_entry) {
+                entry.pushKV("label", label);
+            }
+            entry.pushKV("vout", r.vout);
+            entry.pushKV("abandoned", wtx.isAbandoned());
+            if (fLong) {
+                WalletTxToJSON(wallet, wtx, entry);
+            }
+            ret.push_back(entry);
+        }
+        return;
+    }
+
+    CAmount private_send_amount{0};
+    if (private_debit > 0) {
+        private_send_amount = private_debit - private_internal_credit - nFee - public_sent_amount;
+    } else if (transparent_debit > 0 && private_value_balance < 0) {
+        private_send_amount = -private_value_balance;
+    }
+    const bool unshield_to_transparent = wtx.tx->HasPrivateBundle() && private_debit > 0 && private_value_balance > 0 &&
+        transparent_debit == 0 && !wtx.tx->vout.empty() && private_send_amount == 0 && private_external_credit == 0;
+    if (unshield_to_transparent) {
+        CAmount transparent_total{0};
+        for (const CTxOut& txout : wtx.tx->vout) {
+            transparent_total += txout.nValue;
+        }
+        CAmount transparent_credit{0};
+        std::optional<COutputEntry> display_output;
+        std::string display_label;
+        for (const COutputEntry& r : listReceived) {
+            transparent_credit += r.amount;
+            if (!display_output.has_value()) {
+                display_output = r;
+                const auto* address_book_entry = wallet.FindAddressBookEntry(r.destination);
+                if (address_book_entry) {
+                    display_label = address_book_entry->GetLabel();
+                }
+            }
+        }
+        if (!display_output.has_value()) {
+            for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+                CTxDestination dest;
+                if (ExtractDestination(wtx.tx->vout[i].scriptPubKey, dest)) {
+                    display_output = COutputEntry{dest, wtx.tx->vout[i].nValue, static_cast<int>(i)};
+                    break;
+                }
+            }
+        }
+        const CAmount unshield_fee = private_value_balance > transparent_total ? private_value_balance - transparent_total : 0;
+        if (!filter_label.has_value() || display_label == filter_label.value()) {
+            UniValue entry(UniValue::VOBJ);
+            if (involvesWatchonly) {
+                entry.pushKV("involvesWatchonly", true);
+            }
+            if (display_output.has_value()) {
+                MaybePushAddress(entry, display_output->destination);
+                entry.pushKV("vout", display_output->vout);
+            } else {
+                entry.pushKV("address", "bech32x");
+                entry.pushKV("vout", -1);
+            }
+            entry.pushKV("category", transparent_credit > 0 ? "unshield" : "send");
+            entry.pushKV("amount", ValueFromAmount(transparent_credit > 0 ? transparent_credit - private_value_balance : -transparent_total));
+            entry.pushKV("private", true);
+            entry.pushKV("private_debit", ValueFromAmount(-private_value_balance));
+            if (transparent_credit > 0) {
+                entry.pushKV("transparent_credit", ValueFromAmount(transparent_credit));
+            }
+            if (unshield_fee > 0) {
+                entry.pushKV("fee", ValueFromAmount(-unshield_fee));
+            }
+            if (!display_label.empty()) {
+                entry.pushKV("label", display_label);
+            }
+            if (fLong) {
+                WalletTxToJSON(wallet, wtx, entry);
+            }
+            entry.pushKV("abandoned", wtx.isAbandoned());
+            ret.push_back(entry);
+        }
+        return;
+    }
 
     // Sent
     if (!filter_label.has_value())
     {
+        if (private_send_amount > 0) {
+            UniValue entry(UniValue::VOBJ);
+            if (involvesWatchonly) {
+                entry.pushKV("involvesWatchonly", true);
+            }
+            entry.pushKV("address", "bech32x");
+            entry.pushKV("category", "send");
+            entry.pushKV("amount", ValueFromAmount(-private_send_amount));
+            entry.pushKV("private", true);
+            entry.pushKV("vout", -1);
+            entry.pushKV("fee", ValueFromAmount(-nFee));
+            if (fLong) {
+                WalletTxToJSON(wallet, wtx, entry);
+            }
+            entry.pushKV("abandoned", wtx.isAbandoned());
+            ret.push_back(entry);
+        }
+
         for (const COutputEntry& s : listSent)
         {
             UniValue entry(UniValue::VOBJ);
@@ -355,6 +545,22 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
     }
 
     // Received
+    if (private_external_credit > 0 && wallet.GetTxDepthInMainChain(wtx) >= nMinDepth) {
+        UniValue entry(UniValue::VOBJ);
+        if (involvesWatchonly) {
+            entry.pushKV("involvesWatchonly", true);
+        }
+        entry.pushKV("address", "bech32x");
+        entry.pushKV("category", "receive");
+        entry.pushKV("amount", ValueFromAmount(private_external_credit));
+        entry.pushKV("private", true);
+        entry.pushKV("vout", -1);
+        entry.pushKV("abandoned", wtx.isAbandoned());
+        if (fLong) {
+            WalletTxToJSON(wallet, wtx, entry);
+        }
+        ret.push_back(entry);
+    }
     if (listReceived.size() > 0 && wallet.GetTxDepthInMainChain(wtx) >= nMinDepth) {
         for (const COutputEntry& r : listReceived)
         {
@@ -422,8 +628,14 @@ static std::vector<RPCResult> TransactionDescriptionString()
            {RPCResult::Type::NUM_TIME, "time", "The transaction time expressed in " + UNIX_EPOCH_TIME + "."},
            {RPCResult::Type::NUM_TIME, "timereceived", "The time received expressed in " + UNIX_EPOCH_TIME + "."},
            {RPCResult::Type::STR, "comment", /*optional=*/true, "If a comment is associated with the transaction, only present if not empty."},
-           {RPCResult::Type::STR, "bip125-replaceable", "(\"yes|no|unknown\") Whether this transaction signals BIP125 replaceability or has an unconfirmed ancestor signaling BIP125 replaceability.\n"
+           {RPCResult::Type::STR, "bip125-replaceable", "(\"yes|no|unknown\") Whether this transaction or an unconfirmed ancestor signals BIP125 replaceability or uses replaceable version-3 policy.\n"
                "May be unknown for unconfirmed transactions not in the mempool because their unconfirmed ancestors are unknown."},
+           {RPCResult::Type::BOOL, "has_private_bundle", /*optional=*/true, "Whether this transaction carries a Nito.network private Orchard bundle."},
+           {RPCResult::Type::STR_AMOUNT, "private_value_balance", /*optional=*/true, "Net private value balance carried by the transaction."},
+           {RPCResult::Type::STR_AMOUNT, "private_credit", /*optional=*/true, "Private amount credited to this wallet."},
+            {RPCResult::Type::STR_AMOUNT, "private_external_credit", /*optional=*/true, "Private received amount, excluding change."},
+            {RPCResult::Type::STR_AMOUNT, "private_internal_credit", /*optional=*/true, "Private change amount returned to this wallet."},
+           {RPCResult::Type::STR_AMOUNT, "private_debit", /*optional=*/true, "Private amount debited from this wallet."},
            {RPCResult::Type::ARR, "parent_descs", /*optional=*/true, "Only if 'category' is 'received'. List of parent descriptors for the scriptPubKey of this coin.", {
                {RPCResult::Type::STR, "desc", "The descriptor string."},
            }},
@@ -459,6 +671,9 @@ RPCHelpMan listtransactions()
                                 "for all other categories"},
                             {RPCResult::Type::STR, "label", /*optional=*/true, "A comment for the address/transaction, if any"},
                             {RPCResult::Type::NUM, "vout", "the vout value"},
+                            {RPCResult::Type::BOOL, "private", /*optional=*/true, "Whether this row represents private Orchard wallet accounting."},
+                            {RPCResult::Type::STR_AMOUNT, "private_debit", /*optional=*/true, "Private amount debited by this row."},
+                            {RPCResult::Type::STR_AMOUNT, "transparent_credit", /*optional=*/true, "Transparent amount credited by a private-to-transparent row."},
                             {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the\n"
                                  "'send' category of transactions."},
                         },
@@ -519,6 +734,7 @@ RPCHelpMan listtransactions()
         for (CWallet::TxItems::const_reverse_iterator it = txOrdered.rbegin(); it != txOrdered.rend(); ++it)
         {
             CWalletTx *const pwtx = (*it).second;
+            if (!pwallet->ShouldShowTransaction(*pwtx)) continue;
             ListTransactions(*pwallet, *pwtx, 0, true, ret, filter, filter_label);
             if ((int)ret.size() >= (nCount+nFrom)) break;
         }
@@ -644,6 +860,7 @@ RPCHelpMan listsinceblock()
 
     for (const std::pair<const uint256, CWalletTx>& pairWtx : wallet.mapWallet) {
         const CWalletTx& tx = pairWtx.second;
+        if (!wallet.ShouldShowTransaction(tx)) continue;
 
         if (depth == -1 || abs(wallet.GetTxDepthInMainChain(tx)) < depth) {
             ListTransactions(wallet, tx, 0, true, transactions, filter, filter_label, include_change);
@@ -660,7 +877,7 @@ RPCHelpMan listsinceblock()
         }
         for (const CTransactionRef& tx : block.vtx) {
             auto it = wallet.mapWallet.find(tx->GetHash());
-            if (it != wallet.mapWallet.end()) {
+            if (it != wallet.mapWallet.end() && wallet.ShouldShowTransaction(it->second)) {
                 // We want all transactions regardless of confirmation count to appear here,
                 // even negative confirmation ones, hence the big negative.
                 ListTransactions(wallet, it->second, -100000000, true, removed, filter, filter_label, include_change);
@@ -701,6 +918,7 @@ RPCHelpMan gettransaction()
                         {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT},
                         {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the\n"
                                      "'send' category of transactions."},
+                        {RPCResult::Type::BOOL, "private", /*optional=*/true, "Whether this wallet transaction includes private Orchard wallet accounting."},
                     },
                     TransactionDescriptionString()),
                     {
@@ -719,6 +937,9 @@ RPCHelpMan gettransaction()
                                 {RPCResult::Type::STR_AMOUNT, "amount", "The amount in " + CURRENCY_UNIT},
                                 {RPCResult::Type::STR, "label", /*optional=*/true, "A comment for the address/transaction, if any"},
                                 {RPCResult::Type::NUM, "vout", "the vout value"},
+                                {RPCResult::Type::BOOL, "private", /*optional=*/true, "Whether this detail row represents private Orchard wallet accounting."},
+                                {RPCResult::Type::STR_AMOUNT, "private_debit", /*optional=*/true, "Private amount debited by this detail row."},
+                                {RPCResult::Type::STR_AMOUNT, "transparent_credit", /*optional=*/true, "Transparent amount credited by a private-to-transparent row."},
                                 {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the \n"
                                     "'send' category of transactions."},
                                 {RPCResult::Type::BOOL, "abandoned", "'true' if the transaction has been abandoned (inputs are respendable)."},
@@ -768,15 +989,25 @@ RPCHelpMan gettransaction()
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid or non-wallet transaction id");
     }
     const CWalletTx& wtx = it->second;
+    if (!pwallet->ShouldShowTransaction(wtx)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid or non-wallet transaction id");
+    }
 
-    CAmount nCredit = CachedTxGetCredit(*pwallet, wtx, filter);
-    CAmount nDebit = CachedTxGetDebit(*pwallet, wtx, filter);
-    CAmount nNet = nCredit - nDebit;
-    CAmount nFee = (CachedTxIsFromMe(*pwallet, wtx, filter) ? wtx.tx->GetValueOut() - nDebit : 0);
+    const bool available_balance_current = IsAvailableBalanceCurrent(wtx);
+    CAmount nCredit = available_balance_current ? CachedTxGetAvailableCredit(*pwallet, wtx, filter) : CachedTxGetCredit(*pwallet, wtx, filter);
+    CAmount nDebit = available_balance_current ? 0 : CachedTxGetDebit(*pwallet, wtx, filter);
+    const bool expose_private = CanExposePrivateWalletData(*pwallet);
+    CAmount nPrivateCredit = expose_private ? CachedTxGetPrivateCredit(*pwallet, wtx) : 0;
+    CAmount nPrivateDebit = available_balance_current ? 0 : (expose_private ? CachedTxGetPrivateDebit(*pwallet, wtx) : 0);
+    CAmount nWalletNet = (nCredit + nPrivateCredit) - (nDebit + nPrivateDebit);
+    CAmount nFee = ((!available_balance_current && (CachedTxIsFromMe(*pwallet, wtx, filter) || nPrivateDebit > 0)) ? -CachedTxGetFee(*pwallet, wtx, filter) : 0);
 
-    entry.pushKV("amount", ValueFromAmount(nNet - nFee));
-    if (CachedTxIsFromMe(*pwallet, wtx, filter))
+    entry.pushKV("amount", ValueFromAmount(nWalletNet - nFee));
+    if (!available_balance_current && (CachedTxIsFromMe(*pwallet, wtx, filter) || nPrivateDebit > 0))
         entry.pushKV("fee", ValueFromAmount(nFee));
+    if (wtx.tx->HasPrivateBundle() && expose_private) {
+        entry.pushKV("private", true);
+    }
 
     WalletTxToJSON(*pwallet, wtx, entry);
 

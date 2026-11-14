@@ -41,7 +41,7 @@ static constexpr int64_t TIMESTAMP_WINDOW = MAX_FUTURE_BLOCK_TIME;
  * Maximum gap between node time and block time used
  * for the "Catching up..." mode in GUI.
  *
- * Ref: https://github.com/nito/nito/pull/1026
+ * Ref: https://github.com/bitcoin/bitcoin/pull/1026
  */
 static constexpr int64_t MAX_BLOCK_TIME_GAP = 90 * 60;
 
@@ -93,7 +93,7 @@ enum BlockStatus : uint32_t {
     //! Reserved (was BLOCK_VALID_HEADER).
     BLOCK_VALID_RESERVED     =    1,
 
-    //! All parent headers found, difficulty matches, timestamp >= median previous, checkpoint. Implies all parents
+    //! All parent headers found, difficulty matches, timestamp >= median previous. Implies all parents
     //! are also at least TREE.
     BLOCK_VALID_TREE         =    2,
 

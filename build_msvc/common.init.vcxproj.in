@@ -7,6 +7,16 @@
     <UseNativeEnvironment>true</UseNativeEnvironment>
    </PropertyGroup>
 
+  <PropertyGroup Label="NitoOrchardFfi">
+    <NitoOrchardFfiDir>$(MSBuildThisFileDirectory)..\src\private\orchard_ffi</NitoOrchardFfiDir>
+    <NitoOrchardFfiTargetDir>$(MSBuildThisFileDirectory)..\src\private\orchard_ffi\target\release</NitoOrchardFfiTargetDir>
+  </PropertyGroup>
+
+  <PropertyGroup Label="NitoSanitizers">
+    <NitoEnableAddressSanitizer Condition="'$(NitoEnableAddressSanitizer)'==''">false</NitoEnableAddressSanitizer>
+    <EnableASAN Condition="'$(NitoEnableAddressSanitizer)'=='true'">true</EnableASAN>
+  </PropertyGroup>
+
    <PropertyGroup Label="Vcpkg">
     <VcpkgEnabled>true</VcpkgEnabled>
     <VcpkgEnableManifest>true</VcpkgEnableManifest>
@@ -95,9 +105,24 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>Iphlpapi.lib;ws2_32.lib;Shlwapi.lib;kernel32.lib;user32.lib;gdi32.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(NitoOrchardFfiTargetDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>nito_orchard_ffi.lib;utf8proc_static.lib;bcrypt.lib;advapi32.lib;kernel32.lib;ntdll.lib;userenv.lib;ws2_32.lib;dbghelp.lib;Iphlpapi.lib;Shlwapi.lib;user32.lib;gdi32.lib;comdlg32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <RandomizedBaseAddress>true</RandomizedBaseAddress>
     </Link>
   </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(NitoEnableAddressSanitizer)'=='true'">
+    <ClCompile>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <PreprocessorDefinitions>_DISABLE_STRING_ANNOTATION;_DISABLE_VECTOR_ANNOTATION;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <LinkIncremental>false</LinkIncremental>
+    </Link>
+  </ItemDefinitionGroup>
+  <Target Name="BuildNitoOrchardFfi" BeforeTargets="ClCompile" Inputs="$(NitoOrchardFfiDir)\src\lib.rs;$(NitoOrchardFfiDir)\Cargo.toml;$(NitoOrchardFfiDir)\Cargo.lock;$(NitoOrchardFfiDir)\..\..\..\rust-toolchain.toml" Outputs="$(NitoOrchardFfiTargetDir)\nito_orchard_ffi.lib">
+    <Exec Command="cargo fetch --locked" WorkingDirectory="$(NitoOrchardFfiDir)" />
+    <Exec Command="cargo build --release --locked --offline" WorkingDirectory="$(NitoOrchardFfiDir)" />
+  </Target>
   <Import Project="common.init.vcxproj.user" Condition="Exists('common.init.vcxproj.user')" />
 </Project>

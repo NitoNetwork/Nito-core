@@ -1,0 +1,31 @@
+--- a/qttools/configure.cmake
++++ b/qttools/configure.cmake
+@@ -160,5 +160,5 @@
+  `/qt_build/qt-configure-module /path/to/qttools FEATURE_clang=ON` for a per-submodule build
+ "
+-    CONDITION NOT QT_FEATURE_clang
++    CONDITION QT_FEATURE_qdoc AND NOT QT_FEATURE_clang
+ )
+ qt_configure_add_report_entry(
+@@ -167,4 +167,4 @@ qt_configure_add_report_entry(
+     MESSAGE "QDoc will not be compiled because the QmlPrivate library wasn't found."
+-    CONDITION NOT TARGET Qt::QmlPrivate
++    CONDITION QT_FEATURE_qdoc AND NOT TARGET Qt::QmlPrivate
+ )
+ qt_configure_add_report_entry(
+@@ -172,4 +172,4 @@ qt_configure_add_report_entry(
+     MESSAGE "QDoc cannot be compiled without Qt's commandline parser or thread features."
+-    CONDITION NOT QT_FEATURE_commandlineparser OR NOT QT_FEATURE_thread
++    CONDITION QT_FEATURE_qdoc AND (NOT QT_FEATURE_commandlineparser OR NOT QT_FEATURE_thread)
+ )
+ qt_configure_add_report_entry(
+@@ -177,3 +177,3 @@ qt_configure_add_report_entry(
+     MESSAGE "QDoc will not be compiled because it requires libclang ${QDOC_MINIMUM_CLANG_VERSION} or newer."
+-    CONDITION QT_LIB_CLANG_VERSION VERSION_LESS QDOC_MINIMUM_CLANG_VERSION
++    CONDITION QT_FEATURE_qdoc AND QT_LIB_CLANG_VERSION VERSION_LESS QDOC_MINIMUM_CLANG_VERSION
+ )
+@@ -199,3 +199,3 @@ qt_configure_add_report_entry(
+     MESSAGE "${clangcpp_warn_msg}"
+-    CONDITION NOT QT_FEATURE_clangcpp
++    CONDITION QT_FEATURE_clang AND NOT QT_FEATURE_clangcpp
+ )

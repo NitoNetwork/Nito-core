@@ -100,7 +100,9 @@ class P2PVersionStore(P2PInterface):
 class P2PLeakTest(NitoTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
-        self.extra_args = [[f"-peertimeout={PEER_TIMEOUT}"]]
+        self.setup_clean_chain = True
+        # This scenario covers legacy negotiation before Orchard peer gating.
+        self.extra_args = [[f"-peertimeout={PEER_TIMEOUT}", "-privateactivationheight=10000"]]
 
     def create_old_version(self, nversion):
         old_version_msg = msg_version()
@@ -111,6 +113,7 @@ class P2PLeakTest(NitoTestFramework):
         return old_version_msg
 
     def run_test(self):
+        self.generate(self.nodes[0], 200)
         self.log.info('Check that the node doesn\'t send unexpected messages before handshake completion')
         # Peer that never sends a version, nor any other messages. It shouldn't receive anything from the node.
         no_version_idle_peer = self.nodes[0].add_p2p_connection(LazyPeer(), send_version=False, wait_for_verack=False)

@@ -22,7 +22,7 @@ namespace Ui {
 }
 
 /**
- * A single entry in the dialog for sending nitos.
+ * A single entry in the dialog for sending NITO.
  */
 class SendCoinsEntry : public QWidget
 {

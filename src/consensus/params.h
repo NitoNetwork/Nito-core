@@ -95,8 +95,10 @@ struct Params {
      * Note that segwit v0 script rules are enforced on all blocks except the
      * BIP 16 exception blocks. */
     int SegwitHeight;
-    /** Block height at which Legacy/P2SH transactions become allowed again */
+    /** Block height at which Legacy/P2SH transactions become allowed again. */
     int nLegacyP2SHActivationHeight;
+    /** Block height at which Nito.network private transactions become valid. -1 means disabled. */
+    int privateTxActivationHeight{-1};
     /** Don't warn about unknown BIP 9 activations below this height.
      * This prevents us from warning about the CSV and segwit activations. */
     int MinBIP9WarningHeight;
@@ -148,6 +150,11 @@ struct Params {
         return std::numeric_limits<int>::max();
     }
 };
+
+inline bool PrivateTxActive(const Params& params, int height)
+{
+    return params.privateTxActivationHeight >= 0 && height >= params.privateTxActivationHeight;
+}
 
 } // namespace Consensus
 

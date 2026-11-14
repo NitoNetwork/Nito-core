@@ -12,6 +12,8 @@
 #include <httpserver.h>
 #include <index/blockfilterindex.h>
 #include <index/coinstatsindex.h>
+#include <index/orchardindex.h>
+#include <index/transparenthistoryindex.h>
 #include <index/txindex.h>
 #include <interfaces/chain.h>
 #include <interfaces/echo.h>
@@ -390,6 +392,14 @@ static RPCHelpMan getindexinfo()
 
     if (g_coin_stats_index) {
         result.pushKVs(SummaryToJSON(g_coin_stats_index->GetSummary(), index_name));
+    }
+
+    if (const OrchardIndex* orchard_index = GetOrchardIndex()) {
+        result.pushKVs(SummaryToJSON(orchard_index->GetSummary(), index_name));
+    }
+
+    if (const TransparentHistoryIndex* transparent_history_index = GetTransparentHistoryIndex()) {
+        result.pushKVs(SummaryToJSON(transparent_history_index->GetSummary(), index_name));
     }
 
     ForEachBlockFilterIndex([&result, &index_name](const BlockFilterIndex& index) {

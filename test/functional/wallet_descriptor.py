@@ -36,6 +36,17 @@ class WalletDescriptorTest(NitoTestFramework):
         self.skip_if_no_sqlite()
         self.skip_if_no_py_sqlite3()
 
+    def mine_until_height(self, node, blocks, address):
+        target_height = node.getblockcount() + blocks
+        while node.getblockcount() < target_height:
+            self.generatetoaddress(
+                node,
+                target_height - node.getblockcount(),
+                address,
+                maxtries=10_000_000,
+            )
+        node.syncwithvalidationinterfacequeue()
+
     def test_concurrent_writes(self):
         self.log.info("Test sqlite concurrent writes are in the correct order")
         self.restart_node(0, extra_args=["-unsafesqlitesync=0"])
@@ -142,7 +153,7 @@ class WalletDescriptorTest(NitoTestFramework):
         send_wrpc = self.nodes[0].get_wallet_rpc("desc1")
 
         # Generate some coins
-        self.generatetoaddress(self.nodes[0], COINBASE_MATURITY + 1, send_wrpc.getnewaddress())
+        self.mine_until_height(self.nodes[0], COINBASE_MATURITY + 1, send_wrpc.getnewaddress())
 
         # Make transactions
         self.log.info("Test sending and receiving")
@@ -159,7 +170,7 @@ class WalletDescriptorTest(NitoTestFramework):
         assert_raises_rpc_error(-4, "Only legacy wallets are supported by this command", recv_wrpc.rpc.dumpprivkey, recv_wrpc.getnewaddress())
         assert_raises_rpc_error(-4, "Only legacy wallets are supported by this command", recv_wrpc.rpc.dumpwallet, 'wallet.dump')
         assert_raises_rpc_error(-4, "Only legacy wallets are supported by this command", recv_wrpc.rpc.importwallet, 'wallet.dump')
-        assert_raises_rpc_error(-4, "Only legacy wallets are supported by this command", recv_wrpc.rpc.sethdseed)
+        assert_raises_rpc_error(-4, "Descriptor wallet HD seed can only be set on a blank descriptor wallet", recv_wrpc.rpc.sethdseed)
 
         self.log.info("Test encryption")
         # Get the master fingerprint before encrypt
@@ -170,7 +181,7 @@ class WalletDescriptorTest(NitoTestFramework):
         with WalletUnlock(send_wrpc, "pass"):
             addr = send_wrpc.getnewaddress()
             info2 = send_wrpc.getaddressinfo(addr)
-            assert info1['hdmasterfingerprint'] != info2['hdmasterfingerprint']
+            assert_equal(info1['hdmasterfingerprint'], info2['hdmasterfingerprint'])
         assert 'hdmasterfingerprint' in send_wrpc.getaddressinfo(send_wrpc.getnewaddress())
         info3 = send_wrpc.getaddressinfo(addr)
         assert_equal(info2['desc'], info3['desc'])

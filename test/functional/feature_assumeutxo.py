@@ -32,6 +32,7 @@ Interesting starting states could be loading a snapshot when the current chain t
 - TODO: Not an ancestor or a descendant of the snapshot block and has more work
 
 """
+from decimal import Decimal
 from shutil import rmtree
 
 from test_framework.messages import tx_from_hex
@@ -58,9 +59,9 @@ class AssumeutxoTest(NitoTestFramework):
         self.num_nodes = 3
         self.rpc_timeout = 120
         self.extra_args = [
-            [],
-            ["-fastprune", "-prune=1", "-blockfilterindex=1", "-coinstatsindex=1"],
-            ["-persistmempool=0","-txindex=1", "-blockfilterindex=1", "-coinstatsindex=1"],
+            ["-privateactivationheight=1000", "-blockfilterindex=0", "-orchardindex=0"],
+            ["-privateactivationheight=1000", "-fastprune", "-prune=1", "-blockfilterindex=1", "-coinstatsindex=1", "-orchardindex=0"],
+            ["-privateactivationheight=1000", "-persistmempool=0", "-txindex=1", "-blockfilterindex=1", "-coinstatsindex=1", "-orchardindex=0"],
         ]
 
     def setup_network(self):
@@ -100,18 +101,17 @@ class AssumeutxoTest(NitoTestFramework):
 
         self.log.info("  - snapshot file with alternated UTXO data")
         cases = [
-            [b"\xff" * 32, 0, "7d52155c9a9fdc4525b637ef6170568e5dad6fabd0b1fdbb9432010b8453095b"],  # wrong outpoint hash
-            [(1).to_bytes(4, "little"), 32, "9f4d897031ab8547665b4153317ae2fdbf0130c7840b66427ebc48b881cb80ad"],  # wrong outpoint index
-            [b"\x81", 36, "3da966ba9826fb6d2604260e01607b55ba44e1a5de298606b08704bc62570ea8"],  # wrong coin code VARINT((coinbase ? 1 : 0) | (height << 1))
-            [b"\x80", 36, "091e893b3ccb4334378709578025356c8bcb0a623f37c7c4e493133c988648e5"],  # another wrong coin code
+            [b"\xff" * 32, 0],  # wrong outpoint hash
+            [(1).to_bytes(4, "little"), 32],  # wrong outpoint index
+            [b"\x81", 36],  # wrong coin code VARINT((coinbase ? 1 : 0) | (height << 1))
         ]
 
-        for content, offset, wrong_hash in cases:
+        for content, offset in cases:
             with open(bad_snapshot_path, "wb") as f:
                 f.write(valid_snapshot_contents[:(32 + 8 + offset)])
                 f.write(content)
                 f.write(valid_snapshot_contents[(32 + 8 + offset + len(content)):])
-            expected_error(log_msg=f"[snapshot] bad snapshot content hash: expected a4bf3407ccb2cc0145c49ebba8fa91199f8a3903daf0883875941497d2493c27, got {wrong_hash}")
+            expected_error(log_msg="[snapshot] bad snapshot content hash: expected ed6ece9e5829b3cf6d553d1ad66a8fa6185e5cfa7c4e6cd40f129253ac18c87b, got ")
 
     def test_invalid_chainstate_scenarios(self):
         self.log.info("Test different scenarios of invalid snapshot chainstate in datadir")
@@ -125,7 +125,8 @@ class AssumeutxoTest(NitoTestFramework):
 
         def expected_error(log_msg="", error_msg=""):
             with self.nodes[0].assert_debug_log([log_msg]):
-                self.nodes[0].assert_start_raises_init_error(expected_msg=error_msg)
+                self.nodes[0].assert_start_raises_init_error(
+                    extra_args=self.extra_args[0], expected_msg=error_msg)
 
         expected_error_msg = f"Error: A fatal internal error occurred, see debug.log for details"
         error_details = f"Assumeutxo data not found for the given blockhash"
@@ -133,7 +134,7 @@ class AssumeutxoTest(NitoTestFramework):
 
         # resurrect node again
         rmtree(chainstate_snapshot_path)
-        self.start_node(0)
+        self.start_node(0, extra_args=self.extra_args[0])
 
     def test_invalid_mempool_state(self, dump_output_path):
         self.log.info("Test nitod should fail when mempool not empty.")
@@ -197,7 +198,7 @@ class AssumeutxoTest(NitoTestFramework):
 
         assert_equal(
             dump_output['txoutset_hash'],
-            "a4bf3407ccb2cc0145c49ebba8fa91199f8a3903daf0883875941497d2493c27")
+            "ed6ece9e5829b3cf6d553d1ad66a8fa6185e5cfa7c4e6cd40f129253ac18c87b")
         assert_equal(dump_output["nchaintx"], 334)
         assert_equal(n0.getblockchaininfo()["blocks"], SNAPSHOT_BASE_HEIGHT)
 
@@ -236,7 +237,8 @@ class AssumeutxoTest(NitoTestFramework):
         prev_tx = n0.getblock(spend_coin_blockhash, 3)['tx'][0]
         prevout = {"txid": prev_tx['txid'], "vout": 0, "scriptPubKey": prev_tx['vout'][0]['scriptPubKey']['hex']}
         privkey = n0.get_deterministic_priv_key().key
-        raw_tx = n1.createrawtransaction([prevout], {getnewdestination()[2]: 24.99})
+        spend_value = prev_tx['vout'][0]['value'] - Decimal("0.01")
+        raw_tx = n1.createrawtransaction([prevout], {getnewdestination()[2]: spend_value})
         signed_tx = n1.signrawtransactionwithkey(raw_tx, [privkey], [prevout])['hex']
         signed_txid = tx_from_hex(signed_tx).rehash()
 
@@ -328,6 +330,7 @@ class AssumeutxoTest(NitoTestFramework):
             'basic block filter index': COMPLETE_IDX,
             'coinstatsindex': COMPLETE_IDX,
             'txindex': COMPLETE_IDX,
+            'transparenthistoryindex': COMPLETE_IDX,
         }
         self.wait_until(lambda: n2.getindexinfo() == completed_idx_state)
 

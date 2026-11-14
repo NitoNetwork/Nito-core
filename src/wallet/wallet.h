@@ -30,11 +30,15 @@
 #include <util/ui_change_type.h>
 #include <wallet/crypter.h>
 #include <wallet/db.h>
+#include <wallet/bip39_seed.h>
+#include <wallet/private_notes.h>
+#include <wallet/private_wallet.h>
 #include <wallet/scriptpubkeyman.h>
 #include <wallet/transaction.h>
 #include <wallet/types.h>
 #include <wallet/walletutil.h>
 
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cstddef>
@@ -104,7 +108,6 @@ std::unique_ptr<WalletDatabase> MakeWalletDatabase(const std::string& name, cons
 
 //! -paytxfee default
 constexpr CAmount DEFAULT_PAY_TX_FEE = 0;
-//nitocode: fallbackfee 0 to 1000
 //! -fallbackfee default
 static const CAmount DEFAULT_FALLBACK_FEE = 1000;
 //! -discardfee default
@@ -157,7 +160,8 @@ static constexpr uint64_t KNOWN_WALLET_FLAGS =
     |   WALLET_FLAG_LAST_HARDENED_XPUB_CACHED
     |   WALLET_FLAG_DISABLE_PRIVATE_KEYS
     |   WALLET_FLAG_DESCRIPTORS
-    |   WALLET_FLAG_EXTERNAL_SIGNER;
+    |   WALLET_FLAG_EXTERNAL_SIGNER
+    |   WALLET_FLAG_BIP39_DERIVED_SEED;
 
 static constexpr uint64_t MUTABLE_WALLET_FLAGS =
         WALLET_FLAG_AVOID_REUSE;
@@ -169,7 +173,8 @@ static const std::map<std::string,WalletFlags> WALLET_FLAG_MAP{
     {"last_hardened_xpub_cached", WALLET_FLAG_LAST_HARDENED_XPUB_CACHED},
     {"disable_private_keys", WALLET_FLAG_DISABLE_PRIVATE_KEYS},
     {"descriptor_wallet", WALLET_FLAG_DESCRIPTORS},
-    {"external_signer", WALLET_FLAG_EXTERNAL_SIGNER}
+    {"external_signer", WALLET_FLAG_EXTERNAL_SIGNER},
+    {"bip39_derived_seed", WALLET_FLAG_BIP39_DERIVED_SEED}
 };
 
 /** A wrapper to reserve an address from a wallet
@@ -293,6 +298,9 @@ struct CRecipient
     CTxDestination dest;
     CAmount nAmount;
     bool fSubtractFeeFromAmount;
+    std::optional<std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE>> private_raw_address{};
+
+    bool IsPrivate() const { return private_raw_address.has_value(); }
 };
 
 class WalletRescanReserver; //forward declarations for ScanForWalletTransactions/RescanFromTime
@@ -304,7 +312,25 @@ class CWallet final : public WalletStorage, public interfaces::Chain::Notificati
 private:
     CKeyingMaterial vMasterKey GUARDED_BY(cs_wallet);
 
-    bool Unlock(const CKeyingMaterial& vMasterKeyIn);
+    std::optional<CBIP39DerivedSeedRecord> m_bip39_derived_seed_record GUARDED_BY(cs_wallet);
+    CKeyingMaterial m_bip39_derived_seed_cache GUARDED_BY(cs_wallet);
+
+    void ClearBIP39DerivedSeedCache() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool UnlockBIP39DerivedSeed(const CKeyingMaterial& master_key, bilingual_str& error) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool WriteBIP39DerivedSeedRecord(WalletBatch& batch,
+                                     const CKey& mnemonic_entropy,
+                                     const BIP39Seed& seed,
+                                     bool passphrase_enabled,
+                                     PrivateSeedScope scope,
+                                     CBIP39DerivedSeedRecord& record_out,
+                                     bilingual_str& error) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void SetupDescriptorScriptPubKeyMansWithBIP39(const CExtKey& master_key,
+                                                   const std::optional<CKey>& mnemonic_entropy,
+                                                   const BIP39Seed* seed,
+                                                   bool passphrase_enabled,
+                                                   std::optional<int64_t> creation_time) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    bool Unlock(const CKeyingMaterial& vMasterKeyIn, bilingual_str* error = nullptr);
 
     std::atomic<bool> fAbortRescan{false};
     std::atomic<bool> fScanningWallet{false}; // controlled by WalletRescanReserver
@@ -355,7 +381,14 @@ private:
      * Should be called with rescanning_old_block set to true, if the transaction is
      * not discovered in real time, but during a rescan of old blocks.
      */
-    bool AddToWalletIfInvolvingMe(const CTransactionRef& tx, const SyncTxState& state, bool fUpdate, bool rescanning_old_block) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool SyncPrivateTransaction(const CTransaction& tx, const SyncTxState& state, bool deep_scan) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void RefreshPrivateSpentState(WalletBatch* batch = nullptr) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    std::set<uint256> GetPrivateNullifierConflicts(const CTransaction& tx) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void MarkPrivateNullifierConflicts(const CTransaction& tx, const TxStateConfirmed& confirmed) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void UnmarkPrivateNullifierConflicts(const CTransaction& tx, int disconnect_height) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool AddToWalletIfInvolvingMe(const CTransactionRef& tx, const SyncTxState& state, bool fUpdate,
+                                  bool rescanning_old_block, bool scan_private_bundles = true,
+                                  bool available_balance_internal = false) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     /** Mark a transaction (and its in-wallet descendants) as conflicting with a particular block. */
     void MarkConflicted(const uint256& hashBlock, int conflicting_height, const uint256& hashTx);
@@ -372,7 +405,9 @@ private:
 
     void SyncMetaData(std::pair<TxSpends::iterator, TxSpends::iterator>) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
-    void SyncTransaction(const CTransactionRef& tx, const SyncTxState& state, bool update_tx = true, bool rescanning_old_block = false) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void SyncTransaction(const CTransactionRef& tx, const SyncTxState& state, bool update_tx = true,
+                         bool rescanning_old_block = false, bool scan_private_bundles = true,
+                         bool available_balance_internal = false) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     /** WalletFlags set on this wallet. */
     std::atomic<uint64_t> m_wallet_flags{0};
@@ -381,6 +416,9 @@ private:
 
     //! Unsets a wallet flag and saves it to disk
     void UnsetWalletFlagWithDB(WalletBatch& batch, uint64_t flag);
+
+    //! Sets a wallet flag and saves it through an existing transaction.
+    void SetWalletFlagWithDB(WalletBatch& batch, uint64_t flag);
 
     //! Unset the blank wallet flag and saves it to disk
     void UnsetBlankWalletFlag(WalletBatch& batch) override;
@@ -409,6 +447,8 @@ private:
      * that the wallet has scanned sequentially all blocks up to this one.
      */
     int m_last_block_processed_height GUARDED_BY(cs_wallet) = -1;
+
+    SeedHistoryState m_seed_history_state GUARDED_BY(cs_wallet);
 
     std::map<OutputType, ScriptPubKeyMan*> m_external_spk_managers;
     std::map<OutputType, ScriptPubKeyMan*> m_internal_spk_managers;
@@ -465,15 +505,15 @@ public:
     {
     }
 
-    ~CWallet()
-    {
-        // Should not have slots connected at this point.
-        assert(NotifyUnload.empty());
-    }
+    ~CWallet();
 
     bool IsCrypted() const;
     bool IsLocked() const override;
+    bool CanViewPrivateData() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     bool Lock();
+    /** Lock spending keys while retaining Orchard viewing state for an
+     * authenticated GUI display session. */
+    bool LockForDisplay();
 
     /** Interface to assert chain access */
     bool HaveChain() const { return m_chain ? true : false; }
@@ -488,7 +528,55 @@ public:
     int64_t nOrderPosNext GUARDED_BY(cs_wallet) = 0;
 
     std::map<CTxDestination, CAddressBookData> m_address_book GUARDED_BY(cs_wallet);
+    // Private nito1x receive requests are not CTxDestination address book entries.
+    std::map<std::string, std::string> m_non_destination_receive_requests GUARDED_BY(cs_wallet);
     const CAddressBookData* FindAddressBookEntry(const CTxDestination&, bool allow_change = false) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    struct PrivateOrchardScanViewingKey {
+        bool internal{false};
+        std::array<unsigned char, NITO_ORCHARD_FULL_VIEWING_KEY_SIZE> full_viewing_key{};
+    };
+
+    struct PrivateOrchardCompactMatch {
+        size_t action_index{0};
+        PrivateOrchardKeyPath path;
+        PrivateOrchardDecryptedNote note;
+    };
+
+    std::map<uint256, CPrivateWalletNote> mapPrivateNotes GUARDED_BY(cs_wallet);
+    std::map<uint256, uint256> mapPrivateNoteNullifiers GUARDED_BY(cs_wallet);
+    std::map<uint256, CPrivateSpentNullifier> mapPrivateSpentNullifiers GUARDED_BY(cs_wallet);
+    std::map<uint256, std::vector<unsigned char>> mapCryptedPrivateNotes GUARDED_BY(cs_wallet);
+    bool LoadPrivateNote(const CPrivateWalletNote& note) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool LoadCryptedPrivateNote(const uint256& cmx, const std::vector<unsigned char>& ciphertext) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool WritePrivateNoteRecord(WalletBatch& batch, const CPrivateWalletNote& note) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool MigratePrivateNoteEncryption() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool DecryptPrivateNotes() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void ClearDecryptedPrivateNotes() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool PersistPrivateChain(WalletBatch& batch, const CPrivateWalletChain& chain) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void AddPrivateNoteNullifierIndex(const CPrivateWalletNote& note) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void RemovePrivateNoteNullifierIndex(const CPrivateWalletNote& note) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool LoadPrivateSpentNullifier(const CPrivateSpentNullifier& spent) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool RefreshPrivateCommitmentIndexes(WalletBatch* batch = nullptr) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    OrchardKeyMan m_orchard_keyman GUARDED_BY(cs_wallet);
+    bool m_private_viewing_only GUARDED_BY(cs_wallet){false};
+    std::vector<PrivateOrchardScanViewingKey> m_private_rescan_viewing_keys GUARDED_BY(cs_wallet);
+    std::array<uint32_t, 2> m_private_rescan_viewing_key_end GUARDED_BY(cs_wallet){};
+    void LoadPrivateChain(const CPrivateWalletChain& chain) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool PreparePrivateViewingKeyMetadata(WalletBatch* batch, bilingual_str& error, bool require_seed) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void ClearPrivateRescanViewingKeys() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool MakePrivateScanViewingKey(const CPrivateWalletChain& chain, bool internal, PrivateOrchardScanViewingKey& viewing_key) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool PreparePrivateRescanViewingKeys(bool deep_scan) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool ExtendPrivateRescanViewingKeys(const CPrivateWalletChain& chain, bool internal, uint32_t target_end) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    enum class PrivateCompactProbeResult {
+        NO_MATCH,
+        MATCH,
+        SCAN_ERROR,
+    };
+    PrivateCompactProbeResult ProbePrivateCompactEffects(const CPrivateCompactEffects& effects, std::vector<PrivateOrchardCompactMatch>& matches);
+    void RecordPrivateSpentNullifier(WalletBatch& batch, const uint256& nullifier, const uint256& txid, const SyncTxState& state, uint32_t action_index) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool SyncPrivateBundle(const uint256& txid, const CPrivateBundle& bundle, const SyncTxState& state, bool deep_scan);
+    PrivateCompactProbeResult SyncPrivateCompactEffects(const uint256& txid, const CPrivateCompactEffects& effects, const SyncTxState& state);
 
     /** Set of Coins owned by this wallet that we won't try to spend from. A
      * Coin may be locked if it has already been used to fund a transaction
@@ -538,6 +626,7 @@ public:
     bool CanSupportFeature(enum WalletFeature wf) const override EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) { AssertLockHeld(cs_wallet); return IsFeatureSupported(nWalletVersion, wf); }
 
     bool IsSpent(const COutPoint& outpoint) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool ShouldShowTransaction(const CWalletTx& wtx) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     // Whether this or any known scriptPubKey with the same single key has been spent.
     bool IsSpentKey(const CScript& scriptPubKey) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
@@ -583,7 +672,9 @@ public:
     // Used to prevent deleting the passphrase from memory when it is still in use.
     RecursiveMutex m_relock_mutex;
 
-    bool Unlock(const SecureString& strWalletPassphrase);
+    bool Unlock(const SecureString& strWalletPassphrase, bilingual_str* error = nullptr);
+    /** Relock only if this is still the active timeout and no passphrase-dependent scan owns the unlock lease. */
+    bool TryRelock(int64_t expected_relock_time);
     bool ChangeWalletPassphrase(const SecureString& strOldWalletPassphrase, const SecureString& strNewWalletPassphrase);
     bool EncryptWallet(const SecureString& strWalletPassphrase);
 
@@ -617,7 +708,7 @@ public:
     void blockConnected(ChainstateRole role, const interfaces::BlockInfo& block) override;
     void blockDisconnected(const interfaces::BlockInfo& block) override;
     void updatedBlockTip() override;
-    int64_t RescanFromTime(int64_t startTime, const WalletRescanReserver& reserver, bool update);
+    int64_t RescanFromTime(int64_t startTime, const WalletRescanReserver& reserver, bool update, bool require_filter_index = false, std::optional<int> max_height = std::nullopt, bool require_private_index = false);
 
     struct ScanResult {
         enum { SUCCESS, FAILURE, USER_ABORT } status = SUCCESS;
@@ -634,7 +725,22 @@ public:
         //! USER_ABORT.
         uint256 last_failed_block;
     };
-    ScanResult ScanForWalletTransactions(const uint256& start_block, int start_height, std::optional<int> max_height, const WalletRescanReserver& reserver, bool fUpdate, const bool save_progress);
+    enum class PrivateRescanMode {
+        REQUIRE_UNLOCKED,
+        DEFER_WHILE_LOCKED,
+    };
+    using ScanProgressFn = std::function<void(int progress)>;
+    ScanResult ScanCurrentWalletUtxos(bool update, std::optional<int> max_height = std::nullopt, bool scan_private_bundles = true, ScanProgressFn progress_fn = {});
+    ScanResult ScanPrivateNotesFromIndex(const uint256& start_block, int start_height, std::optional<int> max_height, const WalletRescanReserver& reserver, bool require_private_index = true, bool show_progress = false, bool hydrate_wallet_history = false, ScanProgressFn progress_fn = {}, const uint256& expected_stop_block = {});
+    bool MarkPrivateScanPending(int start_height, int target_height, const uint256& target_block);
+    bool MarkPrivateLockedScanPending(int start_height, int target_height, const uint256& target_block);
+    util::Result<void> CatchUpPrivateNotesAfterUnlock();
+    util::Result<void> RestoreSeedHistory(bool wait_for_indexes = false, bool show_progress = false, ScanProgressFn progress_fn = {});
+    util::Result<void> CatchUpWalletAfterUnlock();
+    ScanResult ScanTransparentHistoryFromIndex(const uint256& start_block, int start_height, int stop_height, const uint256& stop_block, const WalletRescanReserver& reserver, bool fUpdate, bool show_progress = false, ScanProgressFn progress_fn = {});
+    ScanResult ScanWalletHistoryFromIndexes(const uint256& start_block, int start_height, int stop_height, const uint256& stop_block, const WalletRescanReserver& reserver, bool fUpdate, bool show_progress = true, ScanProgressFn progress_fn = {});
+    ScanResult ScanForWalletTransactions(const uint256& start_block, int start_height, std::optional<int> max_height, const WalletRescanReserver& reserver, bool fUpdate, const bool save_progress, bool require_filter_index = false, bool require_private_index = false, bool show_progress = true, ScanProgressFn progress_fn = {}, PrivateRescanMode private_rescan_mode = PrivateRescanMode::REQUIRE_UNLOCKED);
+    util::Result<void> CheckHistoryRescanIndexesReady(int stop_height, std::optional<bool> require_private_index = std::nullopt);
     void transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRemovalReason reason) override;
     /** Set the next time this wallet should resend transactions to 12-36 hours from now, ~1 day on average. */
     void SetNextResend() { m_next_resend = GetDefaultNextResend(); }
@@ -663,15 +769,17 @@ public:
      * @param[in]  bip32derivs whether to fill in bip32 derivation information if available
      * @param[out] n_signed the number of inputs signed by this wallet
      * @param[in] finalize whether to create the final scriptSig or scriptWitness if possible
+     * @param[in] private_intent_hash reviewed private intent commitment required for private signing material
      * return error
      */
     TransactionError FillPSBT(PartiallySignedTransaction& psbtx,
                   bool& complete,
                   int sighash_type = SIGHASH_DEFAULT,
-                  bool sign = true,
-                  bool bip32derivs = true,
-                  size_t* n_signed = nullptr,
-                  bool finalize = true) const;
+                   bool sign = true,
+                   bool bip32derivs = true,
+                   size_t* n_signed = nullptr,
+                   bool finalize = true,
+                   std::optional<uint256> private_intent_hash = std::nullopt) const;
 
     /**
      * Submit the transaction to the node's mempool and then relay to peers.
@@ -682,7 +790,7 @@ public:
      * @param[in] mapValue key-values to be set on the transaction.
      * @param[in] orderForm BIP 70 / BIP 21 order form details to be set on the transaction.
      */
-    void CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::vector<std::pair<std::string, std::string>> orderForm);
+    util::Result<void> CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::vector<std::pair<std::string, std::string>> orderForm);
 
     /** Pass this transaction to node for mempool insertion and relay to peers if flag set to true */
     bool SubmitTxMemoryPoolAndRelay(CWalletTx& wtx, std::string& err_string, bool relay) const
@@ -725,10 +833,9 @@ public:
     CAmount m_max_aps_fee{DEFAULT_MAX_AVOIDPARTIALSPEND_FEE}; //!< note: this is absolute fee, not fee rate
     OutputType m_default_address_type{DEFAULT_ADDRESS_TYPE};
     /**
-     * Default output type for change outputs. When unset, automatically choose type
-     * based on address type setting and the types other of non-change outputs
-     * (see -changetype option documentation and implementation in
-     * CWallet::TransactionChangeType for details).
+     * Optional operator override for transparent change. When unset, select a
+     * supported internal type based on the recipients and default address type
+     * (see CWallet::TransactionChangeType).
      */
     std::optional<OutputType> m_default_change_type{};
     /** Absolute maximum transaction fee (in satoshis) used by default for the wallet */
@@ -742,6 +849,11 @@ public:
 
     size_t KeypoolCountExternalKeys() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     bool TopUpKeyPool(unsigned int kpSize = 0);
+    bool TopUpSeedRestoreKeyPool();
+    bool PreparePrivateViewingKeyMetadata(WalletBatch* batch, bilingual_str& error) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet)
+    {
+        return PreparePrivateViewingKeyMetadata(batch, error, /*require_seed=*/true);
+    }
 
     std::optional<int64_t> GetOldestKeyPoolTime() const;
 
@@ -778,6 +890,9 @@ public:
 
     util::Result<CTxDestination> GetNewDestination(const OutputType type, const std::string label);
     util::Result<CTxDestination> GetNewChangeDestination(const OutputType type);
+    util::Result<std::string> GetNewPrivateAddress(bool internal) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    const OrchardKeyMan& GetOrchardKeyMan() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    const CPrivateWalletChain& GetPrivateChain() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     isminetype IsMine(const CTxDestination& dest) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     isminetype IsMine(const CScript& script) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
@@ -879,13 +994,23 @@ public:
     bool MarkReplaced(const uint256& originalHash, const uint256& newHash);
 
     /* Initializes the wallet, returns a new CWallet instance or a null pointer in case of an error */
-    static std::shared_ptr<CWallet> Create(WalletContext& context, const std::string& name, std::unique_ptr<WalletDatabase> database, uint64_t wallet_creation_flags, bilingual_str& error, std::vector<bilingual_str>& warnings);
+    static std::shared_ptr<CWallet> Create(WalletContext& context,
+                                           const std::string& name,
+                                           std::unique_ptr<WalletDatabase> database,
+                                           uint64_t wallet_creation_flags,
+                                           const SecureString& bip39_passphrase,
+                                           bilingual_str& error,
+                                           std::vector<bilingual_str>& warnings);
 
     /**
      * Wallet post-init setup
      * Gives the wallet a chance to register repetitive tasks and complete post-init tasks
      */
     void postInitProcess();
+    //! Collect verified transparent previous-output addresses from local data.
+    std::map<uint32_t, std::string> ResolveInputAddresses(const CWalletTx& tx, bool read_block = true) const;
+    //! Fill optional display metadata for older wallet records outside the GUI.
+    void RefreshInputAddresses(const std::vector<uint256>& transaction_ids = {});
 
     bool BackupWallet(const std::string& strDest) const;
 
@@ -942,6 +1067,21 @@ public:
     /** Upgrade the wallet */
     bool UpgradeWallet(int version, bilingual_str& error);
 
+    /** Return the mnemonic entropy key used by dumpmnemonic. */
+    bool GetPrivateHDSeed(CKey& hd_seed, bilingual_str& error, bool require_exportable_seed = false) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    /** Return the final 64-byte BIP39 seed used by transparent descriptors and Orchard. */
+    bool GetBIP39DerivedSeed(BIP39Seed& seed, bilingual_str& error) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool IsBIP39PassphraseEnabled() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool LoadBIP39DerivedSeedRecord(const CBIP39DerivedSeedRecord& record) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool ValidateBIP39DerivedSeedState(bilingual_str& error) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    /** Add one canonical Orchard root without changing transparent key managers. */
+    bool InitializePrivateHDSeed(const CKey& hd_seed,
+                                 const SecureString& bip39_passphrase,
+                                 PrivateSeedScope scope,
+                                 bilingual_str& error) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    bool HasCanonicalPrivateHDSeed() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    PrivateSeedScope GetPrivateSeedScope() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
     //! Returns all unique ScriptPubKeyMans in m_internal_spk_managers and m_external_spk_managers
     std::set<ScriptPubKeyMan*> GetActiveScriptPubKeyMans() const;
 
@@ -975,6 +1115,11 @@ public:
     bool HasEncryptionKeys() const override;
 
     /** Get last block processed height */
+    bool HasLastBlockProcessed() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet)
+    {
+        AssertLockHeld(cs_wallet);
+        return m_last_block_processed_height >= 0;
+    }
     int GetLastBlockHeight() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet)
     {
         AssertLockHeld(cs_wallet);
@@ -994,6 +1139,22 @@ public:
         m_last_block_processed_height = block_height;
         m_last_block_processed = block_hash;
     };
+
+    SeedHistoryState GetSeedHistoryState() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet)
+    {
+        AssertLockHeld(cs_wallet);
+        return m_seed_history_state;
+    }
+
+    bool IsAvailableBalanceSyncPending() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    void LoadSeedHistoryState(const SeedHistoryState& state) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet)
+    {
+        AssertLockHeld(cs_wallet);
+        m_seed_history_state = state;
+    }
+
+    bool SetSeedHistoryState(const SeedHistoryState& state);
 
     //! Connect the signals from ScriptPubKeyMans to the signals in CWallet
     void ConnectScriptPubKeyManNotifiers();
@@ -1020,7 +1181,10 @@ public:
     void DeactivateScriptPubKeyMan(uint256 id, OutputType type, bool internal);
 
     //! Create new DescriptorScriptPubKeyMans and add them to the wallet
-    void SetupDescriptorScriptPubKeyMans(const CExtKey& master_key) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void SetupDescriptorScriptPubKeyMans(const CExtKey& master_key, const std::optional<CKey>& seed_key = std::nullopt, std::optional<int64_t> creation_time = std::nullopt) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    void SetupDescriptorScriptPubKeyMans(const CKey& mnemonic_entropy,
+                                         const SecureString& bip39_passphrase,
+                                         std::optional<int64_t> creation_time = std::nullopt) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     void SetupDescriptorScriptPubKeyMans() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     //! Return the DescriptorScriptPubKeyMan for a WalletDescriptor if it is already in the wallet
@@ -1062,6 +1226,7 @@ public:
  * their transactions. Actual rebroadcast schedule is managed by the wallets themselves.
  */
 void MaybeResendWalletTxs(WalletContext& context);
+void MaybeCatchUpPrivateWallets(WalletContext& context);
 
 /** RAII object to check and reserve a wallet rescan */
 class WalletRescanReserver
@@ -1071,6 +1236,7 @@ private:
     using NowFn = std::function<Clock::time_point()>;
     CWallet& m_wallet;
     bool m_could_reserve{false};
+    bool m_with_passphrase{false};
     NowFn m_now;
 public:
     explicit WalletRescanReserver(CWallet& w) : m_wallet(w) {}
@@ -1081,6 +1247,7 @@ public:
         if (m_wallet.fScanningWallet.exchange(true)) {
             return false;
         }
+        m_with_passphrase = with_passphrase;
         m_wallet.m_scanning_with_passphrase.exchange(with_passphrase);
         m_wallet.m_scanning_start = SteadyClock::now();
         m_wallet.m_scanning_progress = 0;
@@ -1099,9 +1266,24 @@ public:
 
     ~WalletRescanReserver()
     {
-        if (m_could_reserve) {
+        if (!m_could_reserve) return;
+
+        if (!m_with_passphrase) {
             m_wallet.fScanningWallet = false;
             m_wallet.m_scanning_with_passphrase = false;
+            return;
+        }
+
+        // The walletpassphrase timeout callback must not revoke key access in
+        // the middle of a scan that explicitly reserved a passphrase lease.
+        // If the timeout expired during the scan, perform the deferred relock
+        // as the lease is released.
+        LOCK2(m_wallet.m_relock_mutex, m_wallet.cs_wallet);
+        m_wallet.fScanningWallet = false;
+        m_wallet.m_scanning_with_passphrase = false;
+        if (m_wallet.nRelockTime != 0 && m_wallet.nRelockTime <= GetTime()) {
+            m_wallet.Lock();
+            m_wallet.nRelockTime = 0;
         }
     }
 };

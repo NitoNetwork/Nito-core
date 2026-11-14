@@ -1,0 +1,17 @@
+diff --git a/cmake/FindIconv.cmake b/cmake/FindIconv.cmake
+index 8a1d25b..f4cd2f0 100644
+--- a/cmake/FindIconv.cmake
++++ b/cmake/FindIconv.cmake
+@@ -73,10 +73,11 @@
+ # handle the QUIETLY and REQUIRED arguments and set ICONV_FOUND to TRUE if
+ # all listed variables are TRUE
+ include(FindPackageHandleStandardArgs)
+-find_package_handle_standard_args(ICONV
++find_package_handle_standard_args(Iconv
+     REQUIRED_VARS ICONV_FOUND_ANY ICONV_INCLUDE_DIR
+     VERSION_VAR ICONV_VERSION_STRING)
++set(ICONV_FOUND ${Iconv_FOUND})
+ 
+ mark_as_advanced(ICONV_LIBRARY ICONV_INCLUDE_DIR)
+ 
+ if(NOT ICONV_FOUND)

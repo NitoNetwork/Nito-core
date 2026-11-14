@@ -222,6 +222,8 @@ struct Peer {
     const ServiceFlags m_our_services;
     /** Services this peer offered to us. */
     std::atomic<ServiceFlags> m_their_services{NODE_NONE};
+    /** Protocol version this peer announced. Set before m_their_services. */
+    std::atomic<int> m_protocol_version{0};
 
     /** Protects misbehavior data members */
     Mutex m_misbehavior_mutex;
@@ -583,6 +585,22 @@ private:
      */
     bool MaybeDiscourageAndDisconnect(CNode& pnode, Peer& peer);
 
+    /** Return true when the active chain requires peers to advertise Nito private support. */
+    bool NitoPrivatePeerServicesRequired() const;
+
+    /** Return true while private mempool/candidate-H traffic requires capable peers. */
+    bool NitoPrivatePeerTrafficRestricted() const;
+
+    /**
+     * Return true when a peer must be private-capable to provide a block.
+     * A legacy peer may provide H while the active tip is still below H; once
+     * H is active, the persistent activation latch disconnects that peer.
+     */
+    bool NitoPrivatePeerRequiredForReceivedBlock(int block_height) const;
+
+    /** Apply the activation-height content rule once the full block is available. */
+    bool NitoPrivatePeerRequiredForReceivedBlock(const CBlock& block, int block_height) const;
+
     /**
      * Reconsider orphan transactions after a parent has been accepted to the mempool.
      *
@@ -832,6 +850,9 @@ private:
      */
     CRollingBloomFilter m_recent_rejects GUARDED_BY(::cs_main){120'000, 0.000'001};
     uint256 hashRecentRejectsChainTip GUARDED_BY(cs_main);
+
+    /** Global CPU budget for untrusted Orchard transactions received over P2P. */
+    PrivateOrchardProofRateLimiter m_private_proof_rate_limiter GUARDED_BY(g_msgproc_mutex){GetTime<std::chrono::microseconds>()};
 
     /*
      * Filter for transactions that have been recently confirmed.
@@ -1679,15 +1700,64 @@ bool PeerManagerImpl::HasAllDesirableServiceFlags(ServiceFlags services) const
     return !(GetDesirableServiceFlags(services) & (~services));
 }
 
+bool PeerManagerImpl::NitoPrivatePeerServicesRequired() const
+{
+    if (m_chainman.m_blockman.NitoPrivateActivationObserved()) return true;
+    const int active_height{WITH_LOCK(cs_main, return m_chainman.ActiveChain().Height())};
+    return Consensus::PrivateTxActive(m_chainparams.GetConsensus(), active_height);
+}
+
+bool PeerManagerImpl::NitoPrivatePeerTrafficRestricted() const
+{
+    if (m_chainman.m_blockman.NitoPrivateActivationObserved()) return true;
+    const int next_height{WITH_LOCK(cs_main, return m_chainman.ActiveChain().Height() + 1)};
+    return Consensus::PrivateTxActive(m_chainparams.GetConsensus(), next_height);
+}
+
+bool PeerManagerImpl::NitoPrivatePeerRequiredForReceivedBlock(int block_height) const
+{
+    const Consensus::Params& consensus{m_chainparams.GetConsensus()};
+    const int activation_height{consensus.privateTxActivationHeight};
+    if (activation_height < 0) return false;
+    if (m_chainman.m_blockman.NitoPrivateActivationObserved()) return true;
+
+    const int active_height{WITH_LOCK(cs_main, return m_chainman.ActiveChain().Height())};
+    return Consensus::PrivateTxActive(consensus, active_height) || block_height > activation_height;
+}
+
+bool PeerManagerImpl::NitoPrivatePeerRequiredForReceivedBlock(const CBlock& block, int block_height) const
+{
+    if (NitoPrivatePeerRequiredForReceivedBlock(block_height)) return true;
+
+    const int activation_height{m_chainparams.GetConsensus().privateTxActivationHeight};
+    if (block_height != activation_height) return false;
+
+    return std::any_of(block.vtx.begin(), block.vtx.end(), [](const CTransactionRef& tx) {
+        return tx->HasPrivateBundle();
+    });
+}
+
+static bool HasNitoPrivatePeerCapability(int protocol_version, ServiceFlags services)
+{
+    return protocol_version >= NITO_PRIVATE_MIN_PEER_PROTO_VERSION && (services & NODE_NITO_PRIVATE);
+}
+
 ServiceFlags PeerManagerImpl::GetDesirableServiceFlags(ServiceFlags services) const
 {
+    ServiceFlags desirable_services{NODE_NONE};
     if (services & NODE_NETWORK_LIMITED) {
         // Limited peers are desirable when we are close to the tip.
         if (ApproximateBestBlockDepth() < NODE_NETWORK_LIMITED_ALLOW_CONN_BLOCKS) {
-            return ServiceFlags(NODE_NETWORK_LIMITED | NODE_WITNESS);
+            desirable_services = ServiceFlags(NODE_NETWORK_LIMITED | NODE_WITNESS);
         }
     }
-    return ServiceFlags(NODE_NETWORK | NODE_WITNESS);
+    if (desirable_services == NODE_NONE) {
+        desirable_services = ServiceFlags(NODE_NETWORK | NODE_WITNESS);
+    }
+    if (NitoPrivatePeerServicesRequired()) {
+        desirable_services = ServiceFlags(desirable_services | NODE_NITO_PRIVATE);
+    }
+    return desirable_services;
 }
 
 PeerRef PeerManagerImpl::GetPeerRef(NodeId id) const
@@ -1997,7 +2067,7 @@ void PeerManagerImpl::BlockConnected(
         LOCK(m_recent_confirmed_transactions_mutex);
         for (const auto& ptx : pblock->vtx) {
             m_recent_confirmed_transactions.insert(ptx->GetHash().ToUint256());
-            if (ptx->HasWitness()) {
+            if (ptx->HasWitnessLikeData()) {
                 m_recent_confirmed_transactions.insert(ptx->GetWitnessHash().ToUint256());
             }
         }
@@ -2064,6 +2134,12 @@ void PeerManagerImpl::NewPoWValidBlock(const CBlockIndex *pindex, const std::sha
 
         if (pnode->GetCommonVersion() < INVALID_CB_NO_BAN_VERSION || pnode->fDisconnect)
             return;
+        if (Consensus::PrivateTxActive(m_chainparams.GetConsensus(), pindex->nHeight)) {
+            const PeerRef peer{GetPeerRef(pnode->GetId())};
+            if (!peer || !HasNitoPrivatePeerCapability(peer->m_protocol_version.load(), peer->m_their_services.load())) {
+                return;
+            }
+        }
         ProcessBlockAvailability(pnode->GetId());
         CNodeState &state = *State(pnode->GetId());
         // If the peer has, or we announced to them the previous block already,
@@ -2087,6 +2163,29 @@ void PeerManagerImpl::NewPoWValidBlock(const CBlockIndex *pindex, const std::sha
 void PeerManagerImpl::UpdatedBlockTip(const CBlockIndex *pindexNew, const CBlockIndex *pindexFork, bool fInitialDownload)
 {
     SetBestBlock(pindexNew->nHeight, std::chrono::seconds{pindexNew->GetBlockTime()});
+
+    if (NitoPrivatePeerServicesRequired()) {
+        std::vector<NodeId> nodes_to_disconnect;
+        {
+            LOCK(m_peer_mutex);
+            for (const auto& [nodeid, peer] : m_peer_map) {
+                const ServiceFlags services{peer->m_their_services.load()};
+                const int protocol_version{peer->m_protocol_version.load()};
+                // A connection whose VERSION message is still in flight has
+                // not advertised either value yet. Let the handshake finish;
+                // the VERSION handler below applies the exact same gate before
+                // the peer can become successfully connected.
+                if (protocol_version == 0) continue;
+                if (!HasNitoPrivatePeerCapability(protocol_version, services)) {
+                    nodes_to_disconnect.push_back(nodeid);
+                }
+            }
+        }
+        for (const NodeId nodeid : nodes_to_disconnect) {
+            LogPrint(BCLog::NET, "peer=%d does not meet Nito private peer requirements after activation; disconnecting\n", nodeid);
+            m_connman.DisconnectNode(nodeid);
+        }
+    }
 
     // Don't relay inventory during initial block download.
     if (fInitialDownload) return;
@@ -2303,6 +2402,12 @@ void PeerManagerImpl::ProcessGetBlockData(CNode& pfrom, Peer& peer, const CInv& 
     if (!pindex) {
         return;
     }
+    if (Consensus::PrivateTxActive(m_chainparams.GetConsensus(), pindex->nHeight) &&
+        !HasNitoPrivatePeerCapability(peer.m_protocol_version.load(), peer.m_their_services.load())) {
+        LogPrint(BCLog::NET, "peer=%d requested activation-height block without Nito private capability; disconnecting\n", pfrom.GetId());
+        pfrom.fDisconnect = true;
+        return;
+    }
     if (!BlockRequestAllowed(pindex)) {
         LogPrint(BCLog::NET, "%s: ignoring request from peer=%i for old block that isn't in the main chain\n", __func__, pfrom.GetId());
         return;
@@ -2460,6 +2565,12 @@ void PeerManagerImpl::ProcessGetData(CNode& pfrom, Peer& peer, const std::atomic
 
         CTransactionRef tx = FindTxForGetData(*tx_relay, ToGenTxid(inv));
         if (tx) {
+            if (tx->HasPrivateBundle() && NitoPrivatePeerTrafficRestricted() &&
+                !HasNitoPrivatePeerCapability(peer.m_protocol_version.load(), peer.m_their_services.load())) {
+                LogPrint(BCLog::NET, "peer=%d requested private transaction without Nito private capability; disconnecting\n", pfrom.GetId());
+                pfrom.fDisconnect = true;
+                break;
+            }
             // WTX and WITNESS_TX imply we serialize with witness
             const auto maybe_with_witness = (inv.IsMsgTx() ? TX_NO_WITNESS : TX_WITH_WITNESS);
             MakeAndPushMessage(pfrom, NetMsgType::TX, maybe_with_witness(*tx));
@@ -2796,6 +2907,10 @@ void PeerManagerImpl::HeadersDirectFetchBlocks(CNode& pfrom, const Peer& peer, c
             std::vector<CInv> vGetData;
             // Download as much as possible, from earliest to latest.
             for (const CBlockIndex *pindex : reverse_iterate(vToFetch)) {
+                if (NitoPrivatePeerRequiredForReceivedBlock(pindex->nHeight) &&
+                    !HasNitoPrivatePeerCapability(peer.m_protocol_version.load(), peer.m_their_services.load())) {
+                    continue;
+                }
                 if (nodestate->vBlocksInFlight.size() >= MAX_BLOCKS_IN_TRANSIT_PER_PEER) {
                     // Can't download any more from this peer
                     break;
@@ -3041,7 +3156,10 @@ bool PeerManagerImpl::ProcessOrphanTx(Peer& peer)
     CTransactionRef porphanTx = nullptr;
 
     while (CTransactionRef porphanTx = m_orphanage.GetTxToReconsider(peer.m_id)) {
-        const MempoolAcceptResult result = m_chainman.ProcessTransaction(porphanTx);
+        const MempoolAcceptResult result = m_chainman.ProcessTransaction(
+            porphanTx,
+            /*test_accept=*/false,
+            &m_private_proof_rate_limiter);
         const TxValidationState& state = result.m_state;
         const Txid& orphanHash = porphanTx->GetHash();
         const Wtxid& orphan_wtxid = porphanTx->GetWitnessHash();
@@ -3061,6 +3179,15 @@ bool PeerManagerImpl::ProcessOrphanTx(Peer& peer)
             }
             return true;
         } else if (state.GetResult() != TxValidationResult::TX_MISSING_INPUTS) {
+            if (state.GetRejectReason() == "private-proof-rate-limited") {
+                LogPrint(BCLog::MEMPOOL,
+                         "deferred orphan Orchard proof verification for %s (wtxid=%s): global P2P budget exhausted\n",
+                         orphanHash.ToString(), orphan_wtxid.ToString());
+                // Do not poison the recent-reject filter. Removing the orphan
+                // permits a later relay to retry after the global budget refills.
+                m_orphanage.EraseTx(orphanHash);
+                return true;
+            }
             if (state.IsInvalid()) {
                 LogPrint(BCLog::TXPACKAGES, "   invalid orphan tx %s (wtxid=%s) from peer=%d. %s\n",
                     orphanHash.ToString(),
@@ -3085,11 +3212,11 @@ bool PeerManagerImpl::ProcessOrphanTx(Peer& peer)
                 // adding such txids to the reject filter would potentially
                 // interfere with relay of valid transactions from peers that
                 // do not support wtxid-based relay. See
-                // https://github.com/nito/nito/issues/8279 for details.
+                // https://github.com/bitcoin/bitcoin/issues/8279 for details.
                 // We can remove this restriction (and always add wtxids to
                 // the filter even for witness stripped transactions) once
                 // wtxid-based relay is broadly deployed.
-                // See also comments in https://github.com/nito/nito/pull/18044#discussion_r443419034
+                // See also comments in https://github.com/bitcoin/bitcoin/pull/18044#discussion_r443419034
                 // for concerns around weakening security of unupgraded nodes
                 // if we start doing this too early.
                 m_recent_rejects.insert(porphanTx->GetWitnessHash().ToUint256());
@@ -3101,7 +3228,7 @@ bool PeerManagerImpl::ProcessOrphanTx(Peer& peer)
                 // processing of this transaction in the event that child
                 // transactions are later received (resulting in
                 // parent-fetching by txid via the orphan-handling logic).
-                if (state.GetResult() == TxValidationResult::TX_INPUTS_NOT_STANDARD && porphanTx->HasWitness()) {
+                if (state.GetResult() == TxValidationResult::TX_INPUTS_NOT_STANDARD && porphanTx->HasWitnessLikeData()) {
                     // We only add the txid if it differs from the wtxid, to
                     // avoid wasting entries in the rolling bloom filter.
                     m_recent_rejects.insert(porphanTx->GetHash().ToUint256());
@@ -3322,6 +3449,7 @@ void PeerManagerImpl::ProcessCompactBlockTxns(CNode& pfrom, Peer& peer, const Bl
             return;
         }
 
+        const int block_height{range_flight.first->second.second->pindex->nHeight};
         PartiallyDownloadedBlock& partialBlock = *range_flight.first->second.second->partialBlock;
         ReadStatus status = partialBlock.FillBlock(*pblock, block_transactions.txn);
         if (status == READ_STATUS_INVALID) {
@@ -3340,6 +3468,16 @@ void PeerManagerImpl::ProcessCompactBlockTxns(CNode& pfrom, Peer& peer, const Bl
                 return;
             }
         } else {
+            if (NitoPrivatePeerRequiredForReceivedBlock(*pblock, block_height) &&
+                !HasNitoPrivatePeerCapability(peer.m_protocol_version.load(), peer.m_their_services.load())) {
+                // This is a source-capability rejection, not a block validity
+                // result. Remove only this peer's reconstruction so the same
+                // block hash remains requestable from a capable peer.
+                RemoveBlockRequest(block_transactions.blockhash, pfrom.GetId());
+                LogPrint(BCLog::NET, "peer=%d completed an activation block containing private transactions without Nito private capability; disconnecting\n", pfrom.GetId());
+                pfrom.fDisconnect = true;
+                return;
+            }
             // Block is either okay, or possibly we received
             // READ_STATUS_CHECKBLOCK_FAILED.
             // Note that CheckBlock can only fail for one of a few reasons:
@@ -3391,6 +3529,14 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
     PeerRef peer = GetPeerRef(pfrom.GetId());
     if (peer == nullptr) return;
 
+    if (msg_type != NetMsgType::VERSION && pfrom.nVersion != 0 &&
+        NitoPrivatePeerServicesRequired() &&
+        !HasNitoPrivatePeerCapability(pfrom.nVersion.load(), peer->m_their_services.load())) {
+        LogPrint(BCLog::NET, "peer=%d lacks the Nito private service or minimum protocol version after activation; disconnecting\n", pfrom.GetId());
+        pfrom.fDisconnect = true;
+        return;
+    }
+
     if (msg_type == NetMsgType::VERSION) {
         if (pfrom.nVersion != 0) {
             LogPrint(BCLog::NET, "redundant version message from peer=%d\n", pfrom.GetId());
@@ -3429,6 +3575,13 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         if (nVersion < MIN_PEER_PROTO_VERSION) {
             // disconnect from peers older than this proto version
             LogPrint(BCLog::NET, "peer=%d using obsolete version %i; disconnecting\n", pfrom.GetId(), nVersion);
+            pfrom.fDisconnect = true;
+            return;
+        }
+
+        if (NitoPrivatePeerServicesRequired() && !HasNitoPrivatePeerCapability(nVersion, nServices)) {
+            LogPrint(BCLog::NET, "peer=%d does not meet Nito private activation requirements (version=%d services=%08x); disconnecting\n",
+                     pfrom.GetId(), nVersion, nServices);
             pfrom.fDisconnect = true;
             return;
         }
@@ -3489,6 +3642,7 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         }
 
         pfrom.m_has_all_wanted_services = HasAllDesirableServiceFlags(nServices);
+        peer->m_protocol_version = nVersion;
         peer->m_their_services = nServices;
         pfrom.SetAddrLocal(addrMe);
         {
@@ -4073,6 +4227,14 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         BlockTransactionsRequest req;
         vRecv >> req;
 
+        const CBlockIndex* requested_index{WITH_LOCK(cs_main, return m_chainman.m_blockman.LookupBlockIndex(req.blockhash))};
+        if (requested_index && Consensus::PrivateTxActive(m_chainparams.GetConsensus(), requested_index->nHeight) &&
+            !HasNitoPrivatePeerCapability(peer->m_protocol_version.load(), peer->m_their_services.load())) {
+            LogPrint(BCLog::NET, "peer=%d requested activation-height block transactions without Nito private capability; disconnecting\n", pfrom.GetId());
+            pfrom.fDisconnect = true;
+            return;
+        }
+
         std::shared_ptr<const CBlock> recent_block;
         {
             LOCK(m_most_recent_block_mutex);
@@ -4136,13 +4298,9 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
         LOCK(cs_main);
 
-        // Note that if we were to be on a chain that forks from the checkpointed
-        // chain, then serving those headers to a peer that has seen the
-        // checkpointed chain would cause that peer to disconnect us. Requiring
-        // that our chainwork exceed the minimum chain work is a protection against
-        // being fed a bogus chain when we started up for the first time and
-        // getting partitioned off the honest network for serving that chain to
-        // others.
+        // Don't serve headers from our active chain until our chainwork is at least
+        // the minimum chain work. This prevents us from starting a low-work headers
+        // sync that will inevitably be aborted by our peer.
         if (m_chainman.ActiveTip() == nullptr ||
                 (m_chainman.ActiveTip()->nChainWork < m_chainman.MinimumChainWork() && !pfrom.HasPermission(NetPermissionFlags::Download))) {
             LogPrint(BCLog::NET, "Ignoring getheaders from peer=%d because active chain has too little work; sending empty response\n", pfrom.GetId());
@@ -4218,6 +4376,13 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         vRecv >> TX_WITH_WITNESS(ptx);
         const CTransaction& tx = *ptx;
 
+        if (tx.HasPrivateBundle() && NitoPrivatePeerTrafficRestricted() &&
+            !HasNitoPrivatePeerCapability(peer->m_protocol_version.load(), peer->m_their_services.load())) {
+            LogPrint(BCLog::NET, "peer=%d relayed private transaction without Nito private capability; disconnecting\n", pfrom.GetId());
+            pfrom.fDisconnect = true;
+            return;
+        }
+
         const uint256& txid = ptx->GetHash();
         const uint256& wtxid = ptx->GetWitnessHash();
 
@@ -4227,7 +4392,7 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         LOCK(cs_main);
 
         m_txrequest.ReceivedResponse(pfrom.GetId(), txid);
-        if (tx.HasWitness()) m_txrequest.ReceivedResponse(pfrom.GetId(), wtxid);
+        if (tx.HasWitnessLikeData()) m_txrequest.ReceivedResponse(pfrom.GetId(), wtxid);
 
         // We do the AlreadyHaveTx() check using wtxid, rather than txid - in the
         // absence of witness malleation, this is strictly better, because the
@@ -4273,8 +4438,13 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             return;
         }
 
-        const MempoolAcceptResult result = m_chainman.ProcessTransaction(ptx);
+        const MempoolAcceptResult result = m_chainman.ProcessTransaction(
+            ptx,
+            /*test_accept=*/false,
+            &m_private_proof_rate_limiter);
         const TxValidationState& state = result.m_state;
+        const bool private_proof_rate_limited{
+            state.GetRejectReason() == "private-proof-rate-limited"};
 
         if (result.m_result_type == MempoolAcceptResult::ResultType::VALID) {
             // As this version of the transaction was acceptable, we can forget about any
@@ -4356,18 +4526,18 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                 m_txrequest.ForgetTxHash(tx.GetWitnessHash());
             }
         } else {
-            if (state.GetResult() != TxValidationResult::TX_WITNESS_STRIPPED) {
+            if (!private_proof_rate_limited && state.GetResult() != TxValidationResult::TX_WITNESS_STRIPPED) {
                 // We can add the wtxid of this transaction to our reject filter.
                 // Do not add txids of witness transactions or witness-stripped
                 // transactions to the filter, as they can have been malleated;
                 // adding such txids to the reject filter would potentially
                 // interfere with relay of valid transactions from peers that
                 // do not support wtxid-based relay. See
-                // https://github.com/nito/nito/issues/8279 for details.
+                // https://github.com/bitcoin/bitcoin/issues/8279 for details.
                 // We can remove this restriction (and always add wtxids to
                 // the filter even for witness stripped transactions) once
                 // wtxid-based relay is broadly deployed.
-                // See also comments in https://github.com/nito/nito/pull/18044#discussion_r443419034
+                // See also comments in https://github.com/bitcoin/bitcoin/pull/18044#discussion_r443419034
                 // for concerns around weakening security of unupgraded nodes
                 // if we start doing this too early.
                 m_recent_rejects.insert(tx.GetWitnessHash().ToUint256());
@@ -4380,7 +4550,7 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                 // processing of this transaction in the event that child
                 // transactions are later received (resulting in
                 // parent-fetching by txid via the orphan-handling logic).
-                if (state.GetResult() == TxValidationResult::TX_INPUTS_NOT_STANDARD && tx.HasWitness()) {
+                if (state.GetResult() == TxValidationResult::TX_INPUTS_NOT_STANDARD && tx.HasWitnessLikeData()) {
                     m_recent_rejects.insert(tx.GetHash().ToUint256());
                     m_txrequest.ForgetTxHash(tx.GetHash());
                 }
@@ -4424,6 +4594,11 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
             if (!m_chainman.IsInitialBlockDownload()) {
                 MaybeSendGetHeaders(pfrom, GetLocator(m_chainman.m_best_header), *peer);
             }
+            return;
+        } else if (NitoPrivatePeerRequiredForReceivedBlock(prev_block->nHeight + 1) &&
+                   !HasNitoPrivatePeerCapability(peer->m_protocol_version.load(), peer->m_their_services.load())) {
+            LogPrint(BCLog::NET, "peer=%d relayed a restricted post-activation compact block without Nito private capability; disconnecting\n", pfrom.GetId());
+            pfrom.fDisconnect = true;
             return;
         } else if (prev_block->nChainWork + CalculateHeadersWork({cmpctblock.header}) < GetAntiDoSWorkThreshold()) {
             // If we get a low-work header in a compact block, we can ignore it.
@@ -4550,7 +4725,24 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                     if (!partialBlock.IsTxAvailable(i))
                         req.indexes.push_back(i);
                 }
-                if (req.indexes.empty()) {
+                const bool legacy_activation_peer{
+                    pindex->nHeight == m_chainparams.GetConsensus().privateTxActivationHeight &&
+                    !HasNitoPrivatePeerCapability(peer->m_protocol_version.load(), peer->m_their_services.load())};
+                if (legacy_activation_peer && !req.indexes.empty()) {
+                    // At H the header does not reveal whether the block contains
+                    // Orchard. Never complete an ambiguous H compact block with
+                    // BLOCKTXN from a legacy peer: request the full block so the
+                    // content/source rule can be applied atomically.
+                    (*queuedBlockIt)->partialBlock.reset();
+                    if (first_in_flight) {
+                        std::vector<CInv> vInv(1);
+                        vInv[0] = CInv(MSG_BLOCK | GetFetchFlags(*peer), blockhash);
+                        MakeAndPushMessage(pfrom, NetMsgType::GETDATA, vInv);
+                    } else {
+                        RemoveBlockRequest(pindex->GetBlockHash(), pfrom.GetId());
+                    }
+                    return;
+                } else if (req.indexes.empty()) {
                     fProcessBLOCKTXN = true;
                 } else if (first_in_flight) {
                     // We will try to round-trip any compact blocks we get on failure,
@@ -4622,6 +4814,12 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         if (fBlockReconstructed) {
             // If we got here, we were able to optimistically reconstruct a
             // block that is in flight from some other peer.
+            if (NitoPrivatePeerRequiredForReceivedBlock(*pblock, pindex->nHeight) &&
+                !HasNitoPrivatePeerCapability(peer->m_protocol_version.load(), peer->m_their_services.load())) {
+                LogPrint(BCLog::NET, "peer=%d reconstructed an activation block containing private transactions without Nito private capability; disconnecting\n", pfrom.GetId());
+                pfrom.fDisconnect = true;
+                return;
+            }
             {
                 LOCK(cs_main);
                 mapBlockSource.emplace(pblock->GetHash(), std::make_pair(pfrom.GetId(), false));
@@ -4658,6 +4856,14 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
         BlockTransactions resp;
         vRecv >> resp;
+
+        const CBlockIndex* response_index{WITH_LOCK(cs_main, return m_chainman.m_blockman.LookupBlockIndex(resp.blockhash))};
+        if (response_index && NitoPrivatePeerRequiredForReceivedBlock(response_index->nHeight) &&
+            !HasNitoPrivatePeerCapability(peer->m_protocol_version.load(), peer->m_their_services.load())) {
+            LogPrint(BCLog::NET, "peer=%d relayed restricted post-activation block transactions without Nito private capability; disconnecting\n", pfrom.GetId());
+            pfrom.fDisconnect = true;
+            return;
+        }
 
         return ProcessCompactBlockTxns(pfrom, *peer, resp);
     }
@@ -4718,9 +4924,20 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         std::shared_ptr<CBlock> pblock = std::make_shared<CBlock>();
         vRecv >> TX_WITH_WITNESS(*pblock);
 
-        LogPrint(BCLog::NET, "received block %s peer=%d\n", pblock->GetHash().ToString(), pfrom.GetId());
+        const uint256 hash{pblock->GetHash()};
+        LogPrint(BCLog::NET, "received block %s peer=%d\n", hash.ToString(), pfrom.GetId());
 
         const CBlockIndex* prev_block{WITH_LOCK(m_chainman.GetMutex(), return m_chainman.m_blockman.LookupBlockIndex(pblock->hashPrevBlock))};
+        const CBlockIndex* known_block{WITH_LOCK(m_chainman.GetMutex(), return m_chainman.m_blockman.LookupBlockIndex(hash))};
+        const int block_height{prev_block ? prev_block->nHeight + 1 : (known_block ? known_block->nHeight : -1)};
+
+        if (block_height >= 0 && NitoPrivatePeerRequiredForReceivedBlock(*pblock, block_height) &&
+            !HasNitoPrivatePeerCapability(peer->m_protocol_version.load(), peer->m_their_services.load())) {
+            WITH_LOCK(cs_main, RemoveBlockRequest(hash, pfrom.GetId()));
+            LogPrint(BCLog::NET, "peer=%d relayed a restricted activation/post-activation block without Nito private capability; disconnecting\n", pfrom.GetId());
+            pfrom.fDisconnect = true;
+            return;
+        }
 
         // Check for possible mutation if it connects to something we know so we can check for DEPLOYMENT_SEGWIT being active
         if (prev_block && IsBlockMutated(/*block=*/*pblock,
@@ -4732,7 +4949,6 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         }
 
         bool forceProcessing = false;
-        const uint256 hash(pblock->GetHash());
         bool min_pow_checked = false;
         {
             LOCK(cs_main);
@@ -5544,6 +5760,8 @@ bool PeerManagerImpl::SendMessages(CNode* pto)
     PeerRef peer = GetPeerRef(pto->GetId());
     if (!peer) return false;
     const Consensus::Params& consensusParams = m_chainparams.GetConsensus();
+    const bool nito_private_peer_capable{
+        HasNitoPrivatePeerCapability(peer->m_protocol_version.load(), peer->m_their_services.load())};
 
     // We must call MaybeDiscourageAndDisconnect first, to ensure that we'll
     // disconnect misbehaving peers even before the version handshake is complete.
@@ -5552,6 +5770,12 @@ bool PeerManagerImpl::SendMessages(CNode* pto)
     // Don't send anything until the version handshake is complete
     if (!pto->fSuccessfullyConnected || pto->fDisconnect)
         return true;
+
+    if (NitoPrivatePeerServicesRequired() && !nito_private_peer_capable) {
+        LogPrint(BCLog::NET, "peer=%d no longer meets persistent Nito private peer requirements; disconnecting\n", pto->GetId());
+        pto->fDisconnect = true;
+        return true;
+    }
 
     const auto current_time{GetTime<std::chrono::microseconds>()};
 
@@ -5810,6 +6034,9 @@ bool PeerManagerImpl::SendMessages(CNode* pto)
                     LOCK(tx_relay->m_bloom_filter_mutex);
 
                     for (const auto& txinfo : vtxinfo) {
+                        if (txinfo.tx->HasPrivateBundle() && NitoPrivatePeerTrafficRestricted() && !nito_private_peer_capable) {
+                            continue;
+                        }
                         CInv inv{
                             peer->m_wtxid_relay ? MSG_WTX : MSG_TX,
                             peer->m_wtxid_relay ?
@@ -5869,6 +6096,9 @@ bool PeerManagerImpl::SendMessages(CNode* pto)
                         // Not in the mempool anymore? don't bother sending it.
                         auto txinfo = m_mempool.info(ToGenTxid(inv));
                         if (!txinfo.tx) {
+                            continue;
+                        }
+                        if (txinfo.tx->HasPrivateBundle() && NitoPrivatePeerTrafficRestricted() && !nito_private_peer_capable) {
                             continue;
                         }
                         // Peer told you to not send transactions at that feerate? Don't bother sending it.
@@ -5983,6 +6213,9 @@ bool PeerManagerImpl::SendMessages(CNode* pto)
                     Assert(m_chainman.GetSnapshotBaseBlock()));
             }
             for (const CBlockIndex *pindex : vToDownload) {
+                if (NitoPrivatePeerRequiredForReceivedBlock(pindex->nHeight) && !nito_private_peer_capable) {
+                    continue;
+                }
                 uint32_t nFetchFlags = GetFetchFlags(*peer);
                 vGetData.emplace_back(MSG_BLOCK | nFetchFlags, pindex->GetBlockHash());
                 BlockRequested(pto->GetId(), *pindex);

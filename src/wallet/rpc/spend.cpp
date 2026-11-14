@@ -5,8 +5,10 @@
 
 #include <consensus/validation.h>
 #include <core_io.h>
+#include <chainparams.h>
 #include <key_io.h>
 #include <policy/policy.h>
+#include <private/private_address.h>
 #include <rpc/rawtransaction_util.h>
 #include <rpc/util.h>
 #include <script/script.h>
@@ -19,6 +21,7 @@
 #include <wallet/fees.h>
 #include <wallet/rpc/util.h>
 #include <wallet/spend.h>
+#include <wallet/private_wallet.h>
 #include <wallet/wallet.h>
 
 #include <univalue.h>
@@ -34,6 +37,91 @@ std::vector<CRecipient> CreateRecipients(const std::vector<std::pair<CTxDestinat
         recipients.push_back(recipient);
     }
     return recipients;
+}
+
+std::vector<CRecipient> CreateRecipientsFromWalletOutputs(const UniValue& outputs, const std::set<int>& subtract_fee_outputs)
+{
+    std::set<CTxDestination> destinations;
+    std::set<std::string> private_destinations;
+    std::vector<CRecipient> recipients;
+    bool has_data{false};
+    const std::string private_prefix = NitoPrivateAddressPrefix(Params());
+
+    int output_index{0};
+    for (const std::string& name_ : outputs.getKeys()) {
+        if (name_ == "data") {
+            if (has_data) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, duplicate key: data");
+            }
+            has_data = true;
+            std::vector<unsigned char> data = ParseHexV(outputs[name_].getValStr(), "Data");
+            CRecipient recipient{CNoDestination{CScript() << OP_RETURN << data}, 0, subtract_fee_outputs.contains(output_index)};
+            recipients.push_back(std::move(recipient));
+        } else {
+            std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> private_raw{};
+            std::string private_error;
+            if (DecodeNitoPrivateAddress(name_, Params(), private_raw, private_error)) {
+                if (!private_destinations.insert(name_).second) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, duplicated private address: ") + name_);
+                }
+                CRecipient recipient{CNoDestination{}, AmountFromValue(outputs[name_]), subtract_fee_outputs.contains(output_index), private_raw};
+                recipients.push_back(std::move(recipient));
+            } else {
+                if (name_.rfind(private_prefix, 0) == 0) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Nito private address: ") + name_ + " (" + private_error + ")");
+                }
+
+                CTxDestination destination{DecodeDestination(name_)};
+                CAmount amount{AmountFromValue(outputs[name_])};
+                if (!IsValidDestination(destination)) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid Nito address: ") + name_);
+                }
+
+                if (!destinations.insert(destination).second) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, std::string("Invalid parameter, duplicated address: ") + name_);
+                }
+                CRecipient recipient{destination, amount, subtract_fee_outputs.contains(output_index)};
+                recipients.push_back(std::move(recipient));
+            }
+        }
+        ++output_index;
+    }
+    return recipients;
+}
+
+static bool OutputsContainPrivateRecipient(const UniValue& outputs)
+{
+    const std::string private_prefix = NitoPrivateAddressPrefix(Params());
+    for (const std::string& name_ : outputs.getKeys()) {
+        if (name_.rfind(private_prefix, 0) == 0) return true;
+    }
+    return false;
+}
+
+static bool RecipientObjectContainsPrivateAddress(const UniValue& recipient)
+{
+    if (recipient.isStr()) {
+        const std::string private_prefix = NitoPrivateAddressPrefix(Params());
+        return recipient.get_str().rfind(private_prefix, 0) == 0;
+    }
+    if (recipient.isObject()) {
+        return OutputsContainPrivateRecipient(recipient);
+    }
+    return false;
+}
+
+static CMutableTransaction ConstructTransactionForWalletRecipients(
+    const UniValue& inputs_in,
+    const UniValue& outputs,
+    const UniValue& locktime,
+    std::optional<bool> rbf)
+{
+    if (!OutputsContainPrivateRecipient(outputs)) {
+        return ConstructTransaction(inputs_in, outputs, locktime, rbf);
+    }
+
+    UniValue no_public_outputs(UniValue::VOBJ);
+    return ConstructTransaction(inputs_in, no_public_outputs, locktime, rbf);
 }
 
 static void InterpretFeeEstimationInstructions(const UniValue& conf_target, const UniValue& estimate_mode, const UniValue& fee_rate, UniValue& options)
@@ -89,16 +177,28 @@ std::set<int> InterpretSubtractFeeFromOutputInstructions(const UniValue& sffo_in
     return sffo_set;
 }
 
-static UniValue FinishTransaction(const std::shared_ptr<CWallet> pwallet, const UniValue& options, const CMutableTransaction& rawTx)
+static UniValue FinishTransaction(
+    const std::shared_ptr<CWallet> pwallet,
+    const UniValue& options,
+    const CMutableTransaction& rawTx,
+    const std::vector<PSBTProprietary>& private_psbt_records = {},
+    mapValue_t map_value = {})
 {
-    // Make a blank psbt
-    PartiallySignedTransaction psbtx(rawTx);
+    CMutableTransaction psbt_tx(rawTx);
+    if (!private_psbt_records.empty() && psbt_tx.m_private_bundle) {
+        psbt_tx.m_private_bundle->auth.reset();
+    }
+    PartiallySignedTransaction psbtx(psbt_tx);
+    for (const auto& entry : private_psbt_records) {
+        psbtx.m_proprietary.insert(entry);
+    }
 
     // First fill transaction with our data without signing,
     // so external signers are not asked to sign more than once.
     bool complete;
     pwallet->FillPSBT(psbtx, complete, SIGHASH_DEFAULT, /*sign=*/false, /*bip32derivs=*/true);
-    const TransactionError err{pwallet->FillPSBT(psbtx, complete, SIGHASH_DEFAULT, /*sign=*/true, /*bip32derivs=*/false)};
+    const std::optional<uint256> private_intent_hash{psbtx.GetNitoPrivateIntentHash()};
+    const TransactionError err{pwallet->FillPSBT(psbtx, complete, SIGHASH_DEFAULT, /*sign=*/true, /*bip32derivs=*/false, nullptr, /*finalize=*/true, private_intent_hash)};
     if (err != TransactionError::OK) {
         throw JSONRPCTransactionError(err);
     }
@@ -122,13 +222,44 @@ static UniValue FinishTransaction(const std::shared_ptr<CWallet> pwallet, const 
         CTransactionRef tx(MakeTransactionRef(std::move(mtx)));
         result.pushKV("txid", tx->GetHash().GetHex());
         if (add_to_wallet && !psbt_opt_in) {
-            pwallet->CommitTransaction(tx, {}, /*orderForm=*/{});
+            if (tx->HasPrivateBundle()) {
+                CWalletTx pre_sign_wtx{MakeTransactionRef(rawTx), TxStateInactive{}};
+                pre_sign_wtx.mapValue = map_value;
+                auto rebound{feebumper::RebindPrivateBumpMetadata(*pwallet, pre_sign_wtx, tx->GetHash(), map_value)};
+                if (!rebound) throw JSONRPCError(RPC_WALLET_ERROR, util::ErrorString(rebound).original);
+            }
+            auto commit_result = pwallet->CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
+            if (!commit_result) {
+                throw JSONRPCError(RPC_WALLET_ERROR, util::ErrorString(commit_result).original);
+            }
         } else {
             result.pushKV("hex", hex);
         }
     }
     result.pushKV("complete", complete);
 
+    return result;
+}
+
+static UniValue FinishSignedTransaction(
+    CWallet& wallet,
+    const UniValue& options,
+    const CTransactionRef& tx,
+    mapValue_t map_value = {})
+{
+    const bool add_to_wallet{options.exists("add_to_wallet") ? options["add_to_wallet"].get_bool() : true};
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("txid", tx->GetHash().GetHex());
+    if (add_to_wallet) {
+        auto commit_result = wallet.CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
+        if (!commit_result) {
+            throw JSONRPCError(RPC_WALLET_ERROR, util::ErrorString(commit_result).original);
+        }
+    } else {
+        result.pushKV("hex", EncodeHexTx(*tx));
+    }
+    result.pushKV("complete", true);
     return result;
 }
 
@@ -173,7 +304,14 @@ UniValue SendMoney(CWallet& wallet, const CCoinControl &coin_control, std::vecto
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, util::ErrorString(res).original);
     }
     const CTransactionRef& tx = res->tx;
-    wallet.CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
+    if (tx->HasPrivateBundle()) {
+        auto metadata{feebumper::AddPrivateBumpMetadata(wallet, tx->GetHash(), map_value, coin_control, recipients, res->private_spend_note_ids)};
+        if (!metadata) throw JSONRPCError(RPC_WALLET_ERROR, util::ErrorString(metadata).original);
+    }
+    auto commit_result = wallet.CommitTransaction(tx, std::move(map_value), /*orderForm=*/{});
+    if (!commit_result) {
+        throw JSONRPCError(RPC_WALLET_ERROR, util::ErrorString(commit_result).original);
+    }
     if (verbose) {
         UniValue entry(UniValue::VOBJ);
         entry.pushKV("txid", tx->GetHash().GetHex());
@@ -221,56 +359,7 @@ static void SetFeeEstimateMode(const CWallet& wallet, CCoinControl& cc, const Un
     }
 }
 
-RPCHelpMan sendtoaddress()
-{
-    return RPCHelpMan{"sendtoaddress",
-                "\nSend an amount to a given address." +
-        HELP_REQUIRING_PASSPHRASE,
-                {
-                    {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The nito address to send to."},
-                    {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to send. eg 0.1"},
-                    {"comment", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A comment used to store what the transaction is for.\n"
-                                         "This is not part of the transaction, just kept in your wallet."},
-                    {"comment_to", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A comment to store the name of the person or organization\n"
-                                         "to which you're sending the transaction. This is not part of the \n"
-                                         "transaction, just kept in your wallet."},
-                    {"subtractfeefromamount", RPCArg::Type::BOOL, RPCArg::Default{false}, "The fee will be deducted from the amount being sent.\n"
-                                         "The recipient will receive less nitos than you enter in the amount field."},
-                    {"replaceable", RPCArg::Type::BOOL, RPCArg::DefaultHint{"wallet default"}, "Signal that this transaction can be replaced by a transaction (BIP 125)"},
-                    {"conf_target", RPCArg::Type::NUM, RPCArg::DefaultHint{"wallet -txconfirmtarget"}, "Confirmation target in blocks"},
-                    {"estimate_mode", RPCArg::Type::STR, RPCArg::Default{"unset"}, "The fee estimate mode, must be one of (case insensitive):\n"
-                     "\"" + FeeModes("\"\n\"") + "\""},
-                    {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{true}, "(only available if avoid_reuse wallet flag is set) Avoid spending from dirty addresses; addresses are considered\n"
-                                         "dirty if they have previously been used in a transaction. If true, this also activates avoidpartialspends, grouping outputs by their addresses."},
-                    {"fee_rate", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"not set, fall back to wallet fee estimation"}, "Specify a fee rate in " + CURRENCY_ATOM + "/vB."},
-                    {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
-                },
-                {
-                    RPCResult{"if verbose is not set or set to false",
-                        RPCResult::Type::STR_HEX, "txid", "The transaction id."
-                    },
-                    RPCResult{"if verbose is set to true",
-                        RPCResult::Type::OBJ, "", "",
-                        {
-                            {RPCResult::Type::STR_HEX, "txid", "The transaction id."},
-                            {RPCResult::Type::STR, "fee_reason", "The transaction fee reason."}
-                        },
-                    },
-                },
-                RPCExamples{
-                    "\nSend 0.1 BTC\n"
-                    + HelpExampleCli("sendtoaddress", "\"" + EXAMPLE_ADDRESS[0] + "\" 0.1") +
-                    "\nSend 0.1 BTC with a confirmation target of 6 blocks in economical fee estimate mode using positional arguments\n"
-                    + HelpExampleCli("sendtoaddress", "\"" + EXAMPLE_ADDRESS[0] + "\" 0.1 \"donation\" \"sean's outpost\" false true 6 economical") +
-                    "\nSend 0.1 BTC with a fee rate of 1.1 " + CURRENCY_ATOM + "/vB, subtract fee from amount, BIP125-replaceable, using positional arguments\n"
-                    + HelpExampleCli("sendtoaddress", "\"" + EXAMPLE_ADDRESS[0] + "\" 0.1 \"drinks\" \"room77\" true true null \"unset\" null 1.1") +
-                    "\nSend 0.2 BTC with a confirmation target of 6 blocks in economical fee estimate mode using named arguments\n"
-                    + HelpExampleCli("-named sendtoaddress", "address=\"" + EXAMPLE_ADDRESS[0] + "\" amount=0.2 conf_target=6 estimate_mode=\"economical\"") +
-                    "\nSend 0.5 BTC with a fee rate of 25 " + CURRENCY_ATOM + "/vB using named arguments\n"
-                    + HelpExampleCli("-named sendtoaddress", "address=\"" + EXAMPLE_ADDRESS[0] + "\" amount=0.5 fee_rate=25")
-                    + HelpExampleCli("-named sendtoaddress", "address=\"" + EXAMPLE_ADDRESS[0] + "\" amount=0.5 fee_rate=25 subtractfeefromamount=false replaceable=true avoid_reuse=true comment=\"2 pizzas\" comment_to=\"jeremy\" verbose=true")
-                },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+static UniValue SendAddressWithPrivateSource(const JSONRPCRequest& request, CCoinControl::PrivateTxSource private_source)
 {
     std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
     if (!pwallet) return UniValue::VNULL;
@@ -289,6 +378,10 @@ RPCHelpMan sendtoaddress()
         mapValue["to"] = request.params[3].get_str();
 
     CCoinControl coin_control;
+    coin_control.m_private_tx_source = private_source;
+    if (private_source == CCoinControl::PrivateTxSource::AUTO && !request.params[11].isNull() && request.params[11].get_bool()) {
+        coin_control.m_private_tx_source = CCoinControl::PrivateTxSource::PRIVATE_NOTES;
+    }
     if (!request.params[5].isNull()) {
         coin_control.m_signal_bip125_rbf = request.params[5].get_bool();
     }
@@ -304,13 +397,141 @@ RPCHelpMan sendtoaddress()
     UniValue address_amounts(UniValue::VOBJ);
     const std::string address = request.params[0].get_str();
     address_amounts.pushKV(address, request.params[1]);
-    std::vector<CRecipient> recipients = CreateRecipients(
-            ParseOutputs(address_amounts),
+    std::vector<CRecipient> recipients = CreateRecipientsFromWalletOutputs(
+            address_amounts,
             InterpretSubtractFeeFromOutputInstructions(request.params[4], address_amounts.getKeys())
     );
     const bool verbose{request.params[10].isNull() ? false : request.params[10].get_bool()};
 
     return SendMoney(*pwallet, coin_control, recipients, mapValue, verbose);
+}
+
+RPCHelpMan sendtoaddress()
+{
+    return RPCHelpMan{"sendtoaddress",
+                "\nSend an amount to a given address." +
+        HELP_REQUIRING_PASSPHRASE,
+                {
+                    {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The nito address to send to."},
+                    {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to send. eg 0.1"},
+                    {"comment", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A comment used to store what the transaction is for.\n"
+                                         "This is not part of the transaction, just kept in your wallet."},
+                    {"comment_to", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A comment to store the name of the person or organization\n"
+                                         "to which you're sending the transaction. This is not part of the \n"
+                                         "transaction, just kept in your wallet."},
+                    {"subtractfeefromamount", RPCArg::Type::BOOL, RPCArg::Default{false}, "The fee will be deducted from the amount being sent.\n"
+                                         "The recipient will receive less NITO than you enter in the amount field."},
+                    {"replaceable", RPCArg::Type::BOOL, RPCArg::DefaultHint{"wallet default"}, "Signal that this transaction can be replaced by a transaction (BIP 125)"},
+                    {"conf_target", RPCArg::Type::NUM, RPCArg::DefaultHint{"wallet -txconfirmtarget"}, "Confirmation target in blocks"},
+                    {"estimate_mode", RPCArg::Type::STR, RPCArg::Default{"unset"}, "The fee estimate mode, must be one of (case insensitive):\n"
+                     "\"" + FeeModes("\"\n\"") + "\""},
+                    {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{true}, "(only available if avoid_reuse wallet flag is set) Avoid spending from dirty addresses; addresses are considered\n"
+                                         "dirty if they have previously been used in a transaction. If true, this also activates avoidpartialspends, grouping outputs by their addresses."},
+                    {"fee_rate", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"not set, fall back to wallet fee estimation"}, "Specify a fee rate in " + CURRENCY_ATOM + "/vB."},
+                    {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+                    {"private", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, spend Nito.network private notes. If false, spend transparent UTXOs; sending to a nito1x address shields transparent funds and standard HD wallets keep transparent change on a fresh internal wallet address."},
+                },
+                {
+                    RPCResult{"if verbose is not set or set to false",
+                        RPCResult::Type::STR_HEX, "txid", "The transaction id."
+                    },
+                    RPCResult{"if verbose is set to true",
+                        RPCResult::Type::OBJ, "", "",
+                        {
+                            {RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+                            {RPCResult::Type::STR, "fee_reason", "The transaction fee reason."}
+                        },
+                    },
+                },
+                RPCExamples{
+                    "\nSend 0.1 NITO\n"
+                    + HelpExampleCli("sendtoaddress", "\"" + EXAMPLE_ADDRESS[0] + "\" 0.1") +
+                    "\nSend 0.1 NITO with a confirmation target of 6 blocks in economical fee estimate mode using positional arguments\n"
+                    + HelpExampleCli("sendtoaddress", "\"" + EXAMPLE_ADDRESS[0] + "\" 0.1 \"donation\" \"sean's outpost\" false true 6 economical") +
+                    "\nSend 0.1 NITO with a fee rate of 1.1 " + CURRENCY_ATOM + "/vB, subtract fee from amount, BIP125-replaceable, using positional arguments\n"
+                    + HelpExampleCli("sendtoaddress", "\"" + EXAMPLE_ADDRESS[0] + "\" 0.1 \"drinks\" \"room77\" true true null \"unset\" null 1.1") +
+                    "\nSend 0.2 NITO with a confirmation target of 6 blocks in economical fee estimate mode using named arguments\n"
+                    + HelpExampleCli("-named sendtoaddress", "address=\"" + EXAMPLE_ADDRESS[0] + "\" amount=0.2 conf_target=6 estimate_mode=\"economical\"") +
+                    "\nSpend 0.2 " + CURRENCY_UNIT + " from private notes using named arguments\n"
+                    + HelpExampleCli("-named sendtoaddress", "address=\"" + EXAMPLE_ADDRESS[0] + "\" amount=0.2 private=true") +
+                    "\nSend 0.5 NITO with a fee rate of 25 " + CURRENCY_ATOM + "/vB using named arguments\n"
+                    + HelpExampleCli("-named sendtoaddress", "address=\"" + EXAMPLE_ADDRESS[0] + "\" amount=0.5 fee_rate=25")
+                    + HelpExampleCli("-named sendtoaddress", "address=\"" + EXAMPLE_ADDRESS[0] + "\" amount=0.5 fee_rate=25 subtractfeefromamount=false replaceable=true avoid_reuse=true comment=\"2 pizzas\" comment_to=\"jeremy\" verbose=true")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    return SendAddressWithPrivateSource(request, CCoinControl::PrivateTxSource::AUTO);
+},
+    };
+}
+
+RPCHelpMan shieldtoaddress()
+{
+    return RPCHelpMan{"shieldtoaddress",
+        "\nSpend transparent wallet UTXOs into a Nito.network nito1x private address. For standard HD wallets, transparent change stays transparent on a fresh internal wallet address." +
+        HELP_REQUIRING_PASSPHRASE,
+        {
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The nito1x private address to receive shielded funds."},
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to shield."},
+            {"comment", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A comment used to store what the transaction is for."},
+            {"comment_to", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A comment to store the name of the recipient."},
+            {"subtractfeefromamount", RPCArg::Type::BOOL, RPCArg::Default{false}, "Deduct the fee from the shielded amount."},
+            {"replaceable", RPCArg::Type::BOOL, RPCArg::DefaultHint{"wallet default"}, "Signal that this transaction can be replaced by a transaction (BIP 125)"},
+            {"conf_target", RPCArg::Type::NUM, RPCArg::DefaultHint{"wallet -txconfirmtarget"}, "Confirmation target in blocks"},
+            {"estimate_mode", RPCArg::Type::STR, RPCArg::Default{"unset"}, "The fee estimate mode, must be one of (case insensitive):\n\"" + FeeModes("\"\n\"") + "\""},
+            {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{true}, "(only available if avoid_reuse wallet flag is set) Avoid spending from dirty addresses."},
+            {"fee_rate", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"not set, fall back to wallet fee estimation"}, "Specify a fee rate in " + CURRENCY_ATOM + "/vB."},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false", RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+            RPCResult{"if verbose is set to true", RPCResult::Type::OBJ, "", "", {
+                {RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+                {RPCResult::Type::STR, "fee_reason", "The transaction fee reason."},
+            }},
+        },
+        RPCExamples{
+            HelpExampleCli("shieldtoaddress", "\"nito1x...\" 1.0")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    return SendAddressWithPrivateSource(request, CCoinControl::PrivateTxSource::TRANSPARENT_COINS);
+},
+    };
+}
+
+RPCHelpMan sendprivate()
+{
+    return RPCHelpMan{"sendprivate",
+        "\nSpend Nito.network private notes to either a transparent Nito address or a nito1x private address. Private change remains hidden inside the Orchard bundle and returns to the dominant selected private source recipient." +
+        HELP_REQUIRING_PASSPHRASE,
+        {
+            {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The transparent or nito1x private address to receive funds."},
+            {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to send from private notes."},
+            {"comment", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A comment used to store what the transaction is for."},
+            {"comment_to", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A comment to store the name of the recipient."},
+            {"subtractfeefromamount", RPCArg::Type::BOOL, RPCArg::Default{false}, "Deduct the fee from the recipient amount."},
+            {"replaceable", RPCArg::Type::BOOL, RPCArg::DefaultHint{"wallet default"}, "Signal that this transaction can be replaced by a transaction (BIP 125)"},
+            {"conf_target", RPCArg::Type::NUM, RPCArg::DefaultHint{"wallet -txconfirmtarget"}, "Confirmation target in blocks"},
+            {"estimate_mode", RPCArg::Type::STR, RPCArg::Default{"unset"}, "The fee estimate mode, must be one of (case insensitive):\n\"" + FeeModes("\"\n\"") + "\""},
+            {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{true}, "(kept for sendtoaddress compatibility; private-note selection ignores transparent reuse filtering)."},
+            {"fee_rate", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"not set, fall back to wallet fee estimation"}, "Specify a fee rate in " + CURRENCY_ATOM + "/vB."},
+            {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+        },
+        {
+            RPCResult{"if verbose is not set or set to false", RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+            RPCResult{"if verbose is set to true", RPCResult::Type::OBJ, "", "", {
+                {RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+                {RPCResult::Type::STR, "fee_reason", "The transaction fee reason."},
+            }},
+        },
+        RPCExamples{
+            HelpExampleCli("sendprivate", "\"" + EXAMPLE_ADDRESS[0] + "\" 0.25") +
+            HelpExampleCli("sendprivate", "\"nito1x...\" 0.25")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    return SendAddressWithPrivateSource(request, CCoinControl::PrivateTxSource::PRIVATE_NOTES);
 },
     };
 }
@@ -334,7 +555,7 @@ RPCHelpMan sendmany()
                     {"comment", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A comment"},
                     {"subtractfeefrom", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "The addresses.\n"
                                        "The fee will be equally deducted from the amount of each selected address.\n"
-                                       "Those recipients will receive less nitos than you enter in their corresponding amount field.\n"
+                                       "Those recipients will receive less NITO than you enter in their corresponding amount field.\n"
                                        "If no addresses are specified here, the sender pays the fee.",
                         {
                             {"address", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Subtract fee from this address"},
@@ -346,6 +567,7 @@ RPCHelpMan sendmany()
                      "\"" + FeeModes("\"\n\"") + "\""},
                     {"fee_rate", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"not set, fall back to wallet fee estimation"}, "Specify a fee rate in " + CURRENCY_ATOM + "/vB."},
                     {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+                    {"private", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, spend Nito.network private notes. If false, spend transparent UTXOs; sending to nito1x recipients shields transparent funds and standard HD wallets keep transparent change on a fresh internal wallet address."},
                 },
                 {
                     RPCResult{"if verbose is not set or set to false",
@@ -392,14 +614,17 @@ RPCHelpMan sendmany()
         mapValue["comment"] = request.params[3].get_str();
 
     CCoinControl coin_control;
+    if (!request.params[10].isNull() && request.params[10].get_bool()) {
+        coin_control.m_private_tx_source = CCoinControl::PrivateTxSource::PRIVATE_NOTES;
+    }
     if (!request.params[5].isNull()) {
         coin_control.m_signal_bip125_rbf = request.params[5].get_bool();
     }
 
     SetFeeEstimateMode(*pwallet, coin_control, /*conf_target=*/request.params[6], /*estimate_mode=*/request.params[7], /*fee_rate=*/request.params[8], /*override_min_fee=*/false);
 
-    std::vector<CRecipient> recipients = CreateRecipients(
-            ParseOutputs(sendTo),
+    std::vector<CRecipient> recipients = CreateRecipientsFromWalletOutputs(
+            sendTo,
             InterpretSubtractFeeFromOutputInstructions(request.params[4], sendTo.getKeys())
     );
     const bool verbose{request.params[9].isNull() ? false : request.params[9].get_bool()};
@@ -452,7 +677,7 @@ RPCHelpMan settxfee()
 
 
 // Only includes key documentation where the key is snake_case in all RPC methods. MixedCase keys can be added later.
-static std::vector<RPCArg> FundTxDoc(bool solving_data = true)
+static std::vector<RPCArg> FundTxDoc(bool solving_data = true, bool private_funding = false)
 {
     std::vector<RPCArg> args = {
         {"conf_target", RPCArg::Type::NUM, RPCArg::DefaultHint{"wallet -txconfirmtarget"}, "Confirmation target in blocks", RPCArgOptions{.also_positional = true}},
@@ -463,6 +688,13 @@ static std::vector<RPCArg> FundTxDoc(bool solving_data = true)
             "Allows this transaction to be replaced by a transaction with higher fees"
         },
     };
+    if (private_funding) {
+        args.push_back({
+            "private", RPCArg::Type::BOOL, RPCArg::Default{false}, "When true, fund this Nito.network private transaction from local private notes. "
+            "Use with a transparent output for private->transparent PSBTs, or with a nito1x output for private->private PSBTs. "
+            "When false, nito1x outputs are funded by transparent UTXOs as shielding transactions."
+        });
+    }
     if (solving_data) {
         args.push_back({"solving_data", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "Keys and scripts needed for producing a final transaction with a dummy signature.\n"
         "Used for fee estimation during coin selection.",
@@ -491,7 +723,7 @@ static std::vector<RPCArg> FundTxDoc(bool solving_data = true)
     return args;
 }
 
-CreatedTransactionResult FundTransaction(CWallet& wallet, const CMutableTransaction& tx, const std::vector<CRecipient>& recipients, const UniValue& options, CCoinControl& coinControl, bool override_min_fee)
+CreatedTransactionResult FundTransaction(CWallet& wallet, const CMutableTransaction& tx, const std::vector<CRecipient>& recipients, const UniValue& options, CCoinControl& coinControl, bool override_min_fee, bool sign = false)
 {
     // We want to make sure tx.vout is not used now that we are passing outputs as a vector of recipients.
     // This sets us up to remove tx completely in a future PR in favor of passing the inputs directly.
@@ -527,6 +759,7 @@ CreatedTransactionResult FundTransaction(CWallet& wallet, const CMutableTransact
                 {"fee_rate", UniValueType()}, // will be checked by AmountFromValue() in SetFeeEstimateMode()
                 {"feeRate", UniValueType()}, // will be checked by AmountFromValue() below
                 {"psbt", UniValueType(UniValue::VBOOL)},
+                {"private", UniValueType(UniValue::VBOOL)},
                 {"solving_data", UniValueType(UniValue::VOBJ)},
                 {"subtractFeeFromOutputs", UniValueType(UniValue::VARR)},
                 {"subtract_fee_from_outputs", UniValueType(UniValue::VARR)},
@@ -541,6 +774,15 @@ CreatedTransactionResult FundTransaction(CWallet& wallet, const CMutableTransact
 
         if (options.exists("add_inputs")) {
             coinControl.m_allow_other_inputs = options["add_inputs"].get_bool();
+        }
+
+        if (options.exists("private") && options["private"].get_bool()) {
+            coinControl.m_private_tx_source = CCoinControl::PrivateTxSource::PRIVATE_NOTES;
+        }
+
+        if (coinControl.m_private_tx_source == CCoinControl::PrivateTxSource::PRIVATE_NOTES &&
+            (options.exists("changeAddress") || options.exists("change_address") || options.exists("change_type"))) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Transparent change options cannot be used when spending private notes; change remains in Orchard.");
         }
 
         if (options.exists("changeAddress") || options.exists("change_address")) {
@@ -706,7 +948,7 @@ CreatedTransactionResult FundTransaction(CWallet& wallet, const CMutableTransact
     if (recipients.empty())
         throw JSONRPCError(RPC_INVALID_PARAMETER, "TX must have at least one output");
 
-    auto txr = FundTransaction(wallet, tx, recipients, change_position, lockUnspents, coinControl);
+    auto txr = FundTransaction(wallet, tx, recipients, change_position, lockUnspents, coinControl, sign);
     if (!txr) {
         throw JSONRPCError(RPC_WALLET_ERROR, ErrorString(txr).original);
     }
@@ -756,9 +998,9 @@ RPCHelpMan fundrawtransaction()
                                                           "If that happens, you will need to fund the transaction with different inputs and republish it."},
                             {"minconf", RPCArg::Type::NUM, RPCArg::Default{0}, "If add_inputs is specified, require inputs with at least this many confirmations."},
                             {"maxconf", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "If add_inputs is specified, require inputs with at most this many confirmations."},
-                            {"changeAddress", RPCArg::Type::STR, RPCArg::DefaultHint{"automatic"}, "The nito address to receive the change"},
+                            {"changeAddress", RPCArg::Type::STR, RPCArg::DefaultHint{"automatic"}, "The transparent nito address to receive the change. Not valid with private=true."},
                             {"changePosition", RPCArg::Type::NUM, RPCArg::DefaultHint{"random"}, "The index of the change output"},
-                            {"change_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -changetype"}, "The output type to use. Only valid if changeAddress is not specified. Options are \"legacy\", \"p2sh-segwit\", \"bech32\", and \"bech32m\"."},
+                            {"change_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -changetype"}, "The transparent output type to use. Only valid if changeAddress is not specified and private is false. Options are \"legacy\", \"p2sh-segwit\", \"bech32\", and \"bech32m\"."},
                             {"includeWatching", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for watch-only wallets, otherwise false"}, "Also select inputs which are watch only.\n"
                                                           "Only solvable inputs can be used. Watch-only destinations are solvable if the public key and/or output script was imported,\n"
                                                           "e.g. with 'importpubkey' or 'importmulti' with the 'pubkeys' or 'desc' field."},
@@ -767,7 +1009,7 @@ RPCHelpMan fundrawtransaction()
                             {"feeRate", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"not set, fall back to wallet fee estimation"}, "Specify a fee rate in " + CURRENCY_UNIT + "/kvB."},
                             {"subtractFeeFromOutputs", RPCArg::Type::ARR, RPCArg::Default{UniValue::VARR}, "The integers.\n"
                                                           "The fee will be equally deducted from the amount of each specified output.\n"
-                                                          "Those recipients will receive less nitos than you enter in their corresponding amount field.\n"
+                                                          "Those recipients will receive less NITO than you enter in their corresponding amount field.\n"
                                                           "If no outputs are specified here, the sender pays the fee.",
                                 {
                                     {"vout_index", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The zero-based output index, before a change output is added."},
@@ -789,7 +1031,7 @@ RPCHelpMan fundrawtransaction()
                                 },
                              },
                         },
-                        FundTxDoc()),
+                        FundTxDoc(/*solving_data=*/true, /*private_funding=*/true)),
                         RPCArgOptions{
                             .skip_type_check = true,
                             .oneline_description = "options",
@@ -1118,9 +1360,10 @@ static RPCHelpMan bumpfee_helper(std::string method_name)
     CAmount old_fee;
     CAmount new_fee;
     CMutableTransaction mtx;
+    std::vector<PSBTProprietary> private_psbt_records;
     feebumper::Result res;
     // Targeting feerate bump.
-    res = feebumper::CreateRateBumpTransaction(*pwallet, hash, coin_control, errors, old_fee, new_fee, mtx, /*require_mine=*/ !want_psbt, outputs, original_change_index);
+    res = feebumper::CreateRateBumpTransaction(*pwallet, hash, coin_control, errors, old_fee, new_fee, mtx, /*require_mine=*/ !want_psbt, outputs, original_change_index, &private_psbt_records);
     if (res != feebumper::Result::OK) {
         switch(res) {
             case feebumper::Result::INVALID_ADDRESS_OR_KEY:
@@ -1160,7 +1403,14 @@ static RPCHelpMan bumpfee_helper(std::string method_name)
 
         result.pushKV("txid", txid.GetHex());
     } else {
-        PartiallySignedTransaction psbtx(mtx);
+        CMutableTransaction psbt_tx(mtx);
+        if (!private_psbt_records.empty() && psbt_tx.m_private_bundle) {
+            psbt_tx.m_private_bundle->auth.reset();
+        }
+        PartiallySignedTransaction psbtx(psbt_tx);
+        for (const auto& entry : private_psbt_records) {
+            psbtx.m_proprietary.insert(entry);
+        }
         bool complete = false;
         const TransactionError err = pwallet->FillPSBT(psbtx, complete, SIGHASH_DEFAULT, /*sign=*/false, /*bip32derivs=*/true);
         CHECK_NONFATAL(err == TransactionError::OK);
@@ -1212,9 +1462,9 @@ RPCHelpMan send()
                     {"minconf", RPCArg::Type::NUM, RPCArg::Default{0}, "If add_inputs is specified, require inputs with at least this many confirmations."},
                     {"maxconf", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "If add_inputs is specified, require inputs with at most this many confirmations."},
                     {"add_to_wallet", RPCArg::Type::BOOL, RPCArg::Default{true}, "When false, returns a serialized transaction which will not be added to the wallet or broadcast"},
-                    {"change_address", RPCArg::Type::STR, RPCArg::DefaultHint{"automatic"}, "The nito address to receive the change"},
+                    {"change_address", RPCArg::Type::STR, RPCArg::DefaultHint{"automatic"}, "The transparent nito address to receive the change. Not valid with private=true."},
                     {"change_position", RPCArg::Type::NUM, RPCArg::DefaultHint{"random"}, "The index of the change output"},
-                    {"change_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -changetype"}, "The output type to use. Only valid if change_address is not specified. Options are \"legacy\", \"p2sh-segwit\", \"bech32\" and \"bech32m\"."},
+                    {"change_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -changetype"}, "The transparent output type to use. Only valid if change_address is not specified and private is false. Options are \"legacy\", \"p2sh-segwit\", \"bech32\", and \"bech32m\"."},
                     {"fee_rate", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"not set, fall back to wallet fee estimation"}, "Specify a fee rate in " + CURRENCY_ATOM + "/vB.", RPCArgOptions{.also_positional = true}},
                     {"include_watching", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for watch-only wallets, otherwise false"}, "Also select inputs which are watch only.\n"
                                           "Only solvable inputs can be used. Watch-only destinations are solvable if the public key and/or output script was imported,\n"
@@ -1236,14 +1486,14 @@ RPCHelpMan send()
                     {"psbt", RPCArg::Type::BOOL,  RPCArg::DefaultHint{"automatic"}, "Always return a PSBT, implies add_to_wallet=false."},
                     {"subtract_fee_from_outputs", RPCArg::Type::ARR, RPCArg::Default{UniValue::VARR}, "Outputs to subtract the fee from, specified as integer indices.\n"
                     "The fee will be equally deducted from the amount of each specified output.\n"
-                    "Those recipients will receive less nitos than you enter in their corresponding amount field.\n"
+                    "Those recipients will receive less NITO than you enter in their corresponding amount field.\n"
                     "If no outputs are specified here, the sender pays the fee.",
                         {
                             {"vout_index", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The zero-based output index, before a change output is added."},
                         },
                     },
                 },
-                FundTxDoc()),
+                FundTxDoc(/*solving_data=*/true, /*private_funding=*/true)),
                 RPCArgOptions{.oneline_description="options"}},
         },
         RPCResult{
@@ -1251,18 +1501,18 @@ RPCHelpMan send()
                 {
                     {RPCResult::Type::BOOL, "complete", "If the transaction has a complete set of signatures"},
                     {RPCResult::Type::STR_HEX, "txid", /*optional=*/true, "The transaction id for the send. Only 1 transaction is created regardless of the number of addresses."},
-                    {RPCResult::Type::STR_HEX, "hex", /*optional=*/true, "If add_to_wallet is false, the hex-encoded raw transaction with signature(s)"},
-                    {RPCResult::Type::STR, "psbt", /*optional=*/true, "If more signatures are needed, or if add_to_wallet is false, the base64-encoded (partially) signed transaction"}
+                    {RPCResult::Type::STR_HEX, "hex", /*optional=*/true, "If add_to_wallet is false and a complete transaction is available, the hex-encoded raw transaction with signature(s)"},
+                    {RPCResult::Type::STR, "psbt", /*optional=*/true, "If psbt=true, more signatures are needed, or add_to_wallet=false stays on the PSBT path, the base64-encoded (partially) signed transaction"}
                 }
         },
         RPCExamples{""
-        "\nSend 0.1 BTC with a confirmation target of 6 blocks in economical fee estimate mode\n"
+        "\nSend 0.1 NITO with a confirmation target of 6 blocks in economical fee estimate mode\n"
         + HelpExampleCli("send", "'{\"" + EXAMPLE_ADDRESS[0] + "\": 0.1}' 6 economical\n") +
-        "Send 0.2 BTC with a fee rate of 1.1 " + CURRENCY_ATOM + "/vB using positional arguments\n"
+        "Send 0.2 NITO with a fee rate of 1.1 " + CURRENCY_ATOM + "/vB using positional arguments\n"
         + HelpExampleCli("send", "'{\"" + EXAMPLE_ADDRESS[0] + "\": 0.2}' null \"unset\" 1.1\n") +
-        "Send 0.2 BTC with a fee rate of 1 " + CURRENCY_ATOM + "/vB using the options argument\n"
+        "Send 0.2 NITO with a fee rate of 1 " + CURRENCY_ATOM + "/vB using the options argument\n"
         + HelpExampleCli("send", "'{\"" + EXAMPLE_ADDRESS[0] + "\": 0.2}' null \"unset\" null '{\"fee_rate\": 1}'\n") +
-        "Send 0.3 BTC with a fee rate of 25 " + CURRENCY_ATOM + "/vB using named arguments\n"
+        "Send 0.3 NITO with a fee rate of 25 " + CURRENCY_ATOM + "/vB using named arguments\n"
         + HelpExampleCli("-named send", "outputs='{\"" + EXAMPLE_ADDRESS[0] + "\": 0.3}' fee_rate=25\n") +
         "Create a transaction that should confirm the next block, with a specific input, and return result without adding to wallet or broadcasting to the network\n"
         + HelpExampleCli("send", "'{\"" + EXAMPLE_ADDRESS[0] + "\": 0.1}' 1 economical '{\"add_to_wallet\": false, \"inputs\": [{\"txid\":\"a08e6907dbbd3d809776dbfc5d82e371b764ed838b5655e72f463568df1aadf0\", \"vout\":1}]}'")
@@ -1280,11 +1530,11 @@ RPCHelpMan send()
             bool rbf{options.exists("replaceable") ? options["replaceable"].get_bool() : pwallet->m_signal_rbf};
             UniValue outputs(UniValue::VOBJ);
             outputs = NormalizeOutputs(request.params[0]);
-            std::vector<CRecipient> recipients = CreateRecipients(
-                    ParseOutputs(outputs),
+            std::vector<CRecipient> recipients = CreateRecipientsFromWalletOutputs(
+                    outputs,
                     InterpretSubtractFeeFromOutputInstructions(options["subtract_fee_from_outputs"], outputs.getKeys())
             );
-            CMutableTransaction rawTx = ConstructTransaction(options["inputs"], request.params[0], options["locktime"], rbf);
+            CMutableTransaction rawTx = ConstructTransactionForWalletRecipients(options["inputs"], outputs, options["locktime"], rbf);
             CCoinControl coin_control;
             // Automatically select coins, unless at least one is manually selected. Can
             // be overridden by options.add_inputs.
@@ -1293,9 +1543,21 @@ RPCHelpMan send()
             // Clear tx.vout since it is not meant to be used now that we are passing outputs directly.
             // This sets us up for a future PR to completely remove tx from the function signature in favor of passing inputs directly
             rawTx.vout.clear();
-            auto txr = FundTransaction(*pwallet, rawTx, recipients, options, coin_control, /*override_min_fee=*/false);
+            const bool psbt_opt_in{options.exists("psbt") && options["psbt"].isBool() && options["psbt"].get_bool()};
+            const bool private_note_source{options.exists("private") && options["private"].isBool() && options["private"].get_bool()};
+            const bool direct_private_send{private_note_source && !psbt_opt_in};
+            auto txr = FundTransaction(*pwallet, rawTx, recipients, options, coin_control, /*override_min_fee=*/false, /*sign=*/direct_private_send);
 
-            return FinishTransaction(pwallet, options, CMutableTransaction(*txr.tx));
+            mapValue_t map_value;
+            const bool add_to_wallet{options.exists("add_to_wallet") ? options["add_to_wallet"].get_bool() : true};
+            if (txr.tx->HasPrivateBundle() && !psbt_opt_in && add_to_wallet) {
+                auto metadata{feebumper::AddPrivateBumpMetadata(*pwallet, txr.tx->GetHash(), map_value, coin_control, recipients, txr.private_spend_note_ids)};
+                if (!metadata) throw JSONRPCError(RPC_WALLET_ERROR, util::ErrorString(metadata).original);
+            }
+            if (direct_private_send) {
+                return FinishSignedTransaction(*pwallet, options, txr.tx, std::move(map_value));
+            }
+            return FinishTransaction(pwallet, options, CMutableTransaction(*txr.tx), txr.private_psbt_records, std::move(map_value));
         }
     };
 }
@@ -1360,8 +1622,8 @@ RPCHelpMan sendall()
                 {
                     {RPCResult::Type::BOOL, "complete", "If the transaction has a complete set of signatures"},
                     {RPCResult::Type::STR_HEX, "txid", /*optional=*/true, "The transaction id for the send. Only 1 transaction is created regardless of the number of addresses."},
-                    {RPCResult::Type::STR_HEX, "hex", /*optional=*/true, "If add_to_wallet is false, the hex-encoded raw transaction with signature(s)"},
-                    {RPCResult::Type::STR, "psbt", /*optional=*/true, "If more signatures are needed, or if add_to_wallet is false, the base64-encoded (partially) signed transaction"}
+                    {RPCResult::Type::STR_HEX, "hex", /*optional=*/true, "If add_to_wallet is false and a complete transaction is available, the hex-encoded raw transaction with signature(s)"},
+                    {RPCResult::Type::STR, "psbt", /*optional=*/true, "If psbt=true, more signatures are needed, or add_to_wallet=false stays on the PSBT path, the base64-encoded (partially) signed transaction"}
                 }
         },
         RPCExamples{""
@@ -1394,6 +1656,9 @@ RPCHelpMan sendall()
             const UniValue& recipients{request.params[0]};
             for (unsigned int i = 0; i < recipients.size(); ++i) {
                 const UniValue& recipient{recipients[i]};
+                if (RecipientObjectContainsPrivateAddress(recipient)) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "sendall is transparent-only; use sendtoaddress or sendmany with nito1x private recipients.");
+                }
                 if (recipient.isStr()) {
                     UniValue rkvp(UniValue::VOBJ);
                     rkvp.pushKV(recipient.get_str(), 0);
@@ -1571,6 +1836,7 @@ RPCHelpMan walletprocesspsbt()
             "       \"SINGLE|ANYONECANPAY\""},
                     {"bip32derivs", RPCArg::Type::BOOL, RPCArg::Default{true}, "Include BIP 32 derivation paths for public keys if we know them"},
                     {"finalize", RPCArg::Type::BOOL, RPCArg::Default{true}, "Also finalize inputs if possible"},
+                    {"private_intent_hash", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The reviewed private intent hash returned by decodepsbt. Required when signing Nito Orchard signing material."},
                 },
                 RPCResult{
                     RPCResult::Type::OBJ, "", "",
@@ -1607,11 +1873,18 @@ RPCHelpMan walletprocesspsbt()
     bool sign = request.params[1].isNull() ? true : request.params[1].get_bool();
     bool bip32derivs = request.params[3].isNull() ? true : request.params[3].get_bool();
     bool finalize = request.params[4].isNull() ? true : request.params[4].get_bool();
+    std::optional<uint256> private_intent_hash;
+    if (!request.params[5].isNull()) {
+        private_intent_hash = ParseHashV(request.params[5], "private_intent_hash");
+    }
     bool complete = true;
 
     if (sign) EnsureWalletIsUnlocked(*pwallet);
+    if (sign && psbtx.HasNitoPrivateSigningMaterial() && !private_intent_hash) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "private_intent_hash is required when signing Nito Orchard PSBT material; review decodepsbt first");
+    }
 
-    const TransactionError err{wallet.FillPSBT(psbtx, complete, nHashType, sign, bip32derivs, nullptr, finalize)};
+    const TransactionError err{wallet.FillPSBT(psbtx, complete, nHashType, sign, bip32derivs, nullptr, finalize, private_intent_hash)};
     if (err != TransactionError::OK) {
         throw JSONRPCTransactionError(err);
     }
@@ -1676,23 +1949,23 @@ RPCHelpMan walletcreatefundedpsbt()
                                                           "If that happens, you will need to fund the transaction with different inputs and republish it."},
                             {"minconf", RPCArg::Type::NUM, RPCArg::Default{0}, "If add_inputs is specified, require inputs with at least this many confirmations."},
                             {"maxconf", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "If add_inputs is specified, require inputs with at most this many confirmations."},
-                            {"changeAddress", RPCArg::Type::STR, RPCArg::DefaultHint{"automatic"}, "The nito address to receive the change"},
+                            {"changeAddress", RPCArg::Type::STR, RPCArg::DefaultHint{"automatic"}, "The transparent nito address to receive the change. Not valid with private=true."},
                             {"changePosition", RPCArg::Type::NUM, RPCArg::DefaultHint{"random"}, "The index of the change output"},
-                            {"change_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -changetype"}, "The output type to use. Only valid if changeAddress is not specified. Options are \"legacy\", \"p2sh-segwit\", \"bech32\", and \"bech32m\"."},
+                            {"change_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -changetype"}, "The transparent output type to use. Only valid if changeAddress is not specified and private is false. Options are \"legacy\", \"p2sh-segwit\", \"bech32\", and \"bech32m\"."},
                             {"includeWatching", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for watch-only wallets, otherwise false"}, "Also select inputs which are watch only"},
                             {"lockUnspents", RPCArg::Type::BOOL, RPCArg::Default{false}, "Lock selected unspent outputs"},
                             {"fee_rate", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"not set, fall back to wallet fee estimation"}, "Specify a fee rate in " + CURRENCY_ATOM + "/vB."},
                             {"feeRate", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"not set, fall back to wallet fee estimation"}, "Specify a fee rate in " + CURRENCY_UNIT + "/kvB."},
                             {"subtractFeeFromOutputs", RPCArg::Type::ARR, RPCArg::Default{UniValue::VARR}, "The outputs to subtract the fee from.\n"
                                                           "The fee will be equally deducted from the amount of each specified output.\n"
-                                                          "Those recipients will receive less nitos than you enter in their corresponding amount field.\n"
+                                                          "Those recipients will receive less NITO than you enter in their corresponding amount field.\n"
                                                           "If no outputs are specified here, the sender pays the fee.",
                                 {
                                     {"vout_index", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "The zero-based output index, before a change output is added."},
                                 },
                             },
                         },
-                        FundTxDoc()),
+                        FundTxDoc(/*solving_data=*/true, /*private_funding=*/true)),
                         RPCArgOptions{.oneline_description="options"}},
                     {"bip32derivs", RPCArg::Type::BOOL, RPCArg::Default{true}, "Include BIP 32 derivation paths for public keys if we know them"},
                 },
@@ -1722,11 +1995,11 @@ RPCHelpMan walletcreatefundedpsbt()
 
     const UniValue &replaceable_arg = options["replaceable"];
     const bool rbf{replaceable_arg.isNull() ? wallet.m_signal_rbf : replaceable_arg.get_bool()};
-    CMutableTransaction rawTx = ConstructTransaction(request.params[0], request.params[1], request.params[2], rbf);
     UniValue outputs(UniValue::VOBJ);
     outputs = NormalizeOutputs(request.params[1]);
-    std::vector<CRecipient> recipients = CreateRecipients(
-            ParseOutputs(outputs),
+    CMutableTransaction rawTx = ConstructTransactionForWalletRecipients(request.params[0], outputs, request.params[2], rbf);
+    std::vector<CRecipient> recipients = CreateRecipientsFromWalletOutputs(
+            outputs,
             InterpretSubtractFeeFromOutputInstructions(options["subtractFeeFromOutputs"], outputs.getKeys())
     );
     CCoinControl coin_control;
@@ -1739,8 +2012,17 @@ RPCHelpMan walletcreatefundedpsbt()
     rawTx.vout.clear();
     auto txr = FundTransaction(wallet, rawTx, recipients, options, coin_control, /*override_min_fee=*/true);
 
-    // Make a blank psbt
-    PartiallySignedTransaction psbtx(CMutableTransaction(*txr.tx));
+    // Make a blank psbt. Private-note funding carries an Orchard signing plan
+    // instead of a pre-authorized private bundle so walletprocesspsbt can act as
+    // the signer stage.
+    CMutableTransaction psbt_tx(*txr.tx);
+    if (!txr.private_psbt_records.empty() && psbt_tx.m_private_bundle) {
+        psbt_tx.m_private_bundle->auth.reset();
+    }
+    PartiallySignedTransaction psbtx(psbt_tx);
+    for (const auto& entry : txr.private_psbt_records) {
+        psbtx.m_proprietary.insert(entry);
+    }
 
     // Fill transaction with out data but don't sign
     bool bip32derivs = request.params[4].isNull() ? true : request.params[4].get_bool();

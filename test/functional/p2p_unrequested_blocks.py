@@ -5,7 +5,8 @@
 """Test processing of unrequested blocks.
 
 Setup: two nodes, node0 + node1, not connected to each other. Node1 will have
-nMinimumChainWork set to 0x10, so it won't process low-work unrequested blocks.
+nMinimumChainWork set above the genesis work, so it won't process low-work
+unrequested blocks.
 
 We have one P2PInterface connection to node0 called test_node, and one to node1
 called min_work_node.
@@ -54,7 +55,7 @@ Node1 is unused in tests 3-7:
 import time
 
 from test_framework.blocktools import create_block, create_coinbase, create_tx_with_script
-from test_framework.messages import CBlockHeader, CInv, MSG_BLOCK, msg_block, msg_headers, msg_inv
+from test_framework.messages import CBlockHeader, CInv, MSG_BLOCK, msg_block, msg_headers, msg_inv, uint256_from_compact
 from test_framework.p2p import p2p_lock, P2PInterface
 from test_framework.test_framework import NitoTestFramework
 from test_framework.util import (
@@ -67,7 +68,8 @@ class AcceptBlockTest(NitoTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
-        self.extra_args = [[], ["-minimumchainwork=0x10"]]
+        genesis_work = (1 << 256) // (uint256_from_compact(0x1d00ffff) + 1)
+        self.extra_args = [[], [f"-minimumchainwork={genesis_work + 14:x}"]]
 
     def setup_network(self):
         self.setup_nodes()

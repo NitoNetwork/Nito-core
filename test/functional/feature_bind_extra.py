@@ -27,7 +27,7 @@ class BindExtraTest(NitoTestFramework):
         # Avoid any -bind= on the command line. Force the framework to avoid
         # adding -bind=127.0.0.1.
         self.bind_to_localhost_only = False
-        self.num_nodes = 2
+        self.num_nodes = 3
 
     def skip_test_if_missing_module(self):
         # Due to OS-specific network stats queries, we only run on Linux.
@@ -59,6 +59,15 @@ class BindExtraTest(NitoTestFramework):
             ],
         )
         port += 2
+
+        # Node2, listenonion=0 from the test framework should not add an
+        # implicit Tor service target bind.
+        self.expected.append(
+            [
+                ["-listen=1"],
+                [(addr_to_hex("0.0.0.0"), p2p_port(2))]
+            ],
+        )
 
         self.extra_args = list(map(lambda e: e[0], self.expected))
         self.add_nodes(self.num_nodes, self.extra_args)

@@ -8,9 +8,11 @@
 
 #include <QFrame>
 #include <QMap>
+#include <QPoint>
 
 class ClientModel;
 class PlatformStyle;
+class QPushButton;
 class SendCoinsRecipient;
 class WalletModel;
 class WalletView;
@@ -40,6 +42,7 @@ public:
     void setCurrentWallet(WalletModel* wallet_model);
     void removeWallet(WalletModel* wallet_model);
     void removeAllWallets();
+    void setOpenWalletButtonAvailable(bool available);
 
     bool handlePaymentRequest(const SendCoinsRecipient& recipient);
 
@@ -49,11 +52,13 @@ public:
 
 Q_SIGNALS:
     void createWalletButtonClicked();
+    void openWalletButtonClicked(const QPoint& global_pos);
     void message(const QString& title, const QString& message, unsigned int style);
     void currentWalletSet();
 
 private:
     QStackedWidget *walletStack;
+    QPushButton* m_open_wallet_button{nullptr};
     ClientModel *clientModel;
     QMap<WalletModel*, WalletView*> mapWalletViews;
 
@@ -89,6 +94,8 @@ public Q_SLOTS:
     void encryptWallet();
     /** Backup the wallet */
     void backupWallet();
+    /** Show the wallet recovery phrase */
+    void showHDSeedMnemonic();
     /** Change encrypted wallet passphrase */
     void changePassphrase();
     /** Ask for passphrase to unlock wallet temporarily */

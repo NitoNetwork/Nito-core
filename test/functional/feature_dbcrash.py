@@ -33,6 +33,7 @@ import time
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import (
     COIN,
+    MAX_BLOCK_WEIGHT,
 )
 from test_framework.test_framework import NitoTestFramework
 from test_framework.util import (
@@ -65,7 +66,7 @@ class ChainstateWriteCrashTest(NitoTestFramework):
 
         # Node3 is a normal node with default args, except will mine full blocks
         # and txs with "dust" outputs
-        self.node3_args = ["-blockmaxweight=4000000", "-dustrelayfee=0"]
+        self.node3_args = [f"-blockmaxweight={MAX_BLOCK_WEIGHT}", "-dustrelayfee=0"]
         self.extra_args = [self.node0_args, self.node1_args, self.node2_args, self.node3_args]
 
     def setup_network(self):
@@ -215,7 +216,14 @@ class ChainstateWriteCrashTest(NitoTestFramework):
         utxo_list = []
         for _ in range(5):
             utxo_list.extend(self.wallet.send_self_transfer_multi(from_node=self.nodes[3], num_outputs=1000)['new_utxos'])
-        self.generate(self.nodes[3], 1, sync_fun=self.no_op)
+        # Keep the full UTXO workload; Nito's smaller blocks need more than one
+        # block to confirm all five funding transactions.
+        pending = len(self.nodes[3].getrawmempool())
+        while pending:
+            self.generate(self.nodes[3], 1, sync_fun=self.no_op)
+            remaining = len(self.nodes[3].getrawmempool())
+            assert remaining < pending, 'Funding transactions were not mined'
+            pending = remaining
         assert_equal(len(self.nodes[3].getrawmempool()), 0)
         self.log.info(f"Prepped {len(utxo_list)} utxo entries")
 
@@ -251,10 +259,10 @@ class ChainstateWriteCrashTest(NitoTestFramework):
             # Now generate new blocks until we pass the old tip height
             self.log.debug("Mining longer tip")
             block_hashes = []
-            while current_height + 1 > self.nodes[3].getblockcount():
+            while current_height + 1 > self.nodes[3].getblockcount() or self.nodes[3].getrawmempool():
                 block_hashes.extend(self.generatetoaddress(
                     self.nodes[3],
-                    nblocks=min(10, current_height + 1 - self.nodes[3].getblockcount()),
+                    nblocks=max(1, min(10, current_height + 1 - self.nodes[3].getblockcount())),
                     # new address to avoid mining a block that has just been invalidated
                     address=getnewdestination()[2],
                     sync_fun=self.no_op,

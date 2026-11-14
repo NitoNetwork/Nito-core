@@ -88,7 +88,8 @@ private:
     enum
     {
         TxHashRole = Qt::UserRole,
-        VOutRole
+        VOutRole,
+        PrivateNoteRole
     };
 
     friend class CCoinControlWidgetItem;

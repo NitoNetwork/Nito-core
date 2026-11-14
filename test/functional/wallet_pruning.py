@@ -5,19 +5,17 @@
 
 """Test wallet import on pruned node."""
 
-from test_framework.util import assert_equal, assert_raises_rpc_error
+from test_framework.address import address_to_scriptpubkey
 from test_framework.blocktools import (
     COINBASE_MATURITY,
-    create_block
+    create_block,
+    create_coinbase,
 )
-from test_framework.blocktools import create_coinbase
+from test_framework.util import assert_equal, assert_raises_rpc_error
 from test_framework.test_framework import NitoTestFramework
 
-from test_framework.script import (
-    CScript,
-    OP_RETURN,
-    OP_TRUE,
-)
+BLOCK_SUBSIDY = 512
+MNEMONIC_12 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
 class WalletPruningTest(NitoTestFramework):
     def add_options(self, parser):
@@ -28,39 +26,19 @@ class WalletPruningTest(NitoTestFramework):
         self.num_nodes = 2
         self.wallet_names = []
         self.extra_args = [
-            [], # node dedicated to mining
-            ['-prune=550'], # node dedicated to testing pruning
+            ['-fastprune'], # node dedicated to mining
+            [
+                '-fastprune',
+                '-prune=1',
+                '-privateactivationheight=1',
+                '-orchardindex=0',
+                '-transparenthistoryindex=0',
+            ], # node dedicated to testing manual pruning
         ]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
         self.skip_if_no_bdb()
-
-    def mine_large_blocks(self, node, n):
-        # Get the block parameters for the first block
-        best_block = node.getblockheader(node.getbestblockhash())
-        height = int(best_block["height"]) + 1
-        self.nTime = max(self.nTime, int(best_block["time"])) + 1
-        previousblockhash = int(best_block["hash"], 16)
-        big_script = CScript([OP_RETURN] + [OP_TRUE] * 950000)
-        # Set mocktime to accept all future blocks
-        for i in self.nodes:
-            if i.running:
-                i.setmocktime(self.nTime + 600 * n)
-        for _ in range(n):
-            block = create_block(hashprev=previousblockhash, ntime=self.nTime, coinbase=create_coinbase(height, script_pubkey=big_script))
-            block.solve()
-
-            # Submit to the node
-            node.submitblock(block.serialize().hex())
-
-            previousblockhash = block.sha256
-            height += 1
-
-            # Simulate 10 minutes of work time per block
-            # Important for matching a timestamp with a block +- some window
-            self.nTime += 600
-        self.sync_all()
 
     def test_wallet_import_pruned(self, wallet_name):
         self.log.info("Make sure we can import wallet when pruned and required blocks are still available")
@@ -103,10 +81,6 @@ class WalletPruningTest(NitoTestFramework):
                     wallet_birthheight = int(line.split(' ')[9])
                     return wallet_birthheight
 
-    def has_block(self, block_index):
-        """Checks if the pruned node has the specific blk0000*.dat file"""
-        return (self.nodes[1].blocks_path / f"blk{block_index:05}.dat").is_file()
-
     def create_wallet(self, wallet_name, *, unload=False):
         """Creates and dumps a wallet on the non-pruned node0 to be later import by the pruned node"""
         self.nodes[0].createwallet(wallet_name=wallet_name, descriptors=False, load_on_startup=True)
@@ -114,45 +88,80 @@ class WalletPruningTest(NitoTestFramework):
         if (unload):
             self.nodes[0].unloadwallet(wallet_name)
 
+    def mine_blocks(self, node, n, *, script_pubkey=None):
+        best_block = node.getblock(node.getbestblockhash())
+        height = int(best_block["height"]) + 1
+        self.nTime = max(self.nTime, int(best_block["time"])) + 600
+        previousblockhash = int(best_block["hash"], 16)
+
+        for running_node in self.nodes:
+            if running_node.running:
+                running_node.setmocktime(self.nTime + 600 * n)
+
+        for _ in range(n):
+            block = create_block(
+                hashprev=previousblockhash,
+                ntime=self.nTime,
+                coinbase=create_coinbase(height, script_pubkey=script_pubkey, nValue=BLOCK_SUBSIDY),
+            )
+            block.solve()
+            assert_equal(node.submitblock(block.serialize().hex()), None)
+
+            previousblockhash = block.sha256
+            height += 1
+            self.nTime += 600
+
+        self.sync_all()
+
     def run_test(self):
         self.nTime = 0
-        self.log.info("Warning! This test requires ~1.3GB of disk space")
+        self.log.info("Generating a fastprune chain with two wallet birth heights...")
 
-        self.log.info("Generating a long chain of blocks...")
+        # Use -fastprune's small block files instead of oversized Bitcoin-style
+        # padding blocks. Nito's 800,000 block weight limit makes those inherited
+        # 950k coinbase scripts invalid, while small block files still exercise
+        # the importwallet/pruned-data behavior this test cares about.
+        self.mine_blocks(self.nodes[0], 150)
 
-        # A blk*.dat file is 128MB
-        # Generate 250 light blocks
-        self.generate(self.nodes[0], 250)
-        # Generate 50MB worth of large blocks in the blk00000.dat file
-        self.mine_large_blocks(self.nodes[0], 50)
-
-        # Create a wallet which birth's block is in the blk00000.dat file
+        # Create a wallet whose birth block will be pruned.
         wallet_birthheight_1 = "wallet_birthheight_1"
-        assert_equal(self.has_block(1), False)
         self.create_wallet(wallet_birthheight_1, unload=True)
 
-        # Generate enough large blocks to reach pruning disk limit
-        # Not pruning yet because we are still below PruneAfterHeight
-        self.mine_large_blocks(self.nodes[0], 600)
-        self.log.info("- Long chain created")
+        # Move far enough forward that manual pruning can delete early block
+        # files while still keeping the second wallet's birth block available.
+        self.mine_blocks(self.nodes[0], 300)
 
         # Create a wallet with birth height > wallet_birthheight_1
         wallet_birthheight_2 = "wallet_birthheight_2"
         self.create_wallet(wallet_birthheight_2)
 
         # Fund wallet to later verify that importwallet correctly accounts for balances
-        self.generatetoaddress(self.nodes[0], COINBASE_MATURITY + 1, self.nodes[0].getnewaddress(), sync_fun=self.no_op)
+        self.mine_blocks(self.nodes[0], 1, script_pubkey=address_to_scriptpubkey(self.nodes[0].getnewaddress()))
+        self.mine_blocks(self.nodes[0], COINBASE_MATURITY)
+        self.mine_blocks(self.nodes[0], 200)
 
-        # We've reached pruning storage & height limit but
-        # pruning doesn't run until another chunk (blk*.dat file) is allocated.
-        # That's why we are generating another 5 large blocks
-        self.mine_large_blocks(self.nodes[0], 5)
+        wallet_file_1 = wallet_birthheight_1 + ".dat"
+        wallet_file_2 = wallet_birthheight_2 + ".dat"
+        birthheight_1 = self.get_birthheight(wallet_file_1)
+        birthheight_2 = self.get_birthheight(wallet_file_2)
 
-        # blk00000.dat file is now pruned from node1
-        assert_equal(self.has_block(0), False)
+        self.nodes[1].pruneblockchain(birthheight_1 + 300)
+        assert_raises_rpc_error(-1, "Block not available (pruned data)", self.nodes[1].getblock, self.nodes[1].getblockhash(birthheight_1))
+        self.nodes[1].getblock(self.nodes[1].getblockhash(birthheight_2))
 
         self.test_wallet_import_pruned(wallet_birthheight_2)
         self.test_wallet_import_pruned_with_missing_blocks(wallet_birthheight_1)
+
+        self.log.info("Make automatic seed-history restore fail explicitly when archival blocks were pruned")
+        self.nodes[1].createwallet(wallet_name="pruned_seed_restore", blank=True, descriptors=True)
+        pruned_seed_wallet = self.nodes[1].get_wallet_rpc("pruned_seed_restore")
+        assert_raises_rpc_error(
+            -1,
+            "Some blocks required for complete wallet recovery have been pruned.",
+            pruned_seed_wallet.sethdseed,
+            True,
+            MNEMONIC_12,
+        )
 
 if __name__ == '__main__':
     WalletPruningTest().main()

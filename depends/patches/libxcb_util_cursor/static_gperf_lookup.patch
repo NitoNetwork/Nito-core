@@ -1,0 +1,11 @@
+--- a/cursor/shape_to_id.c
++++ b/cursor/shape_to_id.c
+@@ -108,7 +108,7 @@ hash (register const char *str, register size_t len)
+   return hval + asso_values[(unsigned char)str[len - 1]];
+ }
+ 
+-struct shape_mapping *
++static struct shape_mapping *
+ in_word_set (register const char *str, register size_t len)
+ {
+ #if (defined __GNUC__ && __GNUC__ + (__GNUC_MINOR__ >= 6) > 4) || (defined __clang__ && __clang_major__ >= 3)

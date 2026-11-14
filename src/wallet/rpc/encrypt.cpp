@@ -13,7 +13,7 @@ RPCHelpMan walletpassphrase()
 {
     return RPCHelpMan{"walletpassphrase",
                 "\nStores the wallet decryption key in memory for 'timeout' seconds.\n"
-                "This is needed prior to performing transactions related to private keys such as sending nitos\n"
+                "This is needed prior to performing transactions related to private keys such as sending NITO\n"
             "\nNote:\n"
             "Issuing the walletpassphrase command while the wallet is already unlocked will set a new unlock\n"
             "time that overrides the old one.\n",
@@ -68,7 +68,11 @@ RPCHelpMan walletpassphrase()
             throw JSONRPCError(RPC_INVALID_PARAMETER, "passphrase cannot be empty");
         }
 
-        if (!pwallet->Unlock(strWalletPass)) {
+        bilingual_str unlock_error;
+        if (!pwallet->Unlock(strWalletPass, &unlock_error)) {
+            if (!unlock_error.original.empty()) {
+                throw JSONRPCError(RPC_WALLET_ERROR, unlock_error.original);
+            }
             // Check if the passphrase has a null character (see #27067 for details)
             if (strWalletPass.find('\0') == std::string::npos) {
                 throw JSONRPCError(RPC_WALLET_PASSPHRASE_INCORRECT, "Error: The wallet passphrase entered was incorrect.");
@@ -88,6 +92,10 @@ RPCHelpMan walletpassphrase()
         relock_time = pwallet->nRelockTime;
     }
 
+    if (auto catchup = pwallet->CatchUpWalletAfterUnlock(); !catchup) {
+        pwallet->WalletLogPrintf("Wallet recovery after unlock remains pending: %s\n", util::ErrorString(catchup).original);
+    }
+
     // rpcRunLater must be called without cs_wallet held otherwise a deadlock
     // can occur. The deadlock would happen when RPCRunLater removes the
     // previous timer (and waits for the callback to finish if already running)
@@ -99,11 +107,9 @@ RPCHelpMan walletpassphrase()
     std::weak_ptr<CWallet> weak_wallet = wallet;
     pwallet->chain().rpcRunLater(strprintf("lockwallet(%s)", pwallet->GetName()), [weak_wallet, relock_time] {
         if (auto shared_wallet = weak_wallet.lock()) {
-            LOCK2(shared_wallet->m_relock_mutex, shared_wallet->cs_wallet);
-            // Skip if this is not the most recent rpcRunLater callback.
-            if (shared_wallet->nRelockTime != relock_time) return;
-            shared_wallet->Lock();
-            shared_wallet->nRelockTime = 0;
+            // A passphrase-dependent rescan owns an unlock lease and performs
+            // the deferred relock when its reserver is released.
+            shared_wallet->TryRelock(relock_time);
         }
     }, nSleepTime);
 
@@ -223,9 +229,8 @@ RPCHelpMan encryptwallet()
                 "Use the walletpassphrase call for this, and then walletlock call.\n"
                 "If the wallet is already encrypted, use the walletpassphrasechange call.\n"
                 "** IMPORTANT **\n"
-                "For security reasons, the encryption process will generate a new HD seed, resulting\n"
-                "in the creation of a fresh set of active descriptors. Therefore, it is crucial to\n"
-                "securely back up the newly generated wallet file using the backupwallet RPC.\n",
+                "The encryption process keeps the current HD seed and address sequence unchanged.\n"
+                "Securely back up the encrypted wallet file using the backupwallet RPC.\n",
                 {
                     {"passphrase", RPCArg::Type::STR, RPCArg::Optional::NO, "The pass phrase to encrypt the wallet with. It must be at least 1 character, but should be long."},
                 },
@@ -273,7 +278,7 @@ RPCHelpMan encryptwallet()
         throw JSONRPCError(RPC_WALLET_ENCRYPTION_FAILED, "Error: Failed to encrypt the wallet.");
     }
 
-    return "wallet encrypted; The keypool has been flushed and a new HD seed was generated. You need to make a new backup with the backupwallet RPC.";
+    return "wallet encrypted; The current HD seed and address sequence were kept unchanged. You need to make a new backup with the backupwallet RPC.";
 },
     };
 }

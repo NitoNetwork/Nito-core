@@ -13,6 +13,7 @@
 #include <script/interpreter.h>
 #include <script/solver.h>
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 
@@ -36,6 +37,14 @@ static constexpr unsigned int MAX_STANDARD_TX_SIGOPS_COST{MAX_BLOCK_SIGOPS_COST/
 static constexpr unsigned int DEFAULT_INCREMENTAL_RELAY_FEE{1000};
 /** Default for -bytespersigop */
 static constexpr unsigned int DEFAULT_BYTES_PER_SIGOP{20};
+/**
+ * Global budget for unsolicited P2P Orchard proof verification. The refill
+ * permits one maximum-action bundle per second and the burst permits two.
+ * Local RPC submissions and block validation do not use this relay-only
+ * policy limiter.
+ */
+static constexpr int64_t PRIVATE_ORCHARD_VERIFY_COST_PER_SECOND{55000};
+static constexpr int64_t PRIVATE_ORCHARD_VERIFY_COST_BURST{110000};
 /** Default for -permitbaremultisig */
 static constexpr bool DEFAULT_PERMIT_BAREMULTISIG{true};
 /** The maximum number of witness stack items in a standard P2WSH script */
@@ -77,6 +86,23 @@ static const unsigned int MAX_OP_RETURN_RELAY = 83;
  * configurable as it doesn't materially change DoS parameters.
  */
 static constexpr unsigned int EXTRA_DESCENDANT_TX_SIZE_LIMIT{10000};
+
+class PrivateOrchardProofRateLimiter
+{
+private:
+    const int64_t m_refill_per_second;
+    const int64_t m_capacity;
+    double m_available;
+    std::chrono::microseconds m_last_update;
+
+public:
+    explicit PrivateOrchardProofRateLimiter(
+        std::chrono::microseconds now,
+        int64_t refill_per_second = PRIVATE_ORCHARD_VERIFY_COST_PER_SECOND,
+        int64_t capacity = PRIVATE_ORCHARD_VERIFY_COST_BURST);
+
+    bool TryAcquire(int64_t cost, std::chrono::microseconds now);
+};
 
 
 /**
@@ -133,6 +159,8 @@ bool IsStandard(const CScript& scriptPubKey, const std::optional<unsigned>& max_
 // adapting relay policy by bumping TX_MAX_STANDARD_VERSION, and then later
 // allowing the new transaction version in the wallet/RPC.
 static constexpr decltype(CTransaction::nVersion) TX_MAX_STANDARD_VERSION{2};
+/** Version 3 is reserved in Nito v4 as an explicit RBF signal for private-note transactions. */
+static constexpr decltype(CTransaction::nVersion) NITO_PRIVATE_RBF_TX_VERSION{3};
 
 /**
 * Check for standard transaction types
@@ -153,9 +181,12 @@ bool AreInputsStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
 * Also enforce a maximum stack item size limit and no annexes for tapscript spends.
 */
 bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs);
+/** Check whether this transaction spends a native or P2SH-wrapped witness program. */
+bool SpendsWitnessProgram(const CTransaction& tx, const CCoinsViewCache& prevouts);
 
 /** Compute the virtual transaction size (weight reinterpreted as bytes). */
 int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost, unsigned int bytes_per_sigop);
+int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost, unsigned int bytes_per_sigop, int64_t private_orchard_verify_cost);
 int64_t GetVirtualTransactionSize(const CTransaction& tx, int64_t nSigOpCost, unsigned int bytes_per_sigop);
 int64_t GetVirtualTransactionInputSize(const CTxIn& tx, int64_t nSigOpCost, unsigned int bytes_per_sigop);
 

@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <optional>
 
+#include <QtGlobal>
+
 TransactionFilterProxy::TransactionFilterProxy(QObject* parent)
     : QSortFilterProxyModel(parent),
       m_search_string(),
@@ -57,40 +59,62 @@ bool TransactionFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex &
     return true;
 }
 
+void TransactionFilterProxy::beginFilterUpdate()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+    beginFilterChange();
+#endif
+}
+
+void TransactionFilterProxy::endFilterUpdate()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+    endFilterChange(QSortFilterProxyModel::Direction::Rows);
+#else
+    invalidateFilter();
+#endif
+}
+
 void TransactionFilterProxy::setDateRange(const std::optional<QDateTime>& from, const std::optional<QDateTime>& to)
 {
+    beginFilterUpdate();
     dateFrom = from;
     dateTo = to;
-    invalidateFilter();
+    endFilterUpdate();
 }
 
 void TransactionFilterProxy::setSearchString(const QString &search_string)
 {
     if (m_search_string == search_string) return;
+    beginFilterUpdate();
     m_search_string = search_string;
-    invalidateFilter();
+    endFilterUpdate();
 }
 
 void TransactionFilterProxy::setTypeFilter(quint32 modes)
 {
+    beginFilterUpdate();
     this->typeFilter = modes;
-    invalidateFilter();
+    endFilterUpdate();
 }
 
 void TransactionFilterProxy::setMinAmount(const CAmount& minimum)
 {
+    beginFilterUpdate();
     this->minAmount = minimum;
-    invalidateFilter();
+    endFilterUpdate();
 }
 
 void TransactionFilterProxy::setWatchOnlyFilter(WatchOnlyFilter filter)
 {
+    beginFilterUpdate();
     this->watchOnlyFilter = filter;
-    invalidateFilter();
+    endFilterUpdate();
 }
 
 void TransactionFilterProxy::setShowInactive(bool _showInactive)
 {
+    beginFilterUpdate();
     this->showInactive = _showInactive;
-    invalidateFilter();
+    endFilterUpdate();
 }

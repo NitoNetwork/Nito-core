@@ -5,16 +5,78 @@
 
 #include <psbt.h>
 
+#include <hash.h>
+#include <private/orchard_verifier.h>
 #include <policy/policy.h>
 #include <script/signingprovider.h>
 #include <util/check.h>
 #include <util/strencodings.h>
 
+#include <algorithm>
+#include <ios>
+#include <map>
+
+namespace {
+bool IsNitoPrivateKnownProprietarySubtype(uint64_t subtype)
+{
+    return subtype == PSBT_NITO_GLOBAL_RESERVED_LEGACY_PRIVATE_AUTH ||
+        subtype == PSBT_NITO_GLOBAL_ORCHARD_ACTION_AUTH_V1 ||
+        subtype == PSBT_NITO_GLOBAL_ORCHARD_BUNDLE_AUTH_V1 ||
+        subtype == PSBT_NITO_GLOBAL_ORCHARD_SPEND_MATERIAL_V1 ||
+        subtype == PSBT_NITO_GLOBAL_ORCHARD_OUTPUT_MATERIAL_V1 ||
+        subtype == PSBT_NITO_GLOBAL_ORCHARD_BUNDLE_PLAN_V1;
+}
+
+bool IsNitoPrivateAuthProprietarySubtype(uint64_t subtype)
+{
+    return subtype == PSBT_NITO_GLOBAL_ORCHARD_ACTION_AUTH_V1 ||
+        subtype == PSBT_NITO_GLOBAL_ORCHARD_BUNDLE_AUTH_V1;
+}
+
+bool IsNitoPrivateAuthOrReservedProprietarySubtype(uint64_t subtype)
+{
+    return subtype == PSBT_NITO_GLOBAL_RESERVED_LEGACY_PRIVATE_AUTH ||
+        IsNitoPrivateAuthProprietarySubtype(subtype);
+}
+
+bool IsNitoPrivateSigningMaterialProprietarySubtype(uint64_t subtype)
+{
+    return subtype == PSBT_NITO_GLOBAL_ORCHARD_SPEND_MATERIAL_V1 ||
+        subtype == PSBT_NITO_GLOBAL_ORCHARD_OUTPUT_MATERIAL_V1 ||
+        subtype == PSBT_NITO_GLOBAL_ORCHARD_BUNDLE_PLAN_V1;
+}
+
+DataStream ParseNitoProprietaryKeyData(const PSBTProprietary& entry)
+{
+    DataStream ss_key{MakeByteSpan(entry.key)};
+    const uint64_t type = ReadCompactSize(ss_key);
+    if (type != PSBT_GLOBAL_PROPRIETARY) {
+        throw std::ios_base::failure("Nito proprietary key has unexpected map type");
+    }
+    std::vector<unsigned char> identifier;
+    ss_key >> identifier;
+    if (identifier != NitoPSBTProprietaryIdentifier()) {
+        throw std::ios_base::failure("Nito proprietary key has unexpected identifier");
+    }
+    const uint64_t subtype = ReadCompactSize(ss_key);
+    if (subtype != entry.subtype) {
+        throw std::ios_base::failure("Nito proprietary key subtype mismatch");
+    }
+    return ss_key;
+}
+} // namespace
 
 PartiallySignedTransaction::PartiallySignedTransaction(const CMutableTransaction& tx) : tx(tx)
 {
     inputs.resize(tx.vin.size());
     outputs.resize(tx.vout.size());
+    if (tx.HasPrivateAuth()) {
+        const CPrivateAuth& auth = *tx.m_private_bundle->auth;
+        m_proprietary.insert(MakeNitoPSBTOrchardBundleAuthProprietary(auth.BundleAuth()));
+        for (uint64_t i = 0; i < auth.actions_auth.size(); ++i) {
+            m_proprietary.insert(MakeNitoPSBTOrchardActionAuthProprietary(i, auth.actions_auth[i]));
+        }
+    }
 }
 
 bool PartiallySignedTransaction::IsNull() const
@@ -43,8 +105,234 @@ bool PartiallySignedTransaction::Merge(const PartiallySignedTransaction& psbt)
         }
     }
     unknown.insert(psbt.unknown.begin(), psbt.unknown.end());
+    for (const auto& entry : psbt.m_proprietary) {
+        auto [it, inserted] = m_proprietary.insert(entry);
+        if (!inserted &&
+            entry.identifier == NitoPSBTProprietaryIdentifier() &&
+            IsNitoPrivateKnownProprietarySubtype(entry.subtype) &&
+            it->value != entry.value) {
+            return false;
+        }
+    }
+    ApplyNitoPrivateAuthProprietary();
 
     return true;
+}
+
+void PartiallySignedTransaction::ApplyNitoPrivateAuthProprietary()
+{
+    const bool has_reserved_legacy_auth_record = std::any_of(m_proprietary.begin(), m_proprietary.end(), [](const PSBTProprietary& entry) {
+        return entry.identifier == NitoPSBTProprietaryIdentifier() && entry.subtype == PSBT_NITO_GLOBAL_RESERVED_LEGACY_PRIVATE_AUTH;
+    });
+    if (has_reserved_legacy_auth_record) {
+        throw std::ios_base::failure("Unsupported legacy Nito private authorization record");
+    }
+
+    const bool has_private_auth_record = std::any_of(m_proprietary.begin(), m_proprietary.end(), [](const PSBTProprietary& entry) {
+        return entry.identifier == NitoPSBTProprietaryIdentifier() && IsNitoPrivateAuthProprietarySubtype(entry.subtype);
+    });
+    if (!tx || !tx->m_private_bundle) {
+        if (has_private_auth_record) {
+            throw std::ios_base::failure("Nito private authorization without private effects");
+        }
+        return;
+    }
+
+    bool found_bundle_auth{false};
+    CPrivateBundleAuth bundle_auth;
+    std::map<uint64_t, CPrivateActionAuth> action_auths;
+
+    for (const auto& entry : m_proprietary) {
+        if (entry.identifier != NitoPSBTProprietaryIdentifier()) continue;
+        if (!IsNitoPrivateAuthOrReservedProprietarySubtype(entry.subtype)) {
+            continue;
+        }
+        DataStream ss_key = ParseNitoProprietaryKeyData(entry);
+        if (entry.subtype == PSBT_NITO_GLOBAL_ORCHARD_BUNDLE_AUTH_V1) {
+            if (!ss_key.empty()) {
+                throw std::ios_base::failure("Nito Orchard bundle authorization has unsupported key data");
+            }
+            if (found_bundle_auth) {
+                throw std::ios_base::failure("Duplicate Nito Orchard bundle authorization");
+            }
+            DataStream ss_auth{MakeByteSpan(entry.value)};
+            ss_auth >> bundle_auth;
+            if (!ss_auth.empty()) {
+                throw std::ios_base::failure("Nito Orchard bundle authorization has trailing data");
+            }
+            found_bundle_auth = true;
+        } else if (entry.subtype == PSBT_NITO_GLOBAL_ORCHARD_ACTION_AUTH_V1) {
+            const uint64_t action_index = ReadCompactSize(ss_key);
+            if (!ss_key.empty()) {
+                throw std::ios_base::failure("Nito Orchard action authorization has unsupported key data");
+            }
+            if (action_index >= tx->m_private_bundle->effects.actions.size()) {
+                throw std::ios_base::failure("Nito Orchard action authorization index out of range");
+            }
+            CPrivateActionAuth action_auth;
+            DataStream ss_auth{MakeByteSpan(entry.value)};
+            ss_auth >> action_auth;
+            if (!ss_auth.empty()) {
+                throw std::ios_base::failure("Nito Orchard action authorization has trailing data");
+            }
+            if (!action_auths.emplace(action_index, std::move(action_auth)).second) {
+                throw std::ios_base::failure("Duplicate Nito Orchard action authorization");
+            }
+        }
+    }
+
+    if (!found_bundle_auth && action_auths.empty()) return;
+
+    if (!found_bundle_auth || action_auths.size() != tx->m_private_bundle->effects.actions.size()) {
+        tx->m_private_bundle->auth.reset();
+        return;
+    }
+
+    CPrivateAuth auth;
+    auth.proof = std::move(bundle_auth.proof);
+    auth.binding_sig = std::move(bundle_auth.binding_sig);
+    auth.actions_auth.resize(tx->m_private_bundle->effects.actions.size());
+    for (size_t i = 0; i < auth.actions_auth.size(); ++i) {
+        auto it = action_auths.find(i);
+        if (it == action_auths.end()) {
+            tx->m_private_bundle->auth.reset();
+            return;
+        }
+        auth.actions_auth[i] = std::move(it->second);
+    }
+    tx->m_private_bundle->auth = std::move(auth);
+}
+
+NitoPrivatePSBTSigningData PartiallySignedTransaction::GetNitoPrivateSigningData() const
+{
+    NitoPrivatePSBTSigningData data;
+
+    for (const auto& entry : m_proprietary) {
+        if (entry.identifier != NitoPSBTProprietaryIdentifier()) continue;
+        if (!IsNitoPrivateSigningMaterialProprietarySubtype(entry.subtype)) continue;
+
+        DataStream ss_key = ParseNitoProprietaryKeyData(entry);
+        if (entry.subtype == PSBT_NITO_GLOBAL_ORCHARD_BUNDLE_PLAN_V1) {
+            if (!ss_key.empty()) {
+                throw std::ios_base::failure("Nito Orchard bundle signing plan has unsupported key data");
+            }
+            if (data.plan) {
+                throw std::ios_base::failure("Duplicate Nito Orchard bundle signing plan");
+            }
+            CPrivatePSBTOrchardBundlePlan plan;
+            DataStream ss_value{MakeByteSpan(entry.value)};
+            ss_value >> plan;
+            if (!ss_value.empty()) {
+                throw std::ios_base::failure("Nito Orchard bundle signing plan has trailing data");
+            }
+            data.plan = std::move(plan);
+        } else if (entry.subtype == PSBT_NITO_GLOBAL_ORCHARD_SPEND_MATERIAL_V1) {
+            const uint64_t spend_index = ReadCompactSize(ss_key);
+            if (!ss_key.empty()) {
+                throw std::ios_base::failure("Nito Orchard spend material has unsupported key data");
+            }
+            CPrivatePSBTOrchardSpendMaterial material;
+            DataStream ss_value{MakeByteSpan(entry.value)};
+            ss_value >> material;
+            if (!ss_value.empty()) {
+                throw std::ios_base::failure("Nito Orchard spend material has trailing data");
+            }
+            if (!data.spends.emplace(spend_index, std::move(material)).second) {
+                throw std::ios_base::failure("Duplicate Nito Orchard spend material");
+            }
+        } else if (entry.subtype == PSBT_NITO_GLOBAL_ORCHARD_OUTPUT_MATERIAL_V1) {
+            const uint64_t output_index = ReadCompactSize(ss_key);
+            if (!ss_key.empty()) {
+                throw std::ios_base::failure("Nito Orchard output material has unsupported key data");
+            }
+            CPrivatePSBTOrchardOutputMaterial material;
+            DataStream ss_value{MakeByteSpan(entry.value)};
+            ss_value >> material;
+            if (!ss_value.empty()) {
+                throw std::ios_base::failure("Nito Orchard output material has trailing data");
+            }
+            if (!data.outputs.emplace(output_index, std::move(material)).second) {
+                throw std::ios_base::failure("Duplicate Nito Orchard output material");
+            }
+        }
+    }
+
+    if (!data.HasAny()) return data;
+    if (!data.plan) {
+        throw std::ios_base::failure("Nito Orchard signing material without bundle plan");
+    }
+    if (data.spends.size() != data.plan->spend_count) {
+        throw std::ios_base::failure("Nito Orchard spend material count mismatch");
+    }
+    if (data.outputs.size() != data.plan->output_count) {
+        throw std::ios_base::failure("Nito Orchard output material count mismatch");
+    }
+    for (uint64_t i = 0; i < data.plan->spend_count; ++i) {
+        if (data.spends.find(i) == data.spends.end()) {
+            throw std::ios_base::failure("Nito Orchard spend material index missing");
+        }
+    }
+    for (uint64_t i = 0; i < data.plan->output_count; ++i) {
+        if (data.outputs.find(i) == data.outputs.end()) {
+            throw std::ios_base::failure("Nito Orchard output material index missing");
+        }
+    }
+    return data;
+}
+
+std::optional<uint256> PartiallySignedTransaction::GetNitoPrivateIntentHash() const
+{
+    const NitoPrivatePSBTSigningData signing_data = GetNitoPrivateSigningData();
+    if (!signing_data.HasAny()) return std::nullopt;
+    if (!tx) {
+        throw std::ios_base::failure("Nito Orchard signing material without unsigned transaction");
+    }
+
+    HashWriter hasher{};
+    hasher << std::string{"NitoPrivatePSBTIntentV1"} << TX_NO_WITNESS(*tx);
+    for (const auto& entry : m_proprietary) {
+        if (entry.identifier == NitoPSBTProprietaryIdentifier() &&
+            IsNitoPrivateSigningMaterialProprietarySubtype(entry.subtype)) {
+            hasher << entry.key << entry.value;
+        }
+    }
+    return hasher.GetHash();
+}
+
+bool PartiallySignedTransaction::HasNitoPrivateSigningMaterial() const
+{
+    return std::any_of(m_proprietary.begin(), m_proprietary.end(), [](const PSBTProprietary& entry) {
+        return entry.identifier == NitoPSBTProprietaryIdentifier() && IsNitoPrivateSigningMaterialProprietarySubtype(entry.subtype);
+    });
+}
+
+void PartiallySignedTransaction::ClearNitoPrivateSigningMaterialProprietary()
+{
+    for (auto it = m_proprietary.begin(); it != m_proprietary.end();) {
+        if (it->identifier == NitoPSBTProprietaryIdentifier() && IsNitoPrivateSigningMaterialProprietarySubtype(it->subtype)) {
+            it = m_proprietary.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void PartiallySignedTransaction::SetNitoPrivateAuthProprietaryFromTx()
+{
+    for (auto it = m_proprietary.begin(); it != m_proprietary.end();) {
+        if (it->identifier == NitoPSBTProprietaryIdentifier() && IsNitoPrivateAuthOrReservedProprietarySubtype(it->subtype)) {
+            it = m_proprietary.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!tx || !tx->HasPrivateAuth()) return;
+
+    const CPrivateAuth& auth = *tx->m_private_bundle->auth;
+    m_proprietary.insert(MakeNitoPSBTOrchardBundleAuthProprietary(auth.BundleAuth()));
+    for (uint64_t i = 0; i < auth.actions_auth.size(); ++i) {
+        m_proprietary.insert(MakeNitoPSBTOrchardActionAuthProprietary(i, auth.actions_auth[i]));
+    }
 }
 
 bool PartiallySignedTransaction::AddInput(const CTxIn& txin, PSBTInput& psbtin)
@@ -484,10 +772,24 @@ bool FinalizePSBT(PartiallySignedTransaction& psbtx)
     //   signature, but have not combined them yet (e.g. because the combiner that created this
     //   PartiallySignedTransaction did not understand them), this will combine them into a final
     //   script.
+    psbtx.ApplyNitoPrivateAuthProprietary();
     bool complete = true;
     const PrecomputedTransactionData txdata = PrecomputePSBTData(psbtx);
     for (unsigned int i = 0; i < psbtx.tx->vin.size(); ++i) {
         complete &= SignPSBTInput(DUMMY_SIGNING_PROVIDER, psbtx, i, &txdata, SIGHASH_ALL, nullptr, true);
+    }
+    if (psbtx.HasNitoPrivateSigningMaterial()) {
+        complete = false;
+    }
+    if (psbtx.tx->HasPrivateBundle()) {
+        if (!psbtx.tx->HasPrivateAuth()) {
+            complete = false;
+        } else {
+            std::string private_error;
+            if (VerifyPrivateOrchardBundle(CTransaction(*psbtx.tx), private_error) != PrivateOrchardVerifyResult::OK) {
+                complete = false;
+            }
+        }
     }
 
     return complete;

@@ -7,6 +7,8 @@
 
 #include <policy/policy.h>
 
+#include <utility>
+
 WalletModelTransaction::WalletModelTransaction(const QList<SendCoinsRecipient>& _recipients)
     : recipients(_recipients)
 {
@@ -66,4 +68,24 @@ CAmount WalletModelTransaction::getTotalTransactionAmount() const
         totalTransactionAmount += rcp.amount;
     }
     return totalTransactionAmount;
+}
+
+bool WalletModelTransaction::isPrivatePSBTDraft() const
+{
+    return private_psbt_draft;
+}
+
+void WalletModelTransaction::setPrivatePSBTDraft(bool value)
+{
+    private_psbt_draft = value;
+}
+
+const std::vector<PSBTProprietary>& WalletModelTransaction::getPrivatePSBTRecords() const
+{
+    return private_psbt_records;
+}
+
+void WalletModelTransaction::setPrivatePSBTRecords(std::vector<PSBTProprietary> records)
+{
+    private_psbt_records = std::move(records);
 }

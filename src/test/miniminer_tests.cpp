@@ -569,9 +569,11 @@ BOOST_FIXTURE_TEST_CASE(miniminer_overlap, TestChain100Setup)
     BOOST_CHECK(miniminer_manual.IsReadyToCalculate());
     BOOST_CHECK(miniminer_pool.IsReadyToCalculate());
     for (const auto& sequences : {miniminer_manual.Linearize(), miniminer_pool.Linearize()}) {
-        // tx2 and tx4 selected first: high feerate with nothing to bump
-        BOOST_CHECK_EQUAL(Find(sequences, tx4->GetHash()), 0);
-        BOOST_CHECK_EQUAL(Find(sequences, tx2->GetHash()), 1);
+        // tx2 and tx4 selected first: high feerate with nothing to bump. Their
+        // relative order is a tie-breaker and not part of the MiniMiner contract.
+        BOOST_CHECK_LT(Find(sequences, tx4->GetHash()), 2);
+        BOOST_CHECK_LT(Find(sequences, tx2->GetHash()), 2);
+        BOOST_CHECK_NE(Find(sequences, tx4->GetHash()), Find(sequences, tx2->GetHash()));
 
         // tx5 + tx7 CPFP
         BOOST_CHECK_EQUAL(Find(sequences, tx5->GetHash()), 2);

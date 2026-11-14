@@ -69,8 +69,8 @@ BOOST_AUTO_TEST_CASE(outbound_slow_chain_eviction)
     connman.Handshake(
         /*node=*/dummyNode1,
         /*successfully_connected=*/true,
-        /*remote_services=*/ServiceFlags(NODE_NETWORK | NODE_WITNESS),
-        /*local_services=*/ServiceFlags(NODE_NETWORK | NODE_WITNESS),
+        /*remote_services=*/ServiceFlags(NODE_NETWORK | NODE_WITNESS | NODE_NITO_PRIVATE),
+        /*local_services=*/ServiceFlags(NODE_NETWORK | NODE_WITNESS | NODE_NITO_PRIVATE),
         /*version=*/PROTOCOL_VERSION,
         /*relay_txs=*/true);
     TestOnlyResetTimeData();
@@ -134,7 +134,7 @@ static void AddRandomOutboundPeer(NodeId& id, std::vector<CNode*>& vNodes, PeerM
     CNode &node = *vNodes.back();
     node.SetCommonVersion(PROTOCOL_VERSION);
 
-    peerLogic.InitializeNode(node, ServiceFlags(NODE_NETWORK | NODE_WITNESS));
+    peerLogic.InitializeNode(node, ServiceFlags(NODE_NETWORK | NODE_WITNESS | NODE_NITO_PRIVATE));
     node.fSuccessfullyConnected = true;
 
     connman.AddTestNode(node);
@@ -152,7 +152,7 @@ BOOST_AUTO_TEST_CASE(stale_tip_peer_management)
 
     const auto time_init{GetTime<std::chrono::seconds>()};
     SetMockTime(time_init);
-    const auto time_later{time_init + 3 * std::chrono::seconds{m_node.chainman->GetConsensus().nPowTargetSpacing} + 1s};
+    const auto time_later{time_init + 10min + 1s};
     connman->Init(options);
     std::vector<CNode *> vNodes;
 
@@ -330,7 +330,7 @@ BOOST_AUTO_TEST_CASE(peer_discouragement)
                          ConnectionType::INBOUND,
                          /*inbound_onion=*/false};
     nodes[0]->SetCommonVersion(PROTOCOL_VERSION);
-    peerLogic->InitializeNode(*nodes[0], NODE_NETWORK);
+    peerLogic->InitializeNode(*nodes[0], ServiceFlags(NODE_NETWORK | NODE_NITO_PRIVATE));
     nodes[0]->fSuccessfullyConnected = true;
     connman->AddTestNode(*nodes[0]);
     peerLogic->UnitTestMisbehaving(nodes[0]->GetId(), DISCOURAGEMENT_THRESHOLD); // Should be discouraged
@@ -350,7 +350,7 @@ BOOST_AUTO_TEST_CASE(peer_discouragement)
                          ConnectionType::INBOUND,
                          /*inbound_onion=*/false};
     nodes[1]->SetCommonVersion(PROTOCOL_VERSION);
-    peerLogic->InitializeNode(*nodes[1], NODE_NETWORK);
+    peerLogic->InitializeNode(*nodes[1], ServiceFlags(NODE_NETWORK | NODE_NITO_PRIVATE));
     nodes[1]->fSuccessfullyConnected = true;
     connman->AddTestNode(*nodes[1]);
     peerLogic->UnitTestMisbehaving(nodes[1]->GetId(), DISCOURAGEMENT_THRESHOLD - 1);
@@ -381,7 +381,7 @@ BOOST_AUTO_TEST_CASE(peer_discouragement)
                          ConnectionType::OUTBOUND_FULL_RELAY,
                          /*inbound_onion=*/false};
     nodes[2]->SetCommonVersion(PROTOCOL_VERSION);
-    peerLogic->InitializeNode(*nodes[2], NODE_NETWORK);
+    peerLogic->InitializeNode(*nodes[2], ServiceFlags(NODE_NETWORK | NODE_NITO_PRIVATE));
     nodes[2]->fSuccessfullyConnected = true;
     connman->AddTestNode(*nodes[2]);
     peerLogic->UnitTestMisbehaving(nodes[2]->GetId(), DISCOURAGEMENT_THRESHOLD);
@@ -423,7 +423,7 @@ BOOST_AUTO_TEST_CASE(DoS_bantime)
                     ConnectionType::INBOUND,
                     /*inbound_onion=*/false};
     dummyNode.SetCommonVersion(PROTOCOL_VERSION);
-    peerLogic->InitializeNode(dummyNode, NODE_NETWORK);
+    peerLogic->InitializeNode(dummyNode, ServiceFlags(NODE_NETWORK | NODE_NITO_PRIVATE));
     dummyNode.fSuccessfullyConnected = true;
 
     peerLogic->UnitTestMisbehaving(dummyNode.GetId(), DISCOURAGEMENT_THRESHOLD);

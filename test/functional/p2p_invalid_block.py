@@ -42,7 +42,7 @@ class InvalidBlockRequestTest(NitoTestFramework):
         best_block = node.getblock(node.getbestblockhash())
         tip = int(node.getbestblockhash(), 16)
         height = best_block["height"] + 1
-        block_time = best_block["time"] + 1
+        block_time = best_block["time"] + 121  # Enable minimum difficulty after Nito genesis.
 
         self.log.info("Create a new block with an anyone-can-spend coinbase")
 
@@ -96,7 +96,7 @@ class InvalidBlockRequestTest(NitoTestFramework):
 
         self.log.info("Test very broken block.")
 
-        block3 = create_block(tip, create_coinbase(height, nValue=100), block_time)
+        block3 = create_block(tip, create_coinbase(height, nValue=513), block_time)
         block_time += 1
         block3.solve()
 

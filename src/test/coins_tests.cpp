@@ -56,7 +56,7 @@ public:
 
     uint256 GetBestBlock() const override { return hashBestBlock_; }
 
-    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, bool erase = true) override
+    bool BatchWrite(CCoinsMap& mapCoins, const uint256& hashBlock, bool erase = true, CPrivateStateCache* private_cache = nullptr) override
     {
         for (CCoinsMap::iterator it = mapCoins.begin(); it != mapCoins.end(); it = erase ? mapCoins.erase(it) : std::next(it)) {
             if (it->second.flags & CCoinsCacheEntry::DIRTY) {
@@ -70,6 +70,9 @@ public:
         }
         if (!hashBlock.IsNull())
             hashBestBlock_ = hashBlock;
+        if (erase && private_cache) {
+            private_cache->Clear();
+        }
         return true;
     }
 };
@@ -88,6 +91,7 @@ public:
             ret += entry.second.coin.DynamicMemoryUsage();
             ++count;
         }
+        ret += cachePrivate.DynamicMemoryUsage();
         BOOST_CHECK_EQUAL(GetCacheSize(), count);
         BOOST_CHECK_EQUAL(DynamicMemoryUsage(), ret);
     }
@@ -99,6 +103,49 @@ public:
 } // namespace
 
 BOOST_FIXTURE_TEST_SUITE(coins_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(private_cache_memory_usage)
+{
+    CCoinsViewTest base;
+    CCoinsViewCacheTest cache(&base);
+    const size_t empty_usage = cache.DynamicMemoryUsage();
+
+    cache.AddPrivateNullifier(InsecureRand256());
+
+    BOOST_CHECK_GT(cache.DynamicMemoryUsage(), empty_usage);
+    cache.SelfTest();
+}
+
+BOOST_AUTO_TEST_CASE(private_cache_memory_usage_stress)
+{
+    CCoinsViewTest base;
+    CCoinsViewCacheTest cache(&base);
+    const size_t empty_usage = cache.DynamicMemoryUsage();
+
+    constexpr size_t ENTRY_COUNT{4096};
+    for (size_t i = 0; i < ENTRY_COUNT; ++i) {
+        const uint256 value{InsecureRand256()};
+        cache.AddPrivateNullifier(value);
+        cache.AddPrivateAnchor(value);
+        cache.AddPrivateCommitment(i, value);
+    }
+
+    CPrivateBlockUndo undo;
+    undo.vtxundo.resize(512);
+    for (CPrivateTxUndo& txundo : undo.vtxundo) {
+        txundo.has_private_bundle = true;
+        txundo.previous_frontier.resize(256, 1);
+        txundo.connected_frontier.resize(256, 2);
+        txundo.added_nullifiers.resize(4, InsecureRand256());
+        txundo.added_commitment_indices.resize(4, 1);
+    }
+    cache.AddPrivateBlockUndo(InsecureRand256(), undo);
+
+    const size_t populated_usage = cache.DynamicMemoryUsage();
+    BOOST_CHECK_GT(populated_usage, empty_usage + ENTRY_COUNT * sizeof(uint256) * 3);
+    BOOST_CHECK_LT(populated_usage, 64U * 1024U * 1024U);
+    cache.SelfTest();
+}
 
 static const unsigned int NUM_SIMULATION_ITERATIONS = 40000;
 

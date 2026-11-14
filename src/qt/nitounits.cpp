@@ -55,8 +55,8 @@ QString NitoUnits::description(Unit unit)
 {
     switch (unit) {
     case Unit::BTC: return QString("Nits's");
-    case Unit::mBTC: return QString("Milli-Nito's (1 / 1" THIN_SP_UTF8 "000)");
-    case Unit::uBTC: return QString("Micro-Nito's (bits) (1 / 1" THIN_SP_UTF8 "000" THIN_SP_UTF8 "000)");
+    case Unit::mBTC: return QString("Milli-NITO (1 / 1" THIN_SP_UTF8 "000)");
+    case Unit::uBTC: return QString("Micro-NITO (bits) (1 / 1" THIN_SP_UTF8 "000" THIN_SP_UTF8 "000)");
     case Unit::SAT: return QString("Nitoshi (sat) (1 / 100" THIN_SP_UTF8 "000" THIN_SP_UTF8 "000)");
     } // no default case, so the compiler can warn about missing cases
     assert(false);

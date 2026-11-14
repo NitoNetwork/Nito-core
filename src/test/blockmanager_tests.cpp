@@ -11,6 +11,7 @@
 #include <script/solver.h>
 #include <primitives/block.h>
 #include <util/chaintype.h>
+#include <util/readwritefile.h>
 #include <validation.h>
 
 #include <boost/test/unit_test.hpp>
@@ -25,12 +26,60 @@ using node::MAX_BLOCKFILE_SIZE;
 // use BasicTestingSetup here for the data directory configuration, setup, and cleanup
 BOOST_FIXTURE_TEST_SUITE(blockmanager_tests, BasicTestingSetup)
 
+BOOST_AUTO_TEST_CASE(nito_private_activation_latch_is_durable_and_network_bound)
+{
+    const auto main_params{CreateChainParams(ArgsManager{}, ChainType::MAIN)};
+    const auto test_params{CreateChainParams(ArgsManager{}, ChainType::TESTNET)};
+    KernelNotifications notifications{*Assert(m_node.shutdown), m_node.exit_status};
+    const fs::path datadir{m_args.GetDataDirNet() / "activation-latch-test"};
+    fs::create_directories(datadir);
+
+    const BlockManager::Options main_opts{
+        .chainparams = *main_params,
+        .datadir = datadir,
+        .blocks_dir = datadir / "blocks",
+        .notifications = notifications,
+    };
+    std::string error;
+    BlockManager first{*Assert(m_node.shutdown), main_opts};
+    BOOST_REQUIRE(first.LoadNitoPrivateActivationLatch(error));
+    BOOST_CHECK(!first.NitoPrivateActivationObserved());
+    {
+        LOCK(cs_main);
+        BOOST_REQUIRE(first.MarkNitoPrivateActivationObserved());
+    }
+
+    BlockManager restarted{*Assert(m_node.shutdown), main_opts};
+    BOOST_REQUIRE(restarted.LoadNitoPrivateActivationLatch(error));
+    BOOST_CHECK(restarted.NitoPrivateActivationObserved());
+
+    const BlockManager::Options wrong_network_opts{
+        .chainparams = *test_params,
+        .datadir = datadir,
+        .blocks_dir = datadir / "blocks-testnet",
+        .notifications = notifications,
+    };
+    BlockManager wrong_network{*Assert(m_node.shutdown), wrong_network_opts};
+    error.clear();
+    BOOST_CHECK(!wrong_network.LoadNitoPrivateActivationLatch(error));
+    BOOST_CHECK(!error.empty());
+    BOOST_CHECK(!wrong_network.NitoPrivateActivationObserved());
+
+    BOOST_REQUIRE(WriteBinaryFile(datadir / "nito-private-activation-v1.dat", "corrupt\n"));
+    BlockManager corrupted{*Assert(m_node.shutdown), main_opts};
+    error.clear();
+    BOOST_CHECK(!corrupted.LoadNitoPrivateActivationLatch(error));
+    BOOST_CHECK(!error.empty());
+    BOOST_CHECK(!corrupted.NitoPrivateActivationObserved());
+}
+
 BOOST_AUTO_TEST_CASE(blockmanager_find_block_pos)
 {
     const auto params {CreateChainParams(ArgsManager{}, ChainType::MAIN)};
     KernelNotifications notifications{*Assert(m_node.shutdown), m_node.exit_status};
     const BlockManager::Options blockman_opts{
         .chainparams = *params,
+        .datadir = m_args.GetDataDirNet(),
         .blocks_dir = m_args.GetBlocksDirPath(),
         .notifications = notifications,
     };
@@ -46,11 +95,29 @@ BOOST_AUTO_TEST_CASE(blockmanager_find_block_pos)
     // now simulate what happens after reindex for the first new block processed
     // the actual block contents don't matter, just that it's a block.
     // verify that the write position is at offset 0x12d.
-    // this is a check to make sure that https://github.com/nito/nito/issues/21379 does not recur
+    // this is a check to make sure that https://github.com/bitcoin/bitcoin/issues/21379 does not recur
     // 8 bytes (for serialization header) + 285 (for serialized genesis block) = 293
     // add another 8 bytes for the second block's serialization header and we get 293 + 8 = 301
     FlatFilePos actual{blockman.SaveBlockToDisk(params->GenesisBlock(), 1, nullptr)};
     BOOST_CHECK_EQUAL(actual.nPos, BLOCK_SERIALIZATION_HEADER_SIZE + ::GetSerializeSize(TX_WITH_WITNESS(params->GenesisBlock())) + BLOCK_SERIALIZATION_HEADER_SIZE);
+
+    const CCheckpointData& checkpoints{params->Checkpoints()};
+    BOOST_CHECK_EQUAL(checkpoints.GetHeight(), 790000);
+    BOOST_CHECK_EQUAL(checkpoints.mapCheckpoints.size(), 32U);
+    {
+        LOCK(cs_main);
+        BOOST_CHECK(blockman.GetLastCheckpoint(checkpoints) == nullptr);
+
+        const auto& first_checkpoint{*checkpoints.mapCheckpoints.begin()};
+        CBlockIndex* first_index{blockman.InsertBlockIndex(first_checkpoint.second)};
+        first_index->nHeight = first_checkpoint.first;
+        BOOST_CHECK(blockman.GetLastCheckpoint(checkpoints) == first_index);
+
+        const auto& last_checkpoint{*checkpoints.mapCheckpoints.rbegin()};
+        CBlockIndex* last_index{blockman.InsertBlockIndex(last_checkpoint.second)};
+        last_index->nHeight = last_checkpoint.first;
+        BOOST_CHECK(blockman.GetLastCheckpoint(checkpoints) == last_index);
+    }
 }
 
 BOOST_FIXTURE_TEST_CASE(blockmanager_scan_unlink_already_pruned_files, TestChain100Setup)
@@ -138,6 +205,7 @@ BOOST_AUTO_TEST_CASE(blockmanager_flush_block_file)
     KernelNotifications notifications{*Assert(m_node.shutdown), m_node.exit_status};
     node::BlockManager::Options blockman_opts{
         .chainparams = Params(),
+        .datadir = m_args.GetDataDirNet(),
         .blocks_dir = m_args.GetBlocksDirPath(),
         .notifications = notifications,
     };

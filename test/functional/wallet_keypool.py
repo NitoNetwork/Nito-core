@@ -21,6 +21,19 @@ class KeyPoolTest(NitoTestFramework):
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
 
+    def init_wallet(self, *, node):
+        if self.options.descriptors:
+            return super().init_wallet(node=node)
+        # Exercise V3-style transparent HD seed rotation. A newly created V4
+        # non-blank wallet already has a canonical Orchard root and must refuse
+        # rotation. Initializing a blank legacy wallet with sethdseed retains
+        # the transparent-only contract required by these keypool tests.
+        n = self.nodes[node]
+        n.createwallet(wallet_name=self.default_wallet_name, blank=True,
+                       descriptors=False, load_on_startup=True)
+        n.sethdseed()
+        n.importprivkey(privkey=n.get_deterministic_priv_key().key, label='coinbase', rescan=True)
+
     def run_test(self):
         nodes = self.nodes
         addr_before_encrypting = nodes[0].getnewaddress()
@@ -29,8 +42,18 @@ class KeyPoolTest(NitoTestFramework):
         if not self.options.descriptors:
             assert addr_before_encrypting_data['hdseedid'] == wallet_info_old['hdseedid']
 
-        # Encrypt wallet and wait to terminate
+        # Encrypting keeps the active HD seed and address sequence unchanged.
         nodes[0].encryptwallet('test')
+        wallet_info_after_encrypting = nodes[0].getwalletinfo()
+        if self.options.descriptors:
+            addr_after_encrypting = nodes[0].getnewaddress()
+            addr_after_encrypting_data = nodes[0].getaddressinfo(addr_after_encrypting)
+            assert_equal(addr_after_encrypting_data['hdmasterfingerprint'], addr_before_encrypting_data['hdmasterfingerprint'])
+        else:
+            assert_equal(wallet_info_after_encrypting['hdseedid'], wallet_info_old['hdseedid'])
+
+        # Rotate the seed/descriptor set explicitly for the rest of the keypool
+        # exhaustion checks. Encryption itself no longer performs this rotation.
         if self.options.descriptors:
             # Import hardened derivation only descriptors
             nodes[0].walletpassphrase('test', 10)
@@ -76,6 +99,9 @@ class KeyPoolTest(NitoTestFramework):
                 }
             ])
             nodes[0].walletlock()
+        else:
+            with WalletUnlock(nodes[0], 'test'):
+                nodes[0].sethdseed()
         # Keep creating keys
         addr = nodes[0].getnewaddress()
         addr_data = nodes[0].getaddressinfo(addr)
@@ -190,9 +216,10 @@ class KeyPoolTest(NitoTestFramework):
         self.generate(nodes[0], 1)
         destination = addr.pop()
 
-        # Using a fee rate (10 sat / byte) well above the minimum relay rate
-        # creating a 5,000 sat transaction with change should not be possible
-        assert_raises_rpc_error(-4, "Transaction needs a change address, but we can't generate it.", w2.walletcreatefundedpsbt, inputs=[], outputs=[{addr.pop(): 0.00005000}], subtractFeeFromOutputs=[0], feeRate=0.00010)
+        # A watch-only wallet without an internal keypool retains the compatible
+        # source-return fallback and can still produce a valid PSBT.
+        res = w2.walletcreatefundedpsbt(inputs=[], outputs=[{addr.pop(): 0.00005000}], subtractFeeFromOutputs=[0], feeRate=0.00002)
+        assert_equal("psbt" in res, True)
 
         # creating a 10,000 sat transaction without change, with a manual input, should still be possible
         res = w2.walletcreatefundedpsbt(inputs=w2.listunspent(), outputs=[{destination: 0.00010000}], subtractFeeFromOutputs=[0], feeRate=0.00010)
@@ -214,13 +241,23 @@ class KeyPoolTest(NitoTestFramework):
         assert_equal("psbt" in res, True)
         assert_equal(res["fee"], Decimal("0.00009706"))
 
-        # creating a 10,000 sat transaction with a manual change address should be possible
-        res = w2.walletcreatefundedpsbt(inputs=[], outputs=[{destination: 0.00010000}], subtractFeeFromOutputs=[0], feeRate=0.00010, changeAddress=addr.pop())
-        assert_equal("psbt" in res, True)
+        # An explicit transparent change address works without an internal keypool.
+        change_address = addr.pop()
+        res = w2.walletcreatefundedpsbt([], [{destination: 0.00005000}], 0, {"subtractFeeFromOutputs": [0], "feeRate": 0.00010, "change_address": change_address})
+        assert res["changepos"] >= 0
+        decoded = w2.decodepsbt(res["psbt"])
+        assert_equal(decoded["tx"]["vout"][res["changepos"]]["scriptPubKey"]["address"], change_address)
 
         if not self.options.descriptors:
             msg = "Error: Private keys are disabled for this wallet"
             assert_raises_rpc_error(-4, msg, w2.keypoolrefill, 100)
+            # Unlike the transparent-only fixture, a normal V4 legacy wallet
+            # must keep its seed once the canonical Orchard root exists.
+            nodes[0].createwallet(wallet_name='canonical', descriptors=False)
+            canonical = nodes[0].get_wallet_rpc('canonical')
+            seed_id = canonical.getwalletinfo()['hdseedid']
+            assert_raises_rpc_error(-4, 'Cannot rotate the transparent HD seed after a canonical Orchard recovery root exists', canonical.sethdseed)
+            assert_equal(canonical.getwalletinfo()['hdseedid'], seed_id)
 
 if __name__ == '__main__':
     KeyPoolTest().main()

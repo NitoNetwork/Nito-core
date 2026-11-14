@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 class CPubKey;
@@ -153,8 +154,13 @@ bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned i
 
 struct PrecomputedTransactionData
 {
+    // Nito V4 private effects commitment used by every transparent signature
+    // hash when a transaction carries an Orchard bundle.
+    uint256 m_private_effects_hash;
+    bool m_private_effects_ready = false;
+
     // BIP341 precomputed data.
-    // These are single-SHA256, see https://github.com/nito/bips/blob/master/bip-0341.mediawiki#cite_note-16.
+    // These are single-SHA256, see https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#cite_note-16.
     uint256 m_prevouts_single_hash;
     uint256 m_sequences_single_hash;
     uint256 m_outputs_single_hash;
@@ -240,8 +246,22 @@ extern const HashWriter HASHER_TAPSIGHASH; //!< Hasher with tag "TapSighash" pre
 extern const HashWriter HASHER_TAPLEAF;    //!< Hasher with tag "TapLeaf" pre-fed to it.
 extern const HashWriter HASHER_TAPBRANCH;  //!< Hasher with tag "TapBranch" pre-fed to it.
 
+/** Cache SHA256 midstates for ECDSA sighash calculations performed by one
+ * transaction input checker. */
+class SigHashCache
+{
+    /** ALL, SINGLE and NONE, each with and without ANYONECANPAY. */
+    std::optional<std::pair<CScript, HashWriter>> m_cache_entries[6];
+
+    int CacheIndex(int hash_type) const noexcept;
+
+public:
+    [[nodiscard]] bool Load(int hash_type, const CScript& script_code, HashWriter& writer) const noexcept;
+    void Store(int hash_type, const CScript& script_code, const HashWriter& writer) noexcept;
+};
+
 template <class T>
-uint256 SignatureHash(const CScript& scriptCode, const T& txTo, unsigned int nIn, int nHashType, const CAmount& amount, SigVersion sigversion, const PrecomputedTransactionData* cache = nullptr);
+uint256 SignatureHash(const CScript& scriptCode, const T& txTo, unsigned int nIn, int nHashType, const CAmount& amount, SigVersion sigversion, const PrecomputedTransactionData* cache = nullptr, SigHashCache* sighash_cache = nullptr);
 
 class BaseSignatureChecker
 {
@@ -290,6 +310,7 @@ private:
     unsigned int nIn;
     const CAmount amount;
     const PrecomputedTransactionData* txdata;
+    mutable SigHashCache m_sighash_cache;
 
 protected:
     virtual bool VerifyECDSASignature(const std::vector<unsigned char>& vchSig, const CPubKey& vchPubKey, const uint256& sighash) const;

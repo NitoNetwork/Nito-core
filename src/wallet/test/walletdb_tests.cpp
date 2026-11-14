@@ -8,9 +8,13 @@
 #include <streams.h>
 #include <uint256.h>
 #include <wallet/test/util.h>
+#include <wallet/db.h>
 #include <wallet/wallet.h>
 
 #include <boost/test/unit_test.hpp>
+
+#include <fstream>
+#include <string>
 
 namespace wallet {
 BOOST_FIXTURE_TEST_SUITE(walletdb_tests, BasicTestingSetup)
@@ -54,6 +58,29 @@ BOOST_AUTO_TEST_CASE(walletdb_read_write_deadlock)
         // Now delete all records, which performs a read write operation.
         BOOST_CHECK(wallet->GetLegacyScriptPubKeyMan()->DeleteRecords());
     }
+}
+
+BOOST_AUTO_TEST_CASE(foreign_sqlite_wallet_has_actionable_error)
+{
+    const fs::path wallet_path{m_path_root / "foreign_sqlite_wallet"};
+    fs::create_directories(wallet_path);
+
+    std::string header(512, '\0');
+    header.replace(0, 16, std::string{"SQLite format 3\000", 16});
+    header.replace(68, 4, "NONE");
+    {
+        std::ofstream file{SQLiteDataFile(wallet_path), std::ios::binary};
+        BOOST_REQUIRE(file.is_open());
+        file.write(header.data(), header.size());
+    }
+
+    DatabaseOptions options;
+    options.require_existing = true;
+    DatabaseStatus status;
+    bilingual_str error;
+    BOOST_CHECK(!MakeDatabase(wallet_path, options, status, error));
+    BOOST_CHECK_EQUAL(status, DatabaseStatus::FAILED_BAD_FORMAT);
+    BOOST_CHECK(error.original.find("another network or by different software") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

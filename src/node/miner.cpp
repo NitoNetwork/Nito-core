@@ -8,7 +8,6 @@
 
 #include <chain.h>
 #include <chainparams.h>
-#include <coins.h>
 #include <common/args.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
@@ -26,9 +25,22 @@
 #include <validation.h>
 
 #include <algorithm>
+#include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace node {
+namespace {
+
+void ClearCoinbaseWitnessReservedValue(CBlock& block)
+{
+    CMutableTransaction tx{*block.vtx.at(0)};
+    tx.vin.at(0).scriptWitness.stack.clear();
+    block.vtx.at(0) = MakeTransactionRef(std::move(tx));
+}
+
+} // namespace
+
 int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev)
 {
     int64_t nOldTime = pblock->nTime;
@@ -49,8 +61,12 @@ int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParam
 void RegenerateCommitments(CBlock& block, ChainstateManager& chainman)
 {
     CMutableTransaction tx{*block.vtx.at(0)};
-    tx.vout.erase(tx.vout.begin() + GetWitnessCommitmentIndex(block));
+    const int witness_commitment_index = GetWitnessCommitmentIndex(block);
+    if (witness_commitment_index != NO_WITNESS_COMMITMENT) {
+        tx.vout.erase(tx.vout.begin() + witness_commitment_index);
+    }
     block.vtx.at(0) = MakeTransactionRef(tx);
+    ClearCoinbaseWitnessReservedValue(block);
 
     const CBlockIndex* prev_block = WITH_LOCK(::cs_main, return chainman.m_blockman.LookupBlockIndex(block.hashPrevBlock));
     chainman.GenerateCoinbaseCommitment(block, prev_block);
@@ -158,6 +174,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     coinbaseTx.vout[0].nValue = nFees + GetBlockSubsidy(nHeight, chainparams.GetConsensus());
     coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
     pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
+
     pblocktemplate->vchCoinbaseCommitment = m_chainstate.m_chainman.GenerateCoinbaseCommitment(*pblock, pindexPrev);
     pblocktemplate->vTxFees[0] = -nFees;
 

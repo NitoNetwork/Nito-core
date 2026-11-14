@@ -66,7 +66,9 @@ def create_sendtxrcncl_msg():
 class SendTxRcnclTest(NitoTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
-        self.extra_args = [['-txreconciliation']]
+        self.setup_clean_chain = True
+        # Exercise legacy negotiation before the separate Orchard peer gate.
+        self.extra_args = [['-txreconciliation', '-privateactivationheight=10000']]
 
     def run_test(self):
         # Check everything concerning *sending* SENDTXRCNCL

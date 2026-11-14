@@ -238,10 +238,14 @@ ax_pthread_clang="$ax_cv_PTHREAD_CLANG"
 AS_IF([test "x$GCC" = "xyes"],
       [ax_pthread_flags="-pthread,-lpthread -pthread -pthreads $ax_pthread_flags"])
 
-# Clang takes -pthread (never supported any other flag), but we'll try with -lpthread first
+# Clang takes -pthread (never supported any other flag). Darwin provides
+# pthreads through libSystem, so avoid adding a redundant explicit -lpthread.
 
 AS_IF([test "x$ax_pthread_clang" = "xyes"],
-      [ax_pthread_flags="-pthread,-lpthread -pthread"])
+      [case $host_os in
+        darwin*) ax_pthread_flags="-pthread -pthread,-lpthread" ;;
+        *) ax_pthread_flags="-pthread,-lpthread -pthread" ;;
+       esac])
 
 
 # The presence of a feature test macro requesting re-entrant function

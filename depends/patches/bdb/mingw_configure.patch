@@ -1,0 +1,24 @@
+--- a/dist/configure.ac
++++ b/dist/configure.ac
+@@ -684,7 +684,8 @@ case "$host_os" in
+ esac
+ 
+ # We require either mmap/munmap(2) or shmget(2).
+-if test "$mmap_ok" = "no" -a "$shmget_ok" = "no"; then
++if test "$db_cv_mingw" != "yes" -a \
++    "$mmap_ok" = "no" -a "$shmget_ok" = "no"; then
+ 	AC_MSG_WARN([Neither mmap/munmap(2) or shmget(2) library functions.])
+ fi
+ 
+--- a/dist/configure
++++ b/dist/configure
+@@ -21333,7 +21333,8 @@ case "$host_os" in
+ esac
+ 
+ # We require either mmap/munmap(2) or shmget(2).
+-if test "$mmap_ok" = "no" -a "$shmget_ok" = "no"; then
++if test "$db_cv_mingw" != "yes" -a \
++    "$mmap_ok" = "no" -a "$shmget_ok" = "no"; then
+ 	{ $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: Neither mmap/munmap(2) or shmget(2) library functions." >&5
+ $as_echo "$as_me: WARNING: Neither mmap/munmap(2) or shmget(2) library functions." >&2;}
+ fi

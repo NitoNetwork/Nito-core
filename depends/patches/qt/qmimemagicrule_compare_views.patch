@@ -1,0 +1,11 @@
+--- a/qtbase/src/corelib/mimetypes/qmimemagicrule.cpp
++++ b/qtbase/src/corelib/mimetypes/qmimemagicrule.cpp
+@@ -35,7 +35,7 @@ static constexpr auto magicRuleTypes = qOffsetStringArray(
+ QMimeMagicRule::Type QMimeMagicRule::type(const QByteArray &theTypeName)
+ {
+     for (int i = String; i <= Byte; ++i) {
+-        if (theTypeName == magicRuleTypes.viewAt(i))
++        if (magicRuleTypes.viewAt(i).compare(theTypeName) == 0)
+             return Type(i);
+     }
+     return Invalid;

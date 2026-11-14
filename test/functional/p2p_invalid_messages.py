@@ -284,9 +284,11 @@ class InvalidMessagesTest(NitoTestFramework):
         # send valid headers message first
         assert_equal(self.nodes[0].getblockchaininfo()['headers'], 0)
         blockheader = CBlockHeader()
+        blockheader.nVersion = 4
         blockheader.hashPrevBlock = int(blockheader_tip_hash, 16)
         blockheader.nTime = int(time.time())
-        blockheader.nBits = blockheader_tip.nBits
+        # The delayed first regtest block uses minimum difficulty, unlike genesis.
+        blockheader.nBits = 0x207fffff
         blockheader.rehash()
         while not blockheader.hash.startswith('0'):
             blockheader.nNonce += 1

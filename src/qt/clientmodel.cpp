@@ -134,6 +134,11 @@ int ClientModel::getNumBlocks() const
     return m_cached_num_blocks;
 }
 
+std::vector<interfaces::IndexStatus> ClientModel::getWalletIndexStatuses() const
+{
+    return m_node.getWalletIndexStatuses();
+}
+
 uint256 ClientModel::getBestBlockHash()
 {
     uint256 tip{WITH_LOCK(m_cached_tip_mutex, return m_cached_tip_blocks)};

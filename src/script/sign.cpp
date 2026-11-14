@@ -298,7 +298,10 @@ struct TapSatisfier: Satisfier<XOnlyPubKey> {
     std::optional<XOnlyPubKey> FromPKBytes(I first, I last) const {
         CHECK_NONFATAL(last - first == 32);
         XOnlyPubKey pubkey;
-        std::copy(first, last, pubkey.begin());
+        // Copy a provably fixed 32 bytes: GCC cannot relate (last - first) to
+        // the destination size once miniscript callers are inlined, and would
+        // reject the unbounded form under -Werror.
+        std::copy(first, first + 32, pubkey.begin());
         return pubkey;
     }
 

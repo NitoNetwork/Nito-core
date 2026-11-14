@@ -34,6 +34,38 @@ LIBBITCOIN_UTIL=libnito_util.a
 LIBBITCOIN_CRYPTO_BASE=crypto/libnito_crypto_base.la
 LIBBITCOINQT=qt/libnitoqt.a
 LIBSECP256K1=secp256k1/libsecp256k1.la
+NITO_ORCHARD_FFI_DIR=$(srcdir)/private/orchard_ffi
+NITO_ORCHARD_FFI_CARGO_TARGET=@NITO_ORCHARD_CARGO_TARGET@
+NITO_ORCHARD_FFI_CARGO_TARGET_ARG=$(if $(NITO_ORCHARD_FFI_CARGO_TARGET),--target $(NITO_ORCHARD_FFI_CARGO_TARGET),)
+NITO_ORCHARD_FFI_TARGET_SUBDIR=$(if $(NITO_ORCHARD_FFI_CARGO_TARGET),$(NITO_ORCHARD_FFI_CARGO_TARGET)/,)
+# Rust is not TSan-instrumented. Run its proof arithmetic on the calling C++
+# worker under TSan, whose runtime cannot observe Rayon synchronization.
+# A separate target directory prevents reusing the parallel release archive.
+NITO_ORCHARD_FFI_TSAN=$(findstring thread,$(SANITIZER_CXXFLAGS))
+NITO_ORCHARD_FFI_TARGET_DIR=$(NITO_ORCHARD_FFI_DIR)/target$(if $(NITO_ORCHARD_FFI_TSAN),/tsan,)
+NITO_ORCHARD_FFI_FEATURE_ARGS=$(if $(NITO_ORCHARD_FFI_TSAN),--no-default-features,)
+NITO_ORCHARD_FFI_LIB=$(NITO_ORCHARD_FFI_TARGET_DIR)/$(NITO_ORCHARD_FFI_TARGET_SUBDIR)release/libnito_orchard_ffi.a
+# Cargo is one GNU Make job. Keep its internal scheduler single-threaded and
+# independent from the inherited Make jobserver to avoid competing schedulers.
+NITO_ORCHARD_FFI_CARGO_ENV=env -u CARGO_MAKEFLAGS -u MAKEFLAGS -u MFLAGS
+NITO_ORCHARD_FFI_NATIVE_LIBS=
+if TARGET_LINUX
+NITO_ORCHARD_FFI_NATIVE_LIBS += -ldl -lm
+endif
+if TARGET_WINDOWS
+NITO_ORCHARD_FFI_NATIVE_LIBS += -lbcrypt -lntdll -luserenv -ldbghelp
+endif
+NITO_ORCHARD_FFI_LINK=$(NITO_ORCHARD_FFI_LIB) $(NITO_ORCHARD_FFI_NATIVE_LIBS)
+NITO_ORCHARD_FFI_DIST = \
+  private/orchard_ffi/Cargo.toml \
+  private/orchard_ffi/Cargo.lock \
+  private/orchard_ffi/src/lib.rs \
+  private/orchard_ffi/src/fixed_circuit_vectors.rs \
+  private/orchard_ffi/test_vectors/LICENSE-MIT \
+  private/orchard_ffi/test_vectors/README.md \
+  private/orchard_ffi/test_vectors/circuit_proof_test_case_fixed.bin \
+  private/orchard_ffi/test_vectors/circuit_proof_test_case_insecure.bin \
+  private/orchard_ffi/test_vectors/circuit_proof_test_case_post_nu6_3.bin
 
 if ENABLE_ZMQ
 LIBBITCOIN_ZMQ=libnito_zmq.a
@@ -46,6 +78,7 @@ LIBBITCOINKERNEL=libnitokernel.la
 endif
 if ENABLE_WALLET
 LIBBITCOIN_WALLET=libnito_wallet.a
+LIBBITCOIN_WALLET_LIBS=$(UTF8PROC_LIBS)
 LIBBITCOIN_WALLET_TOOL=libnito_wallet_tool.a
 endif
 
@@ -70,6 +103,10 @@ noinst_LTLIBRARIES += $(LIBBITCOIN_CRYPTO)
 
 $(LIBSECP256K1): $(wildcard secp256k1/src/*.h) $(wildcard secp256k1/src/*.c) $(wildcard secp256k1/include/*)
 	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C $(@D) $(@F)
+
+$(NITO_ORCHARD_FFI_LIB): $(wildcard $(NITO_ORCHARD_FFI_DIR)/src/*.rs) $(NITO_ORCHARD_FFI_DIR)/Cargo.toml $(NITO_ORCHARD_FFI_DIR)/Cargo.lock $(top_srcdir)/rust-toolchain.toml
+	+$(AM_V_at)cd "$(NITO_ORCHARD_FFI_DIR)" && $(NITO_ORCHARD_FFI_CARGO_ENV) cargo fetch --locked
+	+$(AM_V_at)cd "$(NITO_ORCHARD_FFI_DIR)" && $(NITO_ORCHARD_FFI_CARGO_ENV) cargo build --jobs 1 --release --locked --offline $(NITO_ORCHARD_FFI_CARGO_TARGET_ARG) --target-dir "$(abspath $(NITO_ORCHARD_FFI_TARGET_DIR))" $(NITO_ORCHARD_FFI_FEATURE_ARGS)
 
 # Make is not made aware of per-object dependencies to avoid limiting building parallelization
 # But to build the less dependent modules first, we manually select their order here:
@@ -149,6 +186,7 @@ BITCOIN_CORE_H = \
   common/system.h \
   compressor.h \
   consensus/consensus.h \
+  consensus/private_tx_verify.h \
   consensus/tx_check.h \
   consensus/tx_verify.h \
   core_io.h \
@@ -167,6 +205,8 @@ BITCOIN_CORE_H = \
   index/blockfilterindex.h \
   index/coinstatsindex.h \
   index/disktxpos.h \
+  index/orchardindex.h \
+  index/transparenthistoryindex.h \
   index/txindex.h \
   indirectmap.h \
   init.h \
@@ -336,6 +376,8 @@ BITCOIN_CORE_H = \
   validation.h \
   validationinterface.h \
   versionbits.h \
+  wallet/bip39.h \
+  wallet/bip39_seed.h \
   wallet/bdb.h \
   wallet/coincontrol.h \
   wallet/coinselection.h \
@@ -397,6 +439,8 @@ libnito_node_a_SOURCES = \
   index/base.cpp \
   index/blockfilterindex.cpp \
   index/coinstatsindex.cpp \
+  index/orchardindex.cpp \
+  index/transparenthistoryindex.cpp \
   index/txindex.cpp \
   init.cpp \
   kernel/chain.cpp \
@@ -494,11 +538,14 @@ endif
 #
 
 # wallet #
-libnito_wallet_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(BOOST_CPPFLAGS) $(BDB_CPPFLAGS) $(SQLITE_CFLAGS)
+libnito_wallet_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(BOOST_CPPFLAGS) $(BDB_CPPFLAGS) $(SQLITE_CFLAGS) $(UTF8PROC_CFLAGS)
 libnito_wallet_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libnito_wallet_a_SOURCES = \
+  wallet/address_type.h \
   wallet/coincontrol.cpp \
   wallet/context.cpp \
+  wallet/bip39.cpp \
+  wallet/bip39_seed.cpp \
   wallet/crypter.cpp \
   wallet/db.cpp \
   wallet/dump.cpp \
@@ -507,6 +554,9 @@ libnito_wallet_a_SOURCES = \
   wallet/fees.cpp \
   wallet/interfaces.cpp \
   wallet/load.cpp \
+  wallet/private_wallet.cpp \
+  wallet/private_wallet.h \
+  wallet/private_notes.h \
   wallet/receive.cpp \
   wallet/rpc/addresses.cpp \
   wallet/rpc/backup.cpp \
@@ -628,20 +678,21 @@ crypto_libnito_crypto_arm_shani_la_SOURCES = crypto/sha256_arm_shani.cpp
 # consensus #
 libnito_consensus_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
 libnito_consensus_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
-libnito_consensus_a_SOURCES = \
+libnito_consensus_base_sources = \
   arith_uint256.cpp \
   arith_uint256.h \
   consensus/amount.h \
   consensus/merkle.cpp \
   consensus/merkle.h \
   consensus/params.h \
-  consensus/tx_check.cpp \
   consensus/validation.h \
   hash.cpp \
   hash.h \
   prevector.h \
   primitives/block.cpp \
   primitives/block.h \
+  primitives/private_transaction.cpp \
+  primitives/private_transaction.h \
   primitives/transaction.cpp \
   primitives/transaction.h \
   pubkey.cpp \
@@ -660,6 +711,19 @@ libnito_consensus_a_SOURCES = \
   uint256.h \
   util/strencodings.cpp \
   util/strencodings.h
+
+libnito_consensus_private_sources = \
+  consensus/private_tx_verify.cpp \
+  consensus/private_tx_verify.h \
+  consensus/tx_check.cpp \
+  consensus/tx_check.h \
+  private/orchard_ffi.h \
+  private/orchard_verifier.cpp \
+  private/orchard_verifier.h
+
+libnito_consensus_a_SOURCES = \
+  $(libnito_consensus_base_sources) \
+  $(libnito_consensus_private_sources)
 #
 
 # common #
@@ -671,6 +735,10 @@ libnito_common_a_SOURCES = \
   bech32.cpp \
   chainparams.cpp \
   coins.cpp \
+  private/private_address.cpp \
+  private/private_address.h \
+  private/private_state.cpp \
+  private/private_state.h \
   common/args.cpp \
   common/bloom.cpp \
   common/config.cpp \
@@ -786,11 +854,13 @@ endif
 
 nito_bin_ldadd = \
   $(LIBBITCOIN_WALLET) \
+  $(LIBBITCOIN_WALLET_LIBS) \
   $(LIBBITCOIN_COMMON) \
   $(LIBBITCOIN_UTIL) \
   $(LIBUNIVALUE) \
   $(LIBBITCOIN_ZMQ) \
   $(LIBBITCOIN_CONSENSUS) \
+  $(NITO_ORCHARD_FFI_LINK) \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBLEVELDB) \
   $(LIBMEMENV) \
@@ -825,6 +895,7 @@ nito_cli_LDADD = \
   $(LIBUNIVALUE) \
   $(LIBBITCOIN_COMMON) \
   $(LIBBITCOIN_UTIL) \
+  $(NITO_ORCHARD_FFI_LINK) \
   $(LIBBITCOIN_CRYPTO)
 
 nito_cli_LDADD += $(EVENT_LIBS)
@@ -845,6 +916,7 @@ nito_tx_LDADD = \
   $(LIBBITCOIN_COMMON) \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CONSENSUS) \
+  $(NITO_ORCHARD_FFI_LINK) \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBSECP256K1)
 #
@@ -858,10 +930,12 @@ nito_wallet_LDFLAGS = $(nito_bin_ldflags)
 nito_wallet_LDADD = \
   $(LIBBITCOIN_WALLET_TOOL) \
   $(LIBBITCOIN_WALLET) \
+  $(LIBBITCOIN_WALLET_LIBS) \
   $(LIBBITCOIN_COMMON) \
   $(LIBBITCOIN_UTIL) \
   $(LIBUNIVALUE) \
   $(LIBBITCOIN_CONSENSUS) \
+  $(NITO_ORCHARD_FFI_LINK) \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBSECP256K1) \
   $(BDB_LIBS) \
@@ -887,6 +961,7 @@ nito_util_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBUNIVALUE) \
   $(LIBBITCOIN_CONSENSUS) \
+  $(NITO_ORCHARD_FFI_LINK) \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBSECP256K1)
 #
@@ -898,6 +973,7 @@ nito_chainstate_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
 nito_chainstate_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(PTHREAD_FLAGS) $(LIBTOOL_APP_LDFLAGS) -static
 nito_chainstate_LDADD = $(LIBBITCOINKERNEL)
+nito_chainstate_LDADD += $(NITO_ORCHARD_FFI_LINK)
 
 # libtool is unable to calculate this indirect dependency, presumably because it's a subproject.
 # libsecp256k1 only needs to be linked in when libnitokernel is static.
@@ -931,6 +1007,7 @@ libnitokernel_la_SOURCES = \
   coins.cpp \
   compressor.cpp \
   consensus/merkle.cpp \
+  consensus/private_tx_verify.cpp \
   consensus/tx_check.cpp \
   consensus/tx_verify.cpp \
   core_read.cpp \
@@ -959,8 +1036,14 @@ libnitokernel_la_SOURCES = \
   policy/policy.cpp \
   policy/rbf.cpp \
   policy/settings.cpp \
+  private/orchard_ffi.h \
+  private/private_state.cpp \
+  private/private_state.h \
+  private/orchard_verifier.cpp \
+  private/orchard_verifier.h \
   pow.cpp \
   primitives/block.cpp \
+  primitives/private_transaction.cpp \
   primitives/transaction.cpp \
   pubkey.cpp \
   random.cpp \
@@ -1013,7 +1096,7 @@ if BUILD_BITCOIN_LIBS
 lib_LTLIBRARIES += $(LIBBITCOINCONSENSUS)
 
 include_HEADERS = script/nitoconsensus.h
-libnitoconsensus_la_SOURCES = support/cleanse.cpp $(crypto_libnito_crypto_base_la_SOURCES) $(libnito_consensus_a_SOURCES)
+libnitoconsensus_la_SOURCES = support/cleanse.cpp $(crypto_libnito_crypto_base_la_SOURCES) $(libnito_consensus_base_sources)
 
 libnitoconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
 libnitoconsensus_la_LIBADD = $(LIBSECP256K1)
@@ -1051,7 +1134,7 @@ CLEANFILES += wallet/test/*.gcda wallet/test/*.gcno
 CLEANFILES += zmq/*.gcda zmq/*.gcno
 CLEANFILES += obj/build.h
 
-EXTRA_DIST = $(CTAES_DIST)
+EXTRA_DIST = $(CTAES_DIST) $(NITO_ORCHARD_FFI_DIST) wallet/bip39_english.inc
 
 
 config/nito-config.h: config/stamp-h1

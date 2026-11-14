@@ -52,7 +52,7 @@ class InvalidTxRequestTest(NitoTestFramework):
         best_block = self.nodes[0].getbestblockhash()
         tip = int(best_block, 16)
         best_block_time = self.nodes[0].getblock(best_block)['time']
-        block_time = best_block_time + 1
+        block_time = best_block_time + 121  # Enable minimum difficulty after Nito genesis.
 
         self.log.info("Create a new block with an anyone-can-spend coinbase.")
         height = 1

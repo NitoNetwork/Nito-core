@@ -209,6 +209,21 @@ struct TestChain100Setup : public TestingSetup {
     CKey coinbaseKey; // private/public key needed to spend coinbase transactions
 };
 
+/** A 100-block regtest chain whose Orchard activation is deliberately above
+ * the heights used by legacy AssumeUTXO tests. */
+struct PrePrivateTestChain100Setup : public TestChain100Setup {
+    explicit PrePrivateTestChain100Setup(
+        const bool coins_db_in_memory = true,
+        const bool block_tree_db_in_memory = true)
+        : TestChain100Setup{
+              ChainType::REGTEST,
+              {"-privateactivationheight=1000"},
+              coins_db_in_memory,
+              block_tree_db_in_memory}
+    {
+    }
+};
+
 /**
  * Make a test setup that has disk access to the debug.log file disabled. Can
  * be used in "hot loops", for example fuzzing or benchmarking.

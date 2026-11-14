@@ -5,7 +5,9 @@
 
 #include <wallet/rpc/util.h>
 
+#include <chainparams.h>
 #include <common/url.h>
+#include <consensus/params.h>
 #include <rpc/util.h>
 #include <util/any.h>
 #include <util/translation.h>
@@ -98,6 +100,47 @@ void EnsureWalletIsUnlocked(const CWallet& wallet)
 {
     if (wallet.IsLocked()) {
         throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Error: Please enter the wallet passphrase with walletpassphrase first.");
+    }
+}
+
+bool IsPrivateTxActiveForWallet(const CWallet& wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (!wallet.HasLastBlockProcessed()) return false;
+    return Consensus::PrivateTxActive(Params().GetConsensus(), wallet.GetLastBlockHeight());
+}
+
+std::string PrivateTxActivationErrorMessage(const CWallet& wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    const int activation_height = Params().GetConsensus().privateTxActivationHeight;
+    const int current_height = wallet.HasLastBlockProcessed() ? wallet.GetLastBlockHeight() : -1;
+    if (activation_height < 0) {
+        return "Nito.network private transactions are not active on this network.";
+    }
+    return "Nito.network private transactions activate at block " + std::to_string(activation_height) +
+        ". Current block: " + std::to_string(current_height) + ".";
+}
+
+void EnsurePrivateTxActiveForWallet(const CWallet& wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (!IsPrivateTxActiveForWallet(wallet)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, PrivateTxActivationErrorMessage(wallet));
+    }
+}
+
+bool HasPrivateWalletIndex(const CWallet& wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    return wallet.HaveChain() && wallet.chain().hasOrchardIndex();
+}
+
+void EnsurePrivateWalletIndexAvailable(const CWallet& wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (!HasPrivateWalletIndex(wallet)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, _("The private wallet index is not available. Restart Nito Core with private wallet indexing enabled (-orchardindex=1) before using Bech32x wallet features.").original);
     }
 }
 

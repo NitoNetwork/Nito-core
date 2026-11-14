@@ -18,11 +18,11 @@ from test_framework.util import (
 )
 import time
 
-# The block reward of coinbaseoutput.nValue (50) BTC/block matures after
+# The block reward of coinbaseoutput.nValue (512) NITO/block matures after
 # COINBASE_MATURITY (100) blocks. Therefore, after mining 101 blocks we expect
-# node 0 to have a balance of (BLOCKS - COINBASE_MATURITY) * 50 BTC/block.
+# node 0 to have a balance of (BLOCKS - COINBASE_MATURITY) * 512 NITO/block.
 BLOCKS = COINBASE_MATURITY + 1
-BALANCE = (BLOCKS - 100) * 50
+BALANCE = (BLOCKS - 100) * 512
 
 JSON_PARSING_ERROR = 'error: Error parsing JSON: foo'
 BLOCKS_VALUE_OF_ZERO = 'error: the first argument (number of blocks to generate, default: 1) must be an integer value greater than zero'
@@ -104,6 +104,18 @@ class TestNitoCli(NitoTestFramework):
         assert_equal(['foo', 'bar'], self.nodes[0].cli(f'-rpcuser={user}', '-stdin', '-stdinrpcpass', input=f'{password}\nfoo\nbar').echo())
         assert_raises_process_error(1, 'Incorrect rpcuser or rpcpassword', self.nodes[0].cli(f'-rpcuser={user}', '-stdin', '-stdinrpcpass', input='foo').echo)
 
+        if self.is_specified_wallet_compiled():
+            self.log.info("Test a BIP39 passphrase can be supplied as a named stdin argument")
+            result = self.nodes[0].cli(
+                '-stdin',
+                input='bip39_passphrase=TREZOR\n',
+            ).createwallet(wallet_name='cli_bip39_stdin', descriptors=True)
+            assert_equal(result['name'], 'cli_bip39_stdin')
+            cli_bip39_wallet = self.nodes[0].get_wallet_rpc('cli_bip39_stdin')
+            assert_equal(cli_bip39_wallet.getwalletinfo()['bip39_passphrase_enabled'], True)
+            assert_equal(cli_bip39_wallet.dumpmnemonic()['bip39_passphrase_required'], True)
+            cli_bip39_wallet.unloadwallet()
+
         self.log.info("Test connecting to a non-existing server")
         assert_raises_process_error(1, "Could not connect to the server", self.nodes[0].cli('-rpcport=1').echo)
 
@@ -159,13 +171,13 @@ class TestNitoCli(NitoTestFramework):
             wallet_info = self.nodes[0].getwalletinfo()
             assert_equal(int(cli_get_info['Keypool size']), wallet_info['keypoolsize'])
             assert_equal(int(cli_get_info['Unlocked until']), wallet_info['unlocked_until'])
-            assert_equal(Decimal(cli_get_info['Transaction fee rate (-paytxfee) (BTC/kvB)']), wallet_info['paytxfee'])
-            assert_equal(Decimal(cli_get_info['Min tx relay fee rate (BTC/kvB)']), network_info['relayfee'])
+            assert_equal(Decimal(cli_get_info['Transaction fee rate (-paytxfee) (NITO/kvB)']), wallet_info['paytxfee'])
+            assert_equal(Decimal(cli_get_info['Min tx relay fee rate (NITO/kvB)']), network_info['relayfee'])
             assert_equal(self.nodes[0].cli.getwalletinfo(), wallet_info)
 
             # Setup to test -getinfo, -generate, and -rpcwallet= with multiple wallets.
             wallets = [self.default_wallet_name, 'Encrypted', 'secret']
-            amounts = [BALANCE + Decimal('9.999928'), Decimal(9), Decimal(31)]
+            amounts = [BALANCE + Decimal('471.999928'), Decimal(9), Decimal(31)]
             self.nodes[0].createwallet(wallet_name=wallets[1])
             self.nodes[0].createwallet(wallet_name=wallets[2])
             w1 = self.nodes[0].get_wallet_rpc(wallets[0])
@@ -178,7 +190,7 @@ class TestNitoCli(NitoTestFramework):
             w1.sendtoaddress(w2.getnewaddress(), amounts[1])
             w1.sendtoaddress(w3.getnewaddress(), amounts[2])
 
-            # Mine a block to confirm; adds a block reward (50 BTC) to the default wallet.
+            # Mine a block to confirm; adds a block reward (512 NITO) to the default wallet.
             self.generate(self.nodes[0], 1)
 
             self.log.info("Test -getinfo with multiple wallets and -rpcwallet returns specified wallet balance")
@@ -328,9 +340,9 @@ class TestNitoCli(NitoTestFramework):
 
         self.log.info("Test -rpcwait option waits at most -rpcwaittimeout seconds for startup")
         self.stop_node(0)  # stop the node so we time out
-        start_time = time.time()
+        start_time = time.monotonic()
         assert_raises_process_error(1, "Could not connect to the server", self.nodes[0].cli('-rpcwait', '-rpcwaittimeout=5').echo)
-        assert_greater_than_or_equal(time.time(), start_time + 5)
+        assert_greater_than_or_equal(time.monotonic(), start_time + 5)
 
 
 if __name__ == '__main__':

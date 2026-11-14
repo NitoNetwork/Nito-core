@@ -246,11 +246,11 @@ class NetTest(NitoTestFramework):
 
     def test_service_flags(self):
         self.log.info("Test service flags")
-        self.nodes[0].add_p2p_connection(P2PInterface(), services=(1 << 4) | (1 << 63))
+        self.nodes[0].add_p2p_connection(P2PInterface(), services=(1 << 4) | test_framework.messages.NODE_NITO_PRIVATE | (1 << 63))
         if self.options.v2transport:
-            assert_equal(['UNKNOWN[2^4]', 'P2P_V2', 'UNKNOWN[2^63]'], self.nodes[0].getpeerinfo()[-1]['servicesnames'])
+            assert_equal(['UNKNOWN[2^4]', 'P2P_V2', 'NITO_PRIVATE', 'UNKNOWN[2^63]'], self.nodes[0].getpeerinfo()[-1]['servicesnames'])
         else:
-            assert_equal(['UNKNOWN[2^4]', 'UNKNOWN[2^63]'], self.nodes[0].getpeerinfo()[-1]['servicesnames'])
+            assert_equal(['UNKNOWN[2^4]', 'NITO_PRIVATE', 'UNKNOWN[2^63]'], self.nodes[0].getpeerinfo()[-1]['servicesnames'])
         self.nodes[0].disconnect_p2ps()
 
     def test_getnodeaddresses(self):
@@ -454,7 +454,7 @@ class NetTest(NitoTestFramework):
                     {
                         "address": "2.0.0.0",
                         "port": 8333,
-                        "services": 9,
+                        "services": P2P_SERVICES,
                         "network": "ipv4",
                         "source": "2.0.0.0",
                         "source_network": "ipv4",
@@ -467,7 +467,7 @@ class NetTest(NitoTestFramework):
                     {
                         "address": "1.2.3.4",
                         "port": 8333,
-                        "services": 9,
+                        "services": P2P_SERVICES,
                         "network": "ipv4",
                         "source": "1.2.3.4",
                         "source_network": "ipv4",
@@ -482,7 +482,7 @@ class NetTest(NitoTestFramework):
         self.log.debug("Add one new address to each addrman table")
         expected["new"]["entries"].append({
             "address": "2803:0:1234:abcd::1",
-            "services": 9,
+            "services": P2P_SERVICES,
             "network": "ipv6",
             "source": "2803:0:1234:abcd::1",
             "source_network": "ipv6",
@@ -490,7 +490,7 @@ class NetTest(NitoTestFramework):
         })
         expected["tried"]["entries"].append({
             "address": "nrfj6inpyf73gpkyool35hcmne5zwfmse3jl3aw23vk7chdemalyaqad.onion",
-            "services": 9,
+            "services": P2P_SERVICES,
             "network": "onion",
             "source": "nrfj6inpyf73gpkyool35hcmne5zwfmse3jl3aw23vk7chdemalyaqad.onion",
             "source_network": "onion",

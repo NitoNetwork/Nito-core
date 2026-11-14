@@ -6,7 +6,10 @@
 #ifndef BITCOIN_NODE_COIN_H
 #define BITCOIN_NODE_COIN_H
 
+#include <script/script.h>
+
 #include <map>
+#include <set>
 
 class COutPoint;
 class Coin;
@@ -23,6 +26,15 @@ struct NodeContext;
  * @param[in,out] coins map to fill
  */
 void FindCoins(const node::NodeContext& node, std::map<COutPoint, Coin>& coins);
+
+/**
+ * Scan the active chain UTXO set for outputs whose scriptPubKey is in scripts.
+ *
+ * This mirrors the core of scantxoutset for wallet recovery code that already
+ * owns the scripts. It does not inspect historical spent transactions and does
+ * not include mempool-only outputs.
+ */
+bool FindCoinsByScriptPubKeys(const node::NodeContext& node, const std::set<CScript>& scripts, std::map<COutPoint, Coin>& coins);
 } // namespace node
 
 #endif // BITCOIN_NODE_COIN_H

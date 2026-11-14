@@ -1,0 +1,210 @@
+diff --git a/dist/aclocal/clock.m4 b/dist/aclocal/clock.m4
+index a978ffa..4afb740 100644
+--- a/dist/aclocal/clock.m4
++++ b/dist/aclocal/clock.m4
+@@ -24 +24 @@ AC_TRY_RUN([
+-main() {
++int main(void) {
+diff --git a/dist/aclocal/mutex.m4 b/dist/aclocal/mutex.m4
+index e2fa95a..42541ec 100644
+--- a/dist/aclocal/mutex.m4
++++ b/dist/aclocal/mutex.m4
+@@ -7 +7 @@ AC_TRY_RUN([
+-main() {
++int main(void) {
+@@ -12 +12 @@ main() {
+-	exit (
++	return (
+@@ -32 +32 @@ AC_TRY_LINK([
+-	exit (
++	return (
+@@ -49 +49 @@ AC_TRY_RUN([
+-main() {
++int main(void) {
+@@ -54 +54 @@ main() {
+-	exit (
++	return (
+@@ -72 +72 @@ AC_TRY_LINK([
+-	exit (
++	return (
+@@ -166 +166 @@ if test "$db_cv_mutex" = no; then
+-		exit (
++		return (
+@@ -181 +181 @@ if test "$db_cv_mutex" = no; then
+-		exit (
++		return (
+@@ -196 +196 @@ if test "$db_cv_mutex" = no; then
+-		exit (
++		return (
+@@ -216 +216 @@ if test "$db_cv_mutex" = no; then
+-		exit(0);
++		return (0);
+@@ -225 +225 @@ if test "$db_cv_mutex" = no; then
+-		exit(0);
++		return (0);
+@@ -248 +248 @@ if test "$db_cv_mutex" = no; then
+-		exit(0);
++		return (0);
+@@ -290 +290 @@ AC_TRY_LINK([
+-	exit(0);
++	return (0);
+@@ -307 +307 @@ AC_TRY_LINK([
+-	exit(0);
++	return (0);
+@@ -329 +329 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -386 +386 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -397 +397 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -408 +408 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -419 +419 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -430 +430 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -441 +441 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -452 +452 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -463 +463 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -474 +474 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -485 +485 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -496 +496 @@ AC_TRY_COMPILE(,[
+-	exit(0);
++	return (0);
+@@ -817 +817 @@ if test "$db_cv_atomic" = no; then
+-		exit(0);
++		return (0);
+@@ -819 +819 @@ if test "$db_cv_atomic" = no; then
+-		exit(0);
++		return (0);
+@@ -830 +830 @@ AC_TRY_LINK([
+-	exit (atomic_inc_uint_nv(&val) != 2 ||
++	return (atomic_inc_uint_nv(&val) != 2 ||
+diff --git a/dist/configure b/dist/configure
+index 295fec1..1ffebda 100755
+--- a/dist/configure
++++ b/dist/configure
+@@ -18767 +18767 @@ main ()
+-	exit (
++	return (
+@@ -18795 +18795 @@ else
+-main() {
++int main(void) {
+@@ -18800 +18800 @@ main() {
+-	exit (
++	return (
+@@ -18839 +18839 @@ main ()
+-	exit (
++	return (
+@@ -18867 +18867 @@ else
+-main() {
++int main(void) {
+@@ -18872 +18872 @@ main() {
+-	exit (
++	return (
+@@ -18910 +18910 @@ main ()
+-	exit (
++	return (
+@@ -18936 +18936 @@ else
+-main() {
++int main(void) {
+@@ -18941 +18941 @@ main() {
+-	exit (
++	return (
+@@ -18978 +18978 @@ main ()
+-	exit (
++	return (
+@@ -19004 +19004 @@ else
+-main() {
++int main(void) {
+@@ -19009 +19009 @@ main() {
+-	exit (
++	return (
+@@ -19049 +19049 @@ main ()
+-		exit (
++		return (
+@@ -19079 +19079 @@ main ()
+-		exit (
++		return (
+@@ -19109 +19109 @@ main ()
+-		exit (
++		return (
+@@ -19144 +19144 @@ main ()
+-		exit(0);
++		return (0);
+@@ -19167 +19167 @@ main ()
+-		exit(0);
++		return (0);
+@@ -19219 +19219 @@ main ()
+-		exit(0);
++		return (0);
+@@ -19290 +19290 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19322 +19322 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19374 +19374 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19505 +19505 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19530 +19530 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19555 +19555 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19580 +19580 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19605 +19605 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19630 +19630 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19655 +19655 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19680 +19680 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19705 +19705 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19730 +19730 @@ main ()
+-	exit(0);
++	return (0);
+@@ -19755 +19755 @@ main ()
+-	exit(0);
++	return (0);
+@@ -20206 +20206 @@ main ()
+-		exit(0);
++		return (0);
+@@ -20208 +20208 @@ main ()
+-		exit(0);
++		return (0);
+@@ -20233 +20233 @@ main ()
+-	exit (atomic_inc_uint_nv(&val) != 2 ||
++	return (atomic_inc_uint_nv(&val) != 2 ||
+@@ -20746 +20746 @@ else
+-main() {
++int main(void) {

@@ -21,6 +21,8 @@ namespace kernel {
  */
 struct BlockManagerOpts {
     const CChainParams& chainparams;
+    /** Network-specific data directory, used for durable metadata outside the block index. */
+    const fs::path datadir;
     uint64_t prune_target{0};
     bool fast_prune{false};
     const fs::path blocks_dir;

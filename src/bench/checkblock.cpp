@@ -8,6 +8,8 @@
 
 #include <chainparams.h>
 #include <common/args.h>
+#include <consensus/consensus.h>
+#include <consensus/merkle.h>
 #include <consensus/validation.h>
 #include <streams.h>
 #include <util/chaintype.h>
@@ -33,7 +35,19 @@ static void DeserializeBlockTest(benchmark::Bench& bench)
 
 static void DeserializeAndCheckBlockTest(benchmark::Bench& bench)
 {
-    DataStream stream(benchmark::data::block413567);
+    DataStream source_stream(benchmark::data::block413567);
+    CBlock fixture;
+    source_stream >> TX_WITH_WITNESS(fixture);
+    while (fixture.vtx.size() > 1 &&
+           ::GetSerializeSize(TX_NO_WITNESS(fixture)) * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT) {
+        fixture.vtx.pop_back();
+    }
+    assert(::GetSerializeSize(TX_NO_WITNESS(fixture)) * WITNESS_SCALE_FACTOR <= MAX_BLOCK_WEIGHT);
+    fixture.hashMerkleRoot = BlockMerkleRoot(fixture);
+
+    DataStream stream;
+    stream << TX_WITH_WITNESS(fixture);
+    const size_t fixture_size{stream.size()};
     std::byte a{0};
     stream.write({&a, 1}); // Prevent compaction
 
@@ -43,11 +57,11 @@ static void DeserializeAndCheckBlockTest(benchmark::Bench& bench)
     bench.unit("block").run([&] {
         CBlock block; // Note that CBlock caches its checked state, so we need to recreate it here
         stream >> TX_WITH_WITNESS(block);
-        bool rewound = stream.Rewind(benchmark::data::block413567.size());
+        bool rewound = stream.Rewind(fixture_size);
         assert(rewound);
 
         BlockValidationState validationState;
-        bool checked = CheckBlock(block, validationState, chainParams->GetConsensus());
+        bool checked = CheckBlock(block, validationState, chainParams->GetConsensus(), /*fCheckPOW=*/false, /*fCheckMerkleRoot=*/true);
         assert(checked);
     });
 }

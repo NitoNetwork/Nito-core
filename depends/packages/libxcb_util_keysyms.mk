@@ -1,12 +1,12 @@
 package=libxcb_util_keysyms
-$(package)_version=0.4.0
+$(package)_version=0.4.1
 $(package)_download_path=https://xcb.freedesktop.org/dist
-$(package)_file_name=xcb-util-keysyms-$($(package)_version).tar.bz2
-$(package)_sha256_hash=0ef8490ff1dede52b7de533158547f8b454b241aa3e4dcca369507f66f216dd9
+$(package)_file_name=xcb-util-keysyms-$($(package)_version).tar.xz
+$(package)_sha256_hash=7c260a5294412aed429df1da2f8afd3bd07b7cba3fec772fba15a613a6d5c638
 $(package)_dependencies=libxcb xproto
 
 define $(package)_set_vars
-$(package)_config_opts=--disable-static --disable-devel-docs --without-doxygen
+$(package)_config_opts=--disable-shared --enable-static --disable-devel-docs
 $(package)_config_opts += --disable-dependency-tracking --enable-option-checking
 endef
 
@@ -23,7 +23,9 @@ define $(package)_build_cmds
 endef
 
 define $(package)_stage_cmds
-  $(MAKE) DESTDIR=$($(package)_staging_dir) install
+  $(MAKE) DESTDIR=$($(package)_staging_dir) install-data && \
+  mkdir -p $($(package)_staging_prefix_dir)/lib && \
+  install -m 644 keysyms/.libs/libxcb-keysyms.a $($(package)_staging_prefix_dir)/lib
 endef
 
 define $(package)_postprocess_cmds

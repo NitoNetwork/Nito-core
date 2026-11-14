@@ -15,8 +15,12 @@ from test_framework.util import (
 )
 import json
 import os
+from io import BytesIO
+
+from test_framework.messages import CBlock
 
 TESTSDIR = os.path.dirname(os.path.realpath(__file__))
+PER_UTXO_OVERHEAD = 36 + 4 + 1
 
 class GetblockstatsTest(NitoTestFramework):
 
@@ -24,6 +28,7 @@ class GetblockstatsTest(NitoTestFramework):
     max_stat_pos = 2
 
     def add_options(self, parser):
+        self.add_wallet_options(parser)
         parser.add_argument('--gen-test-data', dest='gen_test_data',
                             default=False, action='store_true',
                             help='Generate test data')
@@ -41,7 +46,7 @@ class GetblockstatsTest(NitoTestFramework):
         return [self.nodes[0].getblockstats(hash_or_height=self.start_height + i) for i in range(self.max_stat_pos+1)]
 
     def generate_test_data(self, filename):
-        mocktime = 1525107225
+        mocktime = self.nodes[0].getblockheader(self.nodes[0].getblockhash(0))['time'] + 121
         self.nodes[0].setmocktime(mocktime)
         self.nodes[0].createwallet(wallet_name='test')
         privkey = self.nodes[0].get_deterministic_priv_key().key
@@ -87,13 +92,49 @@ class GetblockstatsTest(NitoTestFramework):
             blocks = d['blocks']
             mocktime = d['mocktime']
             self.expected_stats = d['stats']
+        self.fixture_blocks = blocks
 
         # Set the timestamps from the file so that the nodes can get out of Initial Block Download
         self.nodes[0].setmocktime(mocktime)
         self.sync_all()
 
-        for b in blocks:
-            self.nodes[0].submitblock(b)
+        for b in blocks[1:]:
+            assert_equal(self.nodes[0].submitblock(b), None)
+
+    def assert_fixture_utxo_deltas(self):
+        """Verify fixture UTXO size/count deltas from serialized blocks and prevouts."""
+        unspent = {}
+        deltas = {}
+        for height, raw_block in enumerate(self.fixture_blocks):
+            block = CBlock()
+            block.deserialize(BytesIO(bytes.fromhex(raw_block)))
+            net_count = actual_count = net_size = actual_size = 0
+            for tx in block.vtx:
+                coinbase = not tx.vin[0].prevout.hash
+                if not coinbase:
+                    for txin in tx.vin:
+                        previous = unspent.pop((txin.prevout.hash, txin.prevout.n))
+                        previous_size = len(previous.serialize()) + PER_UTXO_OVERHEAD
+                        net_count -= 1
+                        actual_count -= 1
+                        net_size -= previous_size
+                        actual_size -= previous_size
+                tx.rehash()
+                for n, txout in enumerate(tx.vout):
+                    output_size = len(txout.serialize()) + PER_UTXO_OVERHEAD
+                    net_count += 1
+                    net_size += output_size
+                    if height != 0 and not txout.scriptPubKey.startswith(b'\x6a'):
+                        actual_count += 1
+                        actual_size += output_size
+                        unspent[(tx.sha256, n)] = txout
+            deltas[height] = (net_count, net_size, actual_count, actual_size)
+        for stat in self.expected_stats:
+            assert_equal(
+                (stat['utxo_increase'], stat['utxo_size_inc'],
+                 stat['utxo_increase_actual'], stat['utxo_size_inc_actual']),
+                deltas[stat['height']],
+            )
 
 
     def run_test(self):
@@ -103,6 +144,7 @@ class GetblockstatsTest(NitoTestFramework):
         else:
             self.load_test_data(test_data)
 
+        self.assert_fixture_utxo_deltas()
         self.sync_all()
         stats = self.get_stats()
 
@@ -169,7 +211,7 @@ class GetblockstatsTest(NitoTestFramework):
 
         self.log.info('Test block height 0')
         genesis_stats = self.nodes[0].getblockstats(0)
-        assert_equal(genesis_stats["blockhash"], "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206")
+        assert_equal(genesis_stats["blockhash"], self.nodes[0].getblockhash(0))
         assert_equal(genesis_stats["utxo_increase"], 1)
         assert_equal(genesis_stats["utxo_size_inc"], 117)
         assert_equal(genesis_stats["utxo_increase_actual"], 0)
@@ -178,9 +220,9 @@ class GetblockstatsTest(NitoTestFramework):
         self.log.info('Test tip including OP_RETURN')
         tip_stats = self.nodes[0].getblockstats(tip)
         assert_equal(tip_stats["utxo_increase"], 6)
-        assert_equal(tip_stats["utxo_size_inc"], 441)
+        assert_equal(tip_stats["utxo_size_inc"], 450)
         assert_equal(tip_stats["utxo_increase_actual"], 4)
-        assert_equal(tip_stats["utxo_size_inc_actual"], 300)
+        assert_equal(tip_stats["utxo_size_inc_actual"], 309)
 
 if __name__ == '__main__':
     GetblockstatsTest().main()

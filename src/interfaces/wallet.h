@@ -16,6 +16,7 @@
 #include <util/message.h>
 #include <util/result.h>
 #include <util/ui_change_type.h>
+#include <uint256.h>
 
 #include <cstdint>
 #include <functional>
@@ -33,6 +34,7 @@ enum class FeeReason;
 enum class OutputType;
 enum class TransactionError;
 struct PartiallySignedTransaction;
+struct PSBTProprietary;
 struct bilingual_str;
 namespace wallet {
 class CCoinControl;
@@ -54,6 +56,24 @@ struct WalletTxOut;
 struct WalletTxStatus;
 struct WalletMigrationResult;
 
+//! Locally decrypted Nito.network private note information.
+struct WalletPrivateNote
+{
+    uint256 cmx;
+    uint256 txid;
+    uint256 block_hash;
+    std::string address;
+    CAmount amount{0};
+    int64_t time{0};
+    int block_height{-1};
+    int depth_in_main_chain{0};
+    uint32_t account{0};
+    bool internal{false};
+    uint32_t diversifier_index{0};
+    uint32_t action_index{0};
+    bool spendable{false};
+};
+
 using WalletOrderForm = std::vector<std::pair<std::string, std::string>>;
 using WalletValueMap = std::map<std::string, std::string>;
 
@@ -72,11 +92,19 @@ public:
     //! Lock wallet.
     virtual bool lock() = 0;
 
+    //! Lock spending keys while retaining private viewing state for an
+    //! authenticated display session.
+    virtual bool lockForDisplay() = 0;
+
     //! Unlock wallet.
-    virtual bool unlock(const SecureString& wallet_passphrase) = 0;
+    virtual bool unlock(const SecureString& wallet_passphrase, bilingual_str* error = nullptr) = 0;
 
     //! Return whether wallet is locked.
     virtual bool isLocked() = 0;
+
+    //! Return whether authenticated private viewing state is available even
+    //! when spending keys are locked.
+    virtual bool canViewPrivateData() = 0;
 
     //! Change wallet passphrase.
     virtual bool changeWalletPassphrase(const SecureString& old_wallet_passphrase,
@@ -93,6 +121,16 @@ public:
 
     // Get a new address.
     virtual util::Result<CTxDestination> getNewDestination(const OutputType type, const std::string& label) = 0;
+
+    // Get a new Nito.network private address.
+    virtual util::Result<std::string> getNewPrivateAddress(bool internal) = 0;
+
+    // Get the active HD seed encoded as a BIP39 English recovery phrase.
+    virtual util::Result<std::string> getHDSeedMnemonic() = 0;
+
+    //! Return whether restoring this wallet from its recovery phrase also
+    //! requires the separately backed-up BIP39 passphrase.
+    virtual bool isBIP39PassphraseEnabled() = 0;
 
     //! Get public key.
     virtual bool getPubKey(const CScript& script, const CKeyID& address, CPubKey& pub_key) = 0;
@@ -147,12 +185,14 @@ public:
         const wallet::CCoinControl& coin_control,
         bool sign,
         int& change_pos,
-        CAmount& fee) = 0;
+        CAmount& fee,
+        std::vector<PSBTProprietary>* private_psbt_records = nullptr) = 0;
 
-    //! Commit transaction.
-    virtual void commitTransaction(CTransactionRef tx,
+    //! Commit transaction, retaining recipient intent for private fee replacement when supplied.
+    virtual util::Result<void> commitTransaction(CTransactionRef tx,
         WalletValueMap value_map,
-        WalletOrderForm order_form) = 0;
+        WalletOrderForm order_form,
+        const std::vector<wallet::CRecipient>* recipients = nullptr) = 0;
 
     //! Return whether transaction can be abandoned.
     virtual bool transactionCanBeAbandoned(const uint256& txid) = 0;
@@ -195,6 +235,12 @@ public:
         int& num_blocks,
         int64_t& block_time) = 0;
 
+    //! Try to get updated status for a locally decrypted private note.
+    virtual bool tryGetPrivateNoteStatus(const uint256& cmx,
+        WalletTxStatus& tx_status,
+        int& num_blocks,
+        int64_t& block_time) = 0;
+
     //! Get transaction details.
     virtual WalletTx getWalletTxDetails(const uint256& txid,
         WalletTxStatus& tx_status,
@@ -208,13 +254,18 @@ public:
         bool bip32derivs,
         size_t* n_signed,
         PartiallySignedTransaction& psbtx,
-        bool& complete) = 0;
+        bool& complete,
+        std::optional<uint256> private_intent_hash = std::nullopt) = 0;
 
     //! Get balances.
     virtual WalletBalances getBalances() = 0;
 
     //! Get balances if possible without blocking.
     virtual bool tryGetBalances(WalletBalances& balances, uint256& block_hash) = 0;
+
+    //! Authorize this GUI wallet interface to expose private viewing data while
+    //! the wallet's spending keys remain locked.
+    virtual void setPrivateDataDisplayAuthorized(bool authorized) = 0;
 
     //! Get balance.
     virtual CAmount getBalance() = 0;
@@ -238,6 +289,9 @@ public:
     //! (put change in one group with wallet address)
     using CoinsList = std::map<CTxDestination, std::vector<std::tuple<COutPoint, WalletTxOut>>>;
     virtual CoinsList listCoins() = 0;
+
+    //! Return locally decrypted, unspent private notes.
+    virtual std::vector<WalletPrivateNote> listPrivateCoins() = 0;
 
     //! Return wallet transaction output information.
     virtual std::vector<WalletTxOut> getCoins(const std::vector<COutPoint>& outputs) = 0;
@@ -266,9 +320,6 @@ public:
     // Return whether the wallet contains a Taproot scriptPubKeyMan
     virtual bool taprootEnabled() = 0;
     
-    // Return whether Legacy/P2SH transactions are enabled (after activation height)
-    virtual bool legacyP2SHEnabled() = 0;
-
     // Return whether wallet uses an external signer.
     virtual bool hasExternalSigner() = 0;
 
@@ -326,8 +377,23 @@ public:
 class WalletLoader : public ChainClient
 {
 public:
+    using RestoreProgressFn = std::function<void(const std::string& title, int progress)>;
+
     //! Create new wallet.
-    virtual util::Result<std::unique_ptr<Wallet>> createWallet(const std::string& name, const SecureString& passphrase, uint64_t wallet_creation_flags, std::vector<bilingual_str>& warnings) = 0;
+    virtual util::Result<std::unique_ptr<Wallet>> createWallet(const std::string& name,
+                                                               const SecureString& wallet_passphrase,
+                                                               SecureString bip39_passphrase,
+                                                               uint64_t wallet_creation_flags,
+                                                               std::vector<bilingual_str>& warnings) = 0;
+
+    //! Create a descriptor wallet initialized from a BIP39 English recovery phrase.
+    virtual util::Result<std::unique_ptr<Wallet>> createWalletFromMnemonic(const std::string& name,
+                                                                           const SecureString& wallet_passphrase,
+                                                                           SecureString mnemonic,
+                                                                           SecureString bip39_passphrase,
+                                                                           uint64_t wallet_creation_flags,
+                                                                           std::vector<bilingual_str>& warnings,
+                                                                           RestoreProgressFn progress = {}) = 0;
 
     //! Load existing wallet.
     virtual util::Result<std::unique_ptr<Wallet>> loadWallet(const std::string& name, std::vector<bilingual_str>& warnings) = 0;
@@ -377,17 +443,25 @@ struct WalletBalances
     CAmount balance = 0;
     CAmount unconfirmed_balance = 0;
     CAmount immature_balance = 0;
+    CAmount private_balance = 0;
+    CAmount unconfirmed_private_balance = 0;
+    CAmount private_total_unspent = 0;
     bool have_watch_only = false;
     CAmount watch_only_balance = 0;
     CAmount unconfirmed_watch_only_balance = 0;
     CAmount immature_watch_only_balance = 0;
+    bool available_balance_sync_pending = false;
 
     bool balanceChanged(const WalletBalances& prev) const
     {
         return balance != prev.balance || unconfirmed_balance != prev.unconfirmed_balance ||
+               private_balance != prev.private_balance ||
+               unconfirmed_private_balance != prev.unconfirmed_private_balance ||
+               private_total_unspent != prev.private_total_unspent ||
                immature_balance != prev.immature_balance || watch_only_balance != prev.watch_only_balance ||
                unconfirmed_watch_only_balance != prev.unconfirmed_watch_only_balance ||
-               immature_watch_only_balance != prev.immature_watch_only_balance;
+               immature_watch_only_balance != prev.immature_watch_only_balance ||
+               available_balance_sync_pending != prev.available_balance_sync_pending;
     }
 };
 
@@ -396,16 +470,27 @@ struct WalletTx
 {
     CTransactionRef tx;
     std::vector<wallet::isminetype> txin_is_mine;
+    //! Distinct public addresses of resolved transparent previous outputs.
+    std::vector<CTxDestination> txin_addresses;
+    //! False if any input is unresolved or its script has no single address.
+    bool txin_addresses_complete{false};
     std::vector<wallet::isminetype> txout_is_mine;
     std::vector<bool> txout_is_change;
     std::vector<CTxDestination> txout_address;
     std::vector<wallet::isminetype> txout_address_is_mine;
-    CAmount credit;
-    CAmount debit;
-    CAmount change;
-    int64_t time;
+    CAmount credit{0};
+    CAmount debit{0};
+    CAmount change{0};
+    CAmount fee{0};
+    CAmount private_credit{0};
+    CAmount private_external_credit{0};
+    CAmount private_internal_credit{0};
+    CAmount private_debit{0};
+    CAmount private_value_balance{0};
+    int64_t time{0};
     std::map<std::string, std::string> value_map;
-    bool is_coinbase;
+    bool is_coinbase{false};
+    bool has_private_bundle{false};
 
     bool operator<(const WalletTx& a) const { return tx->GetHash() < a.tx->GetHash(); }
 };

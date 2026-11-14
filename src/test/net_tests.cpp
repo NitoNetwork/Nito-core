@@ -844,7 +844,7 @@ BOOST_AUTO_TEST_CASE(initial_advertise_from_version_message)
                /*conn_type_in=*/ConnectionType::OUTBOUND_FULL_RELAY,
                /*inbound_onion=*/false};
 
-    const uint64_t services{NODE_NETWORK | NODE_WITNESS};
+    const uint64_t services{NODE_NETWORK | NODE_WITNESS | NODE_NITO_PRIVATE};
     const int64_t time{0};
 
     // Force ChainstateManager::IsInitialBlockDownload() to return false.
@@ -852,7 +852,7 @@ BOOST_AUTO_TEST_CASE(initial_advertise_from_version_message)
     auto& chainman = static_cast<TestChainstateManager&>(*m_node.chainman);
     chainman.JumpOutOfIbd();
 
-    m_node.peerman->InitializeNode(peer, NODE_NETWORK);
+    m_node.peerman->InitializeNode(peer, ServiceFlags(NODE_NETWORK | NODE_NITO_PRIVATE));
 
     std::atomic<bool> interrupt_dummy{false};
     std::chrono::microseconds time_received_dummy{0};

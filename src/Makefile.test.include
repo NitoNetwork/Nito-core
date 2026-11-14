@@ -40,9 +40,11 @@ FUZZ_SUITE_LD_COMMON = \
  $(LIBTEST_FUZZ) \
  $(LIBBITCOIN_NODE) \
  $(LIBBITCOIN_WALLET) \
+ $(LIBBITCOIN_WALLET_LIBS) \
  $(LIBBITCOIN_COMMON) \
  $(LIBBITCOIN_UTIL) \
  $(LIBBITCOIN_CONSENSUS) \
+ $(NITO_ORCHARD_FFI_LINK) \
  $(LIBBITCOIN_CRYPTO) \
  $(LIBBITCOIN_CLI) \
  $(LIBUNIVALUE) \
@@ -117,6 +119,7 @@ BITCOIN_TESTS =\
   test/net_tests.cpp \
   test/netbase_tests.cpp \
   test/orphanage_tests.cpp \
+  test/orchardindex_tests.cpp \
   test/peerman_tests.cpp \
   test/pmt_tests.cpp \
   test/policy_fee_tests.cpp \
@@ -254,14 +257,14 @@ test_test_nito_SOURCES = $(BITCOIN_TEST_SUITE) $(BITCOIN_TESTS) $(JSON_TEST_FILE
 test_test_nito_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(TESTDEFS) $(BOOST_CPPFLAGS) $(EVENT_CFLAGS)
 test_test_nito_LDADD = $(LIBTEST_UTIL)
 if ENABLE_WALLET
-test_test_nito_LDADD += $(LIBBITCOIN_WALLET)
+test_test_nito_LDADD += $(LIBBITCOIN_WALLET) $(LIBBITCOIN_WALLET_LIBS)
 test_test_nito_CPPFLAGS += $(BDB_CPPFLAGS)
 endif
 if BUILD_MULTIPROCESS
 test_test_nito_LDADD += $(LIBBITCOIN_IPC_TEST) $(LIBMULTIPROCESS_LIBS)
 endif
 
-test_test_nito_LDADD += $(LIBBITCOIN_NODE) $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBITCOIN_UTIL) $(LIBBITCOIN_CONSENSUS) $(LIBBITCOIN_CRYPTO) $(LIBUNIVALUE) \
+test_test_nito_LDADD += $(LIBBITCOIN_NODE) $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBITCOIN_UTIL) $(LIBBITCOIN_CONSENSUS) $(NITO_ORCHARD_FFI_LINK) $(LIBBITCOIN_CRYPTO) $(LIBUNIVALUE) \
   $(LIBLEVELDB) $(LIBMEMENV) $(LIBSECP256K1) $(EVENT_LIBS) $(EVENT_PTHREADS_LIBS) $(MINISKETCH_LIBS)
 test_test_nito_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
@@ -338,6 +341,7 @@ test_fuzz_fuzz_SOURCES = \
  test/fuzz/net_permissions.cpp \
  test/fuzz/netaddress.cpp \
  test/fuzz/netbase_dns_lookup.cpp \
+ test/fuzz/nito_private.cpp \
  test/fuzz/node_eviction.cpp \
  test/fuzz/p2p_transport_serialization.cpp \
  test/fuzz/package_eval.cpp \
@@ -457,7 +461,7 @@ endif
 	@echo Running tests: $$(\
 	  cat $< | \
 	  grep -E "(BOOST_FIXTURE_TEST_SUITE\\(|BOOST_AUTO_TEST_SUITE\\()" | \
-	  cut -d '(' -f 2 | cut -d ',' -f 1 | cut -d ')' -f 1\
+	  cut -d '(' -f 2 | cut -d ',' -f 1 | cut -d ')' -f 1 | paste -sd, -\
 	) from $<
 	$(AM_V_at)export TEST_LOGFILE=$(abs_builddir)/$$(\
 	  echo $< | grep -E -o "(wallet/test/.*\.cpp|test/.*\.cpp)" | $(SED) -e s/\.cpp/.log/ \
@@ -465,7 +469,7 @@ endif
 	$(TEST_BINARY) --catch_system_errors=no -l test_suite -t "$$(\
 	  cat $< | \
 	  grep -E "(BOOST_FIXTURE_TEST_SUITE\\(|BOOST_AUTO_TEST_SUITE\\()" | \
-	  cut -d '(' -f 2 | cut -d ',' -f 1 | cut -d ')' -f 1\
+	  cut -d '(' -f 2 | cut -d ',' -f 1 | cut -d ')' -f 1 | paste -sd, -\
 	)" -- DEBUG_LOG_OUT > "$$TEST_LOGFILE" 2>&1 || (cat "$$TEST_LOGFILE" && false)
 
 %.json.h: %.json

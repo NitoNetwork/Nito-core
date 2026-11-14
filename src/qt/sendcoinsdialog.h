@@ -11,6 +11,7 @@
 
 #include <QDialog>
 #include <QMessageBox>
+#include <QPointer>
 #include <QString>
 #include <QTimer>
 
@@ -28,9 +29,10 @@ namespace Ui {
 
 QT_BEGIN_NAMESPACE
 class QUrl;
+class QProgressDialog;
 QT_END_NAMESPACE
 
-/** Dialog for sending nitos */
+/** Dialog for sending NITO */
 class SendCoinsDialog : public QDialog
 {
     Q_OBJECT
@@ -68,13 +70,20 @@ private:
     Ui::SendCoinsDialog *ui;
     ClientModel* clientModel{nullptr};
     WalletModel* model{nullptr};
+    QPointer<WalletModel> m_model_guard;
     std::unique_ptr<wallet::CCoinControl> m_coin_control;
     std::unique_ptr<WalletModelTransaction> m_current_transaction;
+    std::shared_ptr<WalletModel::PrepareTransactionTask> m_prepare_task;
+    // Keep private replacement metadata writable through confirmation and commit.
+    std::shared_ptr<WalletModel::UnlockContext> m_send_unlock_context;
+    QPointer<QProgressDialog> m_prepare_progress;
+    QTimer m_prepare_timer;
+    bool m_prepare_cancelled{false};
     bool fNewRecipientAllowed{true};
     bool fFeeMinimized{true};
     const PlatformStyle *platformStyle;
 
-    // Copy PSBT to clipboard and offer to save it.
+    // Present explicit PSBT copy and save actions.
     void presentPSBT(PartiallySignedTransaction& psbt);
     // Process WalletModel::SendCoinsReturn and generate a pair consisting
     // of a message and message flags for use in Q_EMIT message().
@@ -83,6 +92,9 @@ private:
     void minimizeFeeSection(bool fMinimize);
     // Format confirmation message
     bool PrepareSendText(QString& question_string, QString& informative_text, QString& detailed_text);
+    bool finalizePreparedTransaction(const WalletModel::SendCoinsReturn& prepare_status, QString& question_string, QString& informative_text, QString& detailed_text);
+    void showSendConfirmation(const QString& question_string, const QString& informative_text, const QString& detailed_text);
+    void cancelPrivatePreparation();
     /* Sign PSBT using external signer.
      *
      * @param[in,out] psbtx the PSBT to sign
@@ -92,11 +104,14 @@ private:
      * @returns false if any failure occurred, which may include the user rejection of a transaction on the device.
      */
     bool signWithExternalSigner(PartiallySignedTransaction& psbt, CMutableTransaction& mtx, bool& complete);
+    bool fillCurrentTransactionPSBT(PartiallySignedTransaction& psbt, bool sign, CMutableTransaction& mtx, bool& complete);
     void updateFeeMinimizedLabel();
     void updateCoinControlState();
+    void updatePrivateTxControls();
 
 private Q_SLOTS:
     void sendButtonClicked(bool checked);
+    void pollPrivatePreparation();
     void on_buttonChooseFee_clicked();
     void on_buttonMinimizeFee_clicked();
     void removeEntry(SendCoinsEntry* entry);
@@ -104,8 +119,6 @@ private Q_SLOTS:
     void refreshBalance();
     void coinControlFeatureChanged(bool);
     void coinControlButtonClicked();
-    void coinControlChangeChecked(int);
-    void coinControlChangeEdited(const QString &);
     void coinControlUpdateLabels();
     void coinControlClipboardQuantity();
     void coinControlClipboardAmount();
@@ -140,13 +153,21 @@ private Q_SLOTS:
     void updateButtons();
 
 private:
+    void localizeButtons();
+
     QAbstractButton *yesButton;
     QAbstractButton *m_psbt_button;
+    QAbstractButton *m_cancel_button{nullptr};
+    QAbstractButton *m_details_button{nullptr};
     QTimer countDownTimer;
     int secDelay;
     QString confirmButtonText{tr("Send")};
     bool m_enable_send;
     QString m_psbt_button_text{tr("Create Unsigned")};
+    QString m_cancel_button_text{tr("Cancel")};
+    QString m_show_details_button_text{tr("Show Details...")};
+    QString m_hide_details_button_text{tr("Hide Details...")};
+    bool m_details_visible{false};
 };
 
 #endif // BITCOIN_QT_SENDCOINSDIALOG_H

@@ -56,6 +56,14 @@ struct BlockAndHeaderTipInfo
     double verification_progress;
 };
 
+//! Local node index progress exposed to the GUI.
+struct IndexStatus
+{
+    std::string name;
+    bool synced{false};
+    int best_block_height{0};
+};
+
 //! External signer interface used by the GUI.
 class ExternalSigner
 {
@@ -168,6 +176,9 @@ public:
 
     //! Get num blocks.
     virtual int getNumBlocks() = 0;
+
+    //! Get local wallet-related index states.
+    virtual std::vector<IndexStatus> getWalletIndexStatuses() = 0;
 
     //! Get best block hash.
     virtual uint256 getBestBlockHash() = 0;

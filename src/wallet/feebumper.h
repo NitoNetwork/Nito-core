@@ -9,15 +9,20 @@
 #include <consensus/consensus.h>
 #include <script/interpreter.h>
 #include <primitives/transaction.h>
+#include <util/result.h>
+#include <wallet/crypter.h>
+#include <wallet/transaction.h>
 
 class uint256;
 enum class FeeEstimateMode;
+struct PSBTProprietary;
 struct bilingual_str;
 
 namespace wallet {
 class CCoinControl;
 class CWallet;
 class CWalletTx;
+struct CRecipient;
 
 namespace feebumper {
 
@@ -30,6 +35,28 @@ enum class Result
     WALLET_ERROR,
     MISC_ERROR,
 };
+
+/** Store the wallet-local recipe needed to rebuild a private-bundle transaction.
+ * Encrypted wallets persist only an authenticated ciphertext bound to txid. */
+util::Result<void> AddPrivateBumpMetadata(const CWallet& wallet,
+    const uint256& txid,
+    mapValue_t& map_value,
+    const CCoinControl& coin_control,
+    const std::vector<CRecipient>& recipients,
+    const std::vector<uint256>& private_note_ids);
+
+/** Protect plaintext private fee-bump metadata while encrypting a wallet.
+ * Unsupported experimental fields are removed instead of being retained in plaintext.
+ * Returns whether map_value changed. */
+util::Result<bool> EncryptPrivateBumpMetadata(const CKeyingMaterial& master_key,
+    const uint256& txid,
+    mapValue_t& map_value);
+
+/** Re-encrypt an existing recipe for a replacement transaction's txid. */
+util::Result<void> RebindPrivateBumpMetadata(const CWallet& wallet,
+    const CWalletTx& old_wtx,
+    const uint256& replacement_txid,
+    mapValue_t& map_value);
 
 //! Return whether transaction can be bumped.
 bool TransactionCanBeBumped(const CWallet& wallet, const uint256& txid);
@@ -46,6 +73,7 @@ bool TransactionCanBeBumped(const CWallet& wallet, const uint256& txid);
  * @param[in] require_mine Whether the original transaction must consist of inputs that can be spent by the wallet
  * @param[in] outputs Vector of new outputs to replace the bumped transaction's outputs
  * @param[in] original_change_index The position of the change output to deduct the fee from in the transaction being bumped
+ * @param[out] private_psbt_records Optional Nito Orchard PSBT records for private-bundle psbtbumpfee replacements
  */
 Result CreateRateBumpTransaction(CWallet& wallet,
     const uint256& txid,
@@ -56,7 +84,8 @@ Result CreateRateBumpTransaction(CWallet& wallet,
     CMutableTransaction& mtx,
     bool require_mine,
     const std::vector<CTxOut>& outputs,
-    std::optional<uint32_t> original_change_index = std::nullopt);
+    std::optional<uint32_t> original_change_index = std::nullopt,
+    std::vector<PSBTProprietary>* private_psbt_records = nullptr);
 
 //! Sign the new transaction,
 //! @return false if the tx couldn't be found or if it was

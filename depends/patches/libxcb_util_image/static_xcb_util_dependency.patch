@@ -1,0 +1,10 @@
+--- a/image/xcb-image.pc.in
++++ b/image/xcb-image.pc.in
+@@ -6,6 +6,6 @@ includedir=@includedir@
+ Name: XCB Image library
+ Description: XCB image convenience library
+ Version: @PACKAGE_VERSION@
+-Requires: xcb xcb-shm
++Requires: xcb xcb-shm xcb-util
+ Libs: -L${libdir} -lxcb-image @LIBS@
+ Cflags: -I${includedir}

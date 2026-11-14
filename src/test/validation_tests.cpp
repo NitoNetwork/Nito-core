@@ -15,6 +15,7 @@
 #include <validation.h>
 
 #include <string>
+#include <vector>
 
 #include <test/util/setup_common.h>
 
@@ -22,36 +23,80 @@
 
 BOOST_FIXTURE_TEST_SUITE(validation_tests, TestingSetup)
 
-static void TestBlockSubsidyHalvings(const Consensus::Params& consensusParams)
+BOOST_AUTO_TEST_CASE(v3_chain_compatibility_parameters)
 {
-    int maxHalvings = 64;
-    CAmount nInitialSubsidy = 50 * COIN;
+    const auto main_params{CreateChainParams(*m_node.args, ChainType::MAIN)};
+    BOOST_CHECK_EQUAL(main_params->GetConsensus().nLegacyP2SHActivationHeight, 750000);
+    BOOST_CHECK_EQUAL(main_params->GetConsensus().privateTxActivationHeight, 1165432);
+    BOOST_CHECK(!Consensus::PrivateTxActive(main_params->GetConsensus(), 1042400));
+    BOOST_CHECK(!Consensus::PrivateTxActive(main_params->GetConsensus(), 1165431));
+    BOOST_CHECK(Consensus::PrivateTxActive(main_params->GetConsensus(), 1165432));
+    BOOST_CHECK(Consensus::PrivateTxActive(main_params->GetConsensus(), 1165433));
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(1042399, main_params->GetConsensus()), 256 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(1042400, main_params->GetConsensus()), 128 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(1165431, main_params->GetConsensus()), 128 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(1165432, main_params->GetConsensus()), 128 * COIN);
+    BOOST_CHECK_EQUAL(main_params->Checkpoints().GetHeight(), 790000);
+    BOOST_CHECK_EQUAL(main_params->Checkpoints().mapCheckpoints.rbegin()->second,
+                      uint256S("0x000000000000003313c51ea30df5cce1be4095e6303ddf865516d72a63f9f8fd"));
+    BOOST_CHECK_EQUAL(main_params->GenesisBlock().GetHash(),
+                      uint256S("0x00000000103d1acbedc9bb8ff2af8cb98a751965e784b4e1f978f3d5544c6c3c"));
+    BOOST_CHECK(main_params->MessageStart() == MessageStartChars({0xb6, 0xc0, 0xc0, 0xb6}));
 
-    CAmount nPreviousSubsidy = nInitialSubsidy * 2; // for height == 0
-    BOOST_CHECK_EQUAL(nPreviousSubsidy, nInitialSubsidy * 2);
-    for (int nHalvings = 0; nHalvings < maxHalvings; nHalvings++) {
-        int nHeight = nHalvings * consensusParams.nSubsidyHalvingInterval;
-        CAmount nSubsidy = GetBlockSubsidy(nHeight, consensusParams);
-        BOOST_CHECK(nSubsidy <= nInitialSubsidy);
-        BOOST_CHECK_EQUAL(nSubsidy, nPreviousSubsidy / 2);
-        nPreviousSubsidy = nSubsidy;
-    }
-    BOOST_CHECK_EQUAL(GetBlockSubsidy(maxHalvings * consensusParams.nSubsidyHalvingInterval, consensusParams), 0);
-}
+    const auto testnet_params{CreateChainParams(*m_node.args, ChainType::TESTNET)};
+    BOOST_CHECK_EQUAL(testnet_params->GetConsensus().nLegacyP2SHActivationHeight, 0);
+    BOOST_CHECK_EQUAL(testnet_params->GetConsensus().privateTxActivationHeight, 0);
+    BOOST_CHECK(Consensus::PrivateTxActive(testnet_params->GetConsensus(), 0));
+    BOOST_CHECK_EQUAL(testnet_params->GetDefaultPort(), 8840);
+    BOOST_CHECK_EQUAL(testnet_params->Bech32HRP(), "tn");
+    BOOST_CHECK(testnet_params->MessageStart() == MessageStartChars({0xcd, 0x9b, 0x72, 0x1a}));
+    BOOST_CHECK(testnet_params->MessageStart() != MessageStartChars({0xb6, 0xb6, 0xb6, 0xdb}));
+    BOOST_CHECK(testnet_params->FixedSeeds().empty());
+    BOOST_CHECK(testnet_params->DNSSeeds() == std::vector<std::string>({
+        "t1.testnet.nito.network.",
+        "t2.testnet.nito.network.",
+        "t3.testnet.nito.network.",
+        "testnet-seed.nito.network.",
+    }));
+    BOOST_CHECK_EQUAL(testnet_params->Checkpoints().GetHeight(), 0);
+    BOOST_CHECK_EQUAL(testnet_params->GenesisBlock().GetHash(),
+                      uint256S("0x00000000ddbcc1487e98d0e27fcc235129c543e6b6066df0cc0d157a0e02312b"));
 
-static void TestBlockSubsidyHalvings(int nSubsidyHalvingInterval)
-{
-    Consensus::Params consensusParams;
-    consensusParams.nSubsidyHalvingInterval = nSubsidyHalvingInterval;
-    TestBlockSubsidyHalvings(consensusParams);
+    const auto signet_params{CreateChainParams(*m_node.args, ChainType::SIGNET)};
+    BOOST_CHECK_EQUAL(signet_params->GenesisBlock().GetHash(),
+                      uint256S("0x000000000f6d536ea0023ea9f4ca69d79d80b902aff664e154c028b4d15f320a"));
+    BOOST_CHECK(testnet_params->MessageStart() != signet_params->MessageStart());
+
+    const auto regtest_params{CreateChainParams(*m_node.args, ChainType::REGTEST)};
+    BOOST_CHECK_EQUAL(regtest_params->GetConsensus().nLegacyP2SHActivationHeight, 0);
+    BOOST_CHECK_EQUAL(regtest_params->Checkpoints().GetHeight(), 0);
+    BOOST_CHECK_EQUAL(regtest_params->GenesisBlock().GetHash(),
+                      uint256S("0x00000000883439521559eaee4bf336fa07101ccecbd1a1d9eb095f60954f5c0c"));
+    BOOST_CHECK(regtest_params->MessageStart() == MessageStartChars({0xfa, 0xbf, 0xb5, 0xda}));
+    BOOST_CHECK(testnet_params->MessageStart() != regtest_params->MessageStart());
+    BOOST_CHECK(testnet_params->MessageStart() != main_params->MessageStart());
 }
 
 BOOST_AUTO_TEST_CASE(block_subsidy_test)
 {
     const auto chainParams = CreateChainParams(*m_node.args, ChainType::MAIN);
-    TestBlockSubsidyHalvings(chainParams->GetConsensus()); // As in main
-    TestBlockSubsidyHalvings(150); // As in regtest
-    TestBlockSubsidyHalvings(1000); // Just another interval
+    const auto& consensus = chainParams->GetConsensus();
+
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(0, consensus), 512 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(529999, consensus), 512 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(530000, consensus), 256 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(1042399, consensus), 256 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(1042400, consensus), 128 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(1576799, consensus), 128 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(1576800, consensus), 64 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(5255999, consensus), 64 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(5256000, consensus), 32 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(10511999, consensus), 32 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(10512000, consensus), 16 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(26279999, consensus), 16 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(26280000, consensus), 2 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(105120000, consensus), 2 * COIN);
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(105120001, consensus), 0);
 }
 
 BOOST_AUTO_TEST_CASE(subsidy_limit_test)
@@ -60,11 +105,11 @@ BOOST_AUTO_TEST_CASE(subsidy_limit_test)
     CAmount nSum = 0;
     for (int nHeight = 0; nHeight < 14000000; nHeight += 1000) {
         CAmount nSubsidy = GetBlockSubsidy(nHeight, chainParams->GetConsensus());
-        BOOST_CHECK(nSubsidy <= 50 * COIN);
+        BOOST_CHECK(nSubsidy <= 512 * COIN);
         nSum += nSubsidy * 1000;
         BOOST_CHECK(MoneyRange(nSum));
     }
-    BOOST_CHECK_EQUAL(nSum, CAmount{2099999997690000});
+    BOOST_CHECK_EQUAL(nSum, CAmount{93049600000000000});
 }
 
 BOOST_AUTO_TEST_CASE(signet_parse_tests)
@@ -133,8 +178,19 @@ BOOST_AUTO_TEST_CASE(test_assumeutxo)
 {
     const auto params = CreateChainParams(*m_node.args, ChainType::REGTEST);
 
-    // These heights don't have assumeutxo configurations associated, per the contents
-    // of kernel/chainparams.cpp.
+    const auto snapshot_hash = AssumeutxoHash{uint256S("0x40ab1706d1e841c7f42ff1a2fd8ac750e5d638ee383cf4f99b4756e7e0213158")};
+    const auto snapshot_blockhash = uint256S("0x16a581fc2da8f5ad8594b178a0df854ef88a3a892808b7e1ccfad8ea27deb577");
+    const auto snapshot_data = params->AssumeutxoForHeight(110);
+    BOOST_REQUIRE(snapshot_data);
+    BOOST_CHECK_EQUAL(snapshot_data->height, 110);
+    BOOST_CHECK_EQUAL(snapshot_data->hash_serialized.ToString(), snapshot_hash.ToString());
+    BOOST_CHECK_EQUAL(snapshot_data->nChainTx, 111);
+    BOOST_CHECK_EQUAL(snapshot_data->blockhash.ToString(), snapshot_blockhash.ToString());
+
+    const auto snapshot_data_by_hash = params->AssumeutxoForBlockhash(snapshot_blockhash);
+    BOOST_REQUIRE(snapshot_data_by_hash);
+    BOOST_CHECK_EQUAL(snapshot_data_by_hash->height, 110);
+
     std::vector<int> bad_heights{0, 100, 111, 115, 209, 211};
 
     for (auto empty : bad_heights) {
@@ -142,13 +198,7 @@ BOOST_AUTO_TEST_CASE(test_assumeutxo)
         BOOST_CHECK(!out);
     }
 
-    const auto out110 = *params->AssumeutxoForHeight(110);
-    BOOST_CHECK_EQUAL(out110.hash_serialized.ToString(), "6657b736d4fe4db0cbc796789e812d5dba7f5c143764b1b6905612f1830609d1");
-    BOOST_CHECK_EQUAL(out110.nChainTx, 111U);
-
-    const auto out110_2 = *params->AssumeutxoForBlockhash(uint256S("0x696e92821f65549c7ee134edceeeeaaa4105647a3c4fd9f298c0aec0ab50425c"));
-    BOOST_CHECK_EQUAL(out110_2.hash_serialized.ToString(), "6657b736d4fe4db0cbc796789e812d5dba7f5c143764b1b6905612f1830609d1");
-    BOOST_CHECK_EQUAL(out110_2.nChainTx, 111U);
+    BOOST_CHECK(!params->AssumeutxoForBlockhash(uint256S("0x696e92821f65549c7ee134edceeeeaaa4105647a3c4fd9f298c0aec0ab50425c")));
 }
 
 BOOST_AUTO_TEST_CASE(block_malleation)

@@ -30,7 +30,9 @@ class SignMessagesWithPrivTest(NitoTestFramework):
 
         self.log.info('test signing with priv_key')
         priv_key = 'cUeKHd5orzT3mz8P9pxyREHfsWtVfgsfDjiZZBcjUBAaGk1BTj7N'
-        expected_signature = 'INbVnW4e6PeRmsv2Qgu8NuopvrVjkcxob+sX8OcZG0SALhWybUjzMLPdAsXI46YZGb0KQTRii+wWIQzRpG/U+S0='
+        # Deterministic compact signature for Nito's MESSAGE_MAGIC, independently
+        # checked from the fixed WIF/message fixture before updating this vector.
+        expected_signature = 'IF4nEbzlK8rbD0MRHGqMDMw8yts308GxV9Wg4du9tlFMNXa9zRJg37oktxvxQFRzfQr5JdHAEkPgH9LeDvkNF4A='
         signature = self.nodes[0].signmessagewithprivkey(priv_key, message)
         assert_equal(expected_signature, signature)
 

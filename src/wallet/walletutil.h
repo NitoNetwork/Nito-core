@@ -8,10 +8,16 @@
 
 #include <script/descriptor.h>
 #include <util/fs.h>
+#include <util/translation.h>
 
+#include <cstdint>
+#include <string>
 #include <vector>
 
 namespace wallet {
+/** Shared recovery guidance: localized for Qt, original English for RPC. */
+bilingual_str PrunedWalletRecoveryError();
+
 /** (client) version numbers for particular wallet features */
 enum WalletFeature
 {
@@ -33,6 +39,219 @@ enum WalletFeature
 
 bool IsFeatureSupported(int wallet_version, int feature_version);
 WalletFeature GetClosestWalletFeature(int version);
+
+enum class SeedHistoryMode : uint8_t {
+    UNKNOWN = 0,
+    AVAILABLE_BALANCE = 1,
+    FULL_HISTORY = 2,
+};
+
+enum class SeedRecoveryStatus : uint8_t {
+    UNKNOWN = 0,
+    NOT_APPLICABLE = 1,
+    NOT_REQUESTED = 2,
+    PENDING = 3,
+    COMPLETE = 4,
+    FAILED = 5,
+};
+
+/** Persistent status and exact chain target for one recovery obligation. */
+class SeedRecoveryProgress
+{
+public:
+    SeedRecoveryStatus m_status{SeedRecoveryStatus::NOT_APPLICABLE};
+    int m_height{-1};
+    uint256 m_block{};
+
+    bool HasTarget() const { return m_height >= 0 && !m_block.IsNull(); }
+
+    bool IsValid() const
+    {
+        switch (m_status) {
+        case SeedRecoveryStatus::UNKNOWN:
+        case SeedRecoveryStatus::NOT_APPLICABLE:
+        case SeedRecoveryStatus::NOT_REQUESTED:
+            return m_height == -1 && m_block.IsNull();
+        case SeedRecoveryStatus::PENDING:
+        case SeedRecoveryStatus::COMPLETE:
+        case SeedRecoveryStatus::FAILED:
+            return HasTarget();
+        }
+        return false;
+    }
+
+    std::string StatusString() const
+    {
+        switch (m_status) {
+        case SeedRecoveryStatus::NOT_APPLICABLE: return "not_applicable";
+        case SeedRecoveryStatus::NOT_REQUESTED: return "not_requested";
+        case SeedRecoveryStatus::PENDING: return "pending";
+        case SeedRecoveryStatus::COMPLETE: return "complete";
+        case SeedRecoveryStatus::FAILED: return "failed";
+        case SeedRecoveryStatus::UNKNOWN:
+            break;
+        }
+        return "unknown";
+    }
+
+    static SeedRecoveryProgress WithoutTarget(SeedRecoveryStatus status)
+    {
+        SeedRecoveryProgress progress;
+        progress.m_status = status;
+        return progress;
+    }
+
+    static SeedRecoveryProgress At(SeedRecoveryStatus status, int height, const uint256& block_hash)
+    {
+        SeedRecoveryProgress progress;
+        progress.m_status = status;
+        progress.m_height = height;
+        progress.m_block = block_hash;
+        return progress;
+    }
+
+    SERIALIZE_METHODS(SeedRecoveryProgress, obj)
+    {
+        uint8_t status{static_cast<uint8_t>(obj.m_status)};
+        READWRITE(status, obj.m_height, obj.m_block);
+        SER_READ(obj, obj.m_status = static_cast<SeedRecoveryStatus>(status));
+    }
+};
+
+class SeedRecoveryDomainState
+{
+public:
+    SeedRecoveryProgress m_restore_funds;
+    SeedRecoveryProgress m_explicit_history;
+
+    bool IsValid() const { return m_restore_funds.IsValid() && m_explicit_history.IsValid(); }
+
+    SERIALIZE_METHODS(SeedRecoveryDomainState, obj)
+    {
+        READWRITE(obj.m_restore_funds, obj.m_explicit_history);
+    }
+};
+
+/** Persisted recovery-phrase history state for Nito descriptor wallets. */
+class SeedHistoryState
+{
+public:
+    static constexpr uint8_t CURRENT_VERSION{2};
+
+    uint8_t m_version{CURRENT_VERSION};
+    SeedHistoryMode m_mode{SeedHistoryMode::UNKNOWN};
+    int m_full_history_height{-1};
+    uint256 m_full_history_block{};
+    SeedRecoveryDomainState m_transparent;
+    SeedRecoveryDomainState m_orchard;
+
+    bool IsValid() const
+    {
+        if (m_version != CURRENT_VERSION) return false;
+        if (m_mode != SeedHistoryMode::UNKNOWN &&
+            m_mode != SeedHistoryMode::AVAILABLE_BALANCE &&
+            m_mode != SeedHistoryMode::FULL_HISTORY) {
+            return false;
+        }
+        if (m_mode == SeedHistoryMode::FULL_HISTORY) {
+            if (m_full_history_height < 0 || m_full_history_block.IsNull()) return false;
+        } else if (m_full_history_height != -1 || !m_full_history_block.IsNull()) {
+            return false;
+        }
+        return m_transparent.IsValid() && m_orchard.IsValid();
+    }
+
+    std::string ModeString() const
+    {
+        switch (m_mode) {
+        case SeedHistoryMode::AVAILABLE_BALANCE: return "available_balance";
+        case SeedHistoryMode::FULL_HISTORY: return "full_history";
+        case SeedHistoryMode::UNKNOWN:
+            break;
+        }
+        return "unknown";
+    }
+
+    bool FundsRecoveryComplete() const
+    {
+        const auto complete_or_inapplicable = [](const SeedRecoveryProgress& progress) {
+            return progress.m_status == SeedRecoveryStatus::COMPLETE ||
+                   progress.m_status == SeedRecoveryStatus::NOT_APPLICABLE;
+        };
+        return complete_or_inapplicable(m_transparent.m_restore_funds) &&
+               complete_or_inapplicable(m_orchard.m_restore_funds);
+    }
+
+    bool FundsRecoveryPending() const
+    {
+        return m_transparent.m_restore_funds.m_status == SeedRecoveryStatus::PENDING ||
+               m_orchard.m_restore_funds.m_status == SeedRecoveryStatus::PENDING;
+    }
+
+    static SeedHistoryState AvailableBalance(int height, const uint256& block_hash, bool orchard_applicable)
+    {
+        SeedHistoryState state;
+        state.m_mode = SeedHistoryMode::AVAILABLE_BALANCE;
+        state.m_transparent.m_restore_funds = SeedRecoveryProgress::At(SeedRecoveryStatus::PENDING, height, block_hash);
+        state.m_transparent.m_explicit_history = SeedRecoveryProgress::WithoutTarget(SeedRecoveryStatus::NOT_REQUESTED);
+        state.m_orchard.m_restore_funds = orchard_applicable ?
+            SeedRecoveryProgress::At(SeedRecoveryStatus::PENDING, height, block_hash) :
+            SeedRecoveryProgress::WithoutTarget(SeedRecoveryStatus::NOT_APPLICABLE);
+        state.m_orchard.m_explicit_history = orchard_applicable ?
+            SeedRecoveryProgress::WithoutTarget(SeedRecoveryStatus::NOT_REQUESTED) :
+            SeedRecoveryProgress::WithoutTarget(SeedRecoveryStatus::NOT_APPLICABLE);
+        return state;
+    }
+
+    static SeedHistoryState FullHistory(int height, const uint256& block_hash, bool orchard_applicable = true)
+    {
+        SeedHistoryState state;
+        state.m_mode = SeedHistoryMode::FULL_HISTORY;
+        state.m_full_history_height = height;
+        state.m_full_history_block = block_hash;
+        state.m_transparent.m_restore_funds = SeedRecoveryProgress::At(SeedRecoveryStatus::COMPLETE, height, block_hash);
+        state.m_transparent.m_explicit_history = SeedRecoveryProgress::At(SeedRecoveryStatus::COMPLETE, height, block_hash);
+        state.m_orchard.m_restore_funds = orchard_applicable ?
+            SeedRecoveryProgress::At(SeedRecoveryStatus::COMPLETE, height, block_hash) :
+            SeedRecoveryProgress::WithoutTarget(SeedRecoveryStatus::NOT_APPLICABLE);
+        state.m_orchard.m_explicit_history = orchard_applicable ?
+            SeedRecoveryProgress::At(SeedRecoveryStatus::COMPLETE, height, block_hash) :
+            SeedRecoveryProgress::WithoutTarget(SeedRecoveryStatus::NOT_APPLICABLE);
+        return state;
+    }
+
+    void MarkFunds(bool orchard, SeedRecoveryStatus status, int height, const uint256& block_hash)
+    {
+        SeedRecoveryDomainState& domain{orchard ? m_orchard : m_transparent};
+        domain.m_restore_funds = SeedRecoveryProgress::At(status, height, block_hash);
+    }
+
+    void MarkHistory(bool orchard, SeedRecoveryStatus status, int height, const uint256& block_hash)
+    {
+        SeedRecoveryDomainState& domain{orchard ? m_orchard : m_transparent};
+        domain.m_explicit_history = SeedRecoveryProgress::At(status, height, block_hash);
+    }
+
+    SERIALIZE_METHODS(SeedHistoryState, obj)
+    {
+        SER_WRITE(obj, {
+            const uint8_t version{CURRENT_VERSION};
+            const uint8_t mode{static_cast<uint8_t>(obj.m_mode)};
+            s << version << mode << obj.m_full_history_height << obj.m_full_history_block;
+            s << obj.m_transparent << obj.m_orchard;
+        });
+        SER_READ(obj, {
+            uint8_t mode{0};
+            s >> obj.m_version;
+            if (obj.m_version != CURRENT_VERSION) {
+                throw std::ios_base::failure("Unsupported seed history state version");
+            }
+            s >> mode >> obj.m_full_history_height >> obj.m_full_history_block;
+            obj.m_mode = static_cast<SeedHistoryMode>(mode);
+            s >> obj.m_transparent >> obj.m_orchard;
+        });
+    }
+};
 
 enum WalletFlags : uint64_t {
     // wallet flags in the upper section (> 1 << 31) will lead to not opening the wallet if flag is unknown
@@ -76,6 +295,11 @@ enum WalletFlags : uint64_t {
 
     //! Indicates that the wallet needs an external signer
     WALLET_FLAG_EXTERNAL_SIGNER = (1ULL << 35),
+
+    //! Indicates that the final 64-byte BIP39 seed is persisted in the
+    //! versioned derived-seed record. Older clients must refuse this flag
+    //! rather than silently deriving with an empty BIP39 passphrase.
+    WALLET_FLAG_BIP39_DERIVED_SEED = (1ULL << 36),
 };
 
 //! Get the path of the wallet directory.

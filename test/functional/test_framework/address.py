@@ -32,10 +32,16 @@ from test_framework.segwit_addr import (
 )
 
 
-ADDRESS_BCRT1_UNSPENDABLE = 'bcrt1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3xueyj'
-ADDRESS_BCRT1_UNSPENDABLE_DESCRIPTOR = 'addr(bcrt1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3xueyj)#juyq9d97'
+ADDRESS_NRT1_UNSPENDABLE = 'nrt1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq6kw6l5'
+ADDRESS_NRT1_UNSPENDABLE_DESCRIPTOR = 'addr(nrt1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq6kw6l5)#w4gr55jc'
 # Coins sent to this address can be spent with a witness stack of just OP_TRUE
-ADDRESS_BCRT1_P2WSH_OP_TRUE = 'bcrt1qft5p2uhsdcdc3l2ua4ap5qqfg4pjaqlp250x7us7a8qqhrxrxfsqseac85'
+ADDRESS_NRT1_P2WSH_OP_TRUE = 'nrt1qft5p2uhsdcdc3l2ua4ap5qqfg4pjaqlp250x7us7a8qqhrxrxfsqmf0muj'
+
+# Backward-compatible aliases for upstream test names. Values are Nito regtest
+# addresses, not Bitcoin Core bcrt1 addresses.
+ADDRESS_BCRT1_UNSPENDABLE = ADDRESS_NRT1_UNSPENDABLE
+ADDRESS_BCRT1_UNSPENDABLE_DESCRIPTOR = ADDRESS_NRT1_UNSPENDABLE_DESCRIPTOR
+ADDRESS_BCRT1_P2WSH_OP_TRUE = ADDRESS_NRT1_P2WSH_OP_TRUE
 
 
 class AddressType(enum.Enum):
@@ -47,9 +53,9 @@ class AddressType(enum.Enum):
 b58chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
 
-def create_deterministic_address_bcrt1_p2tr_op_true():
+def create_deterministic_address_nrt1_p2tr_op_true():
     """
-    Generates a deterministic bech32m address (segwit v1 output) that
+    Generates a deterministic Nito regtest bech32m address (segwit v1 output) that
     can be spent with a witness stack of OP_TRUE and the control block
     with internal public key (script-path spending).
 
@@ -57,8 +63,12 @@ def create_deterministic_address_bcrt1_p2tr_op_true():
     """
     internal_key = (1).to_bytes(32, 'big')
     address = output_key_to_p2tr(taproot_construct(internal_key, [(None, CScript([OP_TRUE]))]).output_pubkey)
-    assert_equal(address, 'bcrt1p9yfmy5h72durp7zrhlw9lf7jpwjgvwdg0jr0lqmmjtgg83266lqsekaqka')
+    assert_equal(address, 'nrt1p9yfmy5h72durp7zrhlw9lf7jpwjgvwdg0jr0lqmmjtgg83266lqsjx0rdm')
     return (address, internal_key)
+
+def create_deterministic_address_bcrt1_p2tr_op_true():
+    """Compatibility wrapper for upstream test imports; returns a Nito nrt1 address."""
+    return create_deterministic_address_nrt1_p2tr_op_true()
 
 
 def byte_to_base58(b, version):
@@ -134,7 +144,7 @@ def program_to_witness(version, program, main=False):
     assert 0 <= version <= 16
     assert 2 <= len(program) <= 40
     assert version > 0 or len(program) in [20, 32]
-    return encode_segwit_address("bc" if main else "bcrt", version, program)
+    return encode_segwit_address("nito" if main else "nrt", version, program)
 
 def script_to_p2wsh(script, main=False):
     script = check_script(script)
@@ -170,7 +180,7 @@ def check_script(script):
 
 def bech32_to_bytes(address):
     hrp = address.split('1')[0]
-    if hrp not in ['bc', 'tb', 'bcrt']:
+    if hrp not in ['nito', 'tn', 'nrt', 'bc', 'tb', 'bcrt']:
         return (None, None)
     version, payload = decode_segwit_address(hrp, address)
     if version is None:

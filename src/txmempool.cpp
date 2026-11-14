@@ -26,6 +26,7 @@
 #include <util/translation.h>
 #include <validationinterface.h>
 
+#include <algorithm>
 #include <cmath>
 #include <numeric>
 #include <optional>
@@ -454,6 +455,13 @@ void CTxMemPool::addUnchecked(const CTxMemPoolEntry &entry, setEntries &setAnces
         mapNextTx.insert(std::make_pair(&tx.vin[i].prevout, &tx));
         setParentTransactions.insert(tx.vin[i].prevout.hash);
     }
+    if (tx.HasPrivateBundle()) {
+        for (const auto& action : tx.m_private_bundle->effects.actions) {
+            const auto [nullifier_it, inserted] = mapPrivateNullifierTx.emplace(action.nullifier, &tx);
+            (void)nullifier_it;
+            Assume(inserted);
+        }
+    }
     // Don't bother worrying about child transactions of this one.
     // Normal case of a new transaction arriving is that there can't be any
     // children, because such children would be orphans.
@@ -503,8 +511,14 @@ void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason)
         std::chrono::duration_cast<std::chrono::duration<std::uint64_t>>(it->GetTime()).count()
     );
 
-    for (const CTxIn& txin : it->GetTx().vin)
+    const CTransaction& tx = it->GetTx();
+    for (const CTxIn& txin : tx.vin)
         mapNextTx.erase(txin.prevout);
+    if (tx.HasPrivateBundle()) {
+        for (const auto& action : tx.m_private_bundle->effects.actions) {
+            mapPrivateNullifierTx.erase(action.nullifier);
+        }
+    }
 
     RemoveUnbroadcastTx(it->GetTx().GetHash(), true /* add logging because unchecked */);
 
@@ -622,6 +636,18 @@ void CTxMemPool::removeConflicts(const CTransaction &tx)
             }
         }
     }
+    if (tx.HasPrivateBundle()) {
+        for (const auto& action : tx.m_private_bundle->effects.actions) {
+            auto it = mapPrivateNullifierTx.find(action.nullifier);
+            if (it != mapPrivateNullifierTx.end()) {
+                const CTransaction& txConflict = *it->second;
+                if (txConflict != tx) {
+                    ClearPrioritisation(txConflict.GetHash());
+                    removeRecursive(txConflict, MemPoolRemovalReason::CONFLICT);
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -691,6 +717,13 @@ void CTxMemPool::check(const CCoinsViewCache& active_coins_tip, int64_t spendhei
             assert(it3->first == &txin.prevout);
             assert(it3->second == &tx);
         }
+        if (tx.HasPrivateBundle()) {
+            for (const auto& action : tx.m_private_bundle->effects.actions) {
+                const auto it3 = mapPrivateNullifierTx.find(action.nullifier);
+                assert(it3 != mapPrivateNullifierTx.end());
+                assert(it3->second == &tx);
+            }
+        }
         auto comp = [](const CTxMemPoolEntry& a, const CTxMemPoolEntry& b) -> bool {
             return a.GetTx().GetHash() == b.GetTx().GetHash();
         };
@@ -737,7 +770,14 @@ void CTxMemPool::check(const CCoinsViewCache& active_coins_tip, int64_t spendhei
         TxValidationState dummy_state; // Not used. CheckTxInputs() should always pass
         CAmount txfee = 0;
         assert(!tx.IsCoinBase());
-        assert(Consensus::CheckTxInputs(tx, dummy_state, mempoolDuplicate, spendheight, txfee));
+        assert(Consensus::CheckTxInputs(
+            tx,
+            dummy_state,
+            mempoolDuplicate,
+            spendheight,
+            txfee,
+            /*check_private_proofs=*/true,
+            PrivateProofCacheMode::STORE));
         for (const auto& input: tx.vin) mempoolDuplicate.SpendCoin(input.prevout);
         AddCoins(mempoolDuplicate, tx, std::numeric_limits<int>::max());
     }
@@ -747,6 +787,22 @@ void CTxMemPool::check(const CCoinsViewCache& active_coins_tip, int64_t spendhei
         const CTransaction& tx = it2->GetTx();
         assert(it2 != mapTx.end());
         assert(&tx == it->second);
+    }
+    for (const auto& [nullifier, tx_ptr] : mapPrivateNullifierTx) {
+        indexed_transaction_set::const_iterator it2 = mapTx.find(tx_ptr->GetHash());
+        assert(it2 != mapTx.end());
+        assert(&it2->GetTx() == tx_ptr);
+        assert(tx_ptr->HasPrivateBundle());
+        const auto& actions = tx_ptr->m_private_bundle->effects.actions;
+        bool nullifier_found = false;
+        for (const auto& action : actions) {
+            if (action.nullifier == nullifier) {
+                nullifier_found = true;
+                break;
+            }
+        }
+        (void)nullifier_found;
+        assert(nullifier_found);
     }
 
     assert(totalTxSize == checkTotal);
@@ -944,6 +1000,12 @@ const CTransaction* CTxMemPool::GetConflictTx(const COutPoint& prevout) const
     return it == mapNextTx.end() ? nullptr : it->second;
 }
 
+const CTransaction* CTxMemPool::GetPrivateNullifierConflict(const uint256& nullifier) const
+{
+    const auto it = mapPrivateNullifierTx.find(nullifier);
+    return it == mapPrivateNullifierTx.end() ? nullptr : it->second;
+}
+
 std::optional<CTxMemPool::txiter> CTxMemPool::GetIter(const uint256& txid) const
 {
     auto it = mapTx.find(txid);
@@ -1024,7 +1086,9 @@ void CCoinsViewMemPool::Reset()
 size_t CTxMemPool::DynamicMemoryUsage() const {
     LOCK(cs);
     // Estimate the overhead of mapTx to be 15 pointers + an allocation, as no exact formula for boost::multi_index_contained is implemented.
-    return memusage::MallocUsage(sizeof(CTxMemPoolEntry) + 15 * sizeof(void*)) * mapTx.size() + memusage::DynamicUsage(mapNextTx) + memusage::DynamicUsage(mapDeltas) + memusage::DynamicUsage(txns_randomized) + cachedInnerUsage;
+    return memusage::MallocUsage(sizeof(CTxMemPoolEntry) + 15 * sizeof(void*)) * mapTx.size() +
+           memusage::DynamicUsage(mapNextTx) + memusage::DynamicUsage(mapPrivateNullifierTx) +
+           memusage::DynamicUsage(mapDeltas) + memusage::DynamicUsage(txns_randomized) + cachedInnerUsage;
 }
 
 void CTxMemPool::RemoveUnbroadcastTx(const uint256& txid, const bool unchecked) {

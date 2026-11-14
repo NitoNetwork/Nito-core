@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <set>
 
 #include <QColor>
 #include <QDateTime>
@@ -32,6 +33,9 @@
 #include <QLatin1String>
 #include <QList>
 
+namespace {
+constexpr const char* AVAILABLE_BALANCE_CURRENT_TX_KEY{"nito_available_balance_current"};
+} // namespace
 
 // Amount column is right-aligned it contains numbers
 static int column_alignments[] = {
@@ -109,18 +113,32 @@ public:
 
     /* Query entire wallet anew from core.
      */
-    void refreshWallet(interfaces::Wallet& wallet)
+    void refreshWallet(interfaces::Wallet& wallet, bool dispatch_notifications = true)
     {
         assert(!m_loaded);
+        cachedWallet.clear();
         {
+            std::set<uint256> wallet_txids;
             for (const auto& wtx : wallet.getWalletTxs()) {
+                if (!wtx.tx) continue;
+                if (wtx.value_map.count(AVAILABLE_BALANCE_CURRENT_TX_KEY) == 0) {
+                    wallet_txids.insert(wtx.tx->GetHash());
+                }
                 if (TransactionRecord::showTransaction()) {
                     cachedWallet.append(TransactionRecord::decomposeTransaction(wtx));
                 }
             }
+            for (const auto& note : wallet.listPrivateCoins()) {
+                if (!note.spendable || note.amount <= 0 || note.txid.IsNull()) continue;
+                if (wallet_txids.count(note.txid) != 0) continue;
+                cachedWallet.append(TransactionRecord::decomposePrivateNote(note));
+            }
+            std::sort(cachedWallet.begin(), cachedWallet.end(), TxLessThan());
         }
         m_loaded = true;
-        DispatchNotifications();
+        if (dispatch_notifications) {
+            DispatchNotifications();
+        }
     }
 
     /* Update our model of the wallet incrementally, to synchronize our model of the wallet
@@ -131,6 +149,7 @@ public:
     void updateWallet(interfaces::Wallet& wallet, const uint256 &hash, int status, bool showTransaction)
     {
         qDebug() << "TransactionTablePriv::updateWallet: " + QString::fromStdString(hash.ToString()) + " " + QString::number(status);
+        const bool notify_new_transaction = status == CT_NEW;
 
         // Find bounds of this transaction in model
         QList<TransactionRecord>::iterator lower = std::lower_bound(
@@ -140,6 +159,9 @@ public:
         int lowerIndex = (lower - cachedWallet.begin());
         int upperIndex = (upper - cachedWallet.begin());
         bool inModel = (lower != upper);
+        if (showTransaction && !wallet.getWalletTx(hash).tx) {
+            showTransaction = false;
+        }
 
         if(status == CT_UPDATED)
         {
@@ -158,8 +180,21 @@ public:
         case CT_NEW:
             if(inModel)
             {
-                qWarning() << "TransactionTablePriv::updateWallet: Warning: Got CT_NEW, but transaction is already in model";
-                break;
+                const bool only_private_note_rows = std::all_of(lower, upper, [](const TransactionRecord& rec) {
+                    return rec.is_private_note_only;
+                });
+                if (!only_private_note_rows) {
+                    qWarning() << "TransactionTablePriv::updateWallet: Warning: Got CT_NEW, but transaction is already in model";
+                    break;
+                }
+                parent->beginRemoveRows(QModelIndex(), lowerIndex, upperIndex-1);
+                cachedWallet.erase(lower, upper);
+                parent->endRemoveRows();
+                lower = std::lower_bound(cachedWallet.begin(), cachedWallet.end(), hash, TxLessThan());
+                upper = std::upper_bound(cachedWallet.begin(), cachedWallet.end(), hash, TxLessThan());
+                lowerIndex = (lower - cachedWallet.begin());
+                upperIndex = (upper - cachedWallet.begin());
+                inModel = false;
             }
             if(showTransaction)
             {
@@ -175,7 +210,8 @@ public:
                         TransactionRecord::decomposeTransaction(wtx);
                 if(!toInsert.isEmpty()) /* only if something to insert */
                 {
-                    parent->beginInsertRows(QModelIndex(), lowerIndex, lowerIndex+toInsert.size()-1);
+                    const int upper_insert_index = lowerIndex + toInsert.size() - 1;
+                    parent->beginInsertRows(QModelIndex(), lowerIndex, upper_insert_index);
                     int insert_idx = lowerIndex;
                     for (const TransactionRecord &rec : toInsert)
                     {
@@ -183,6 +219,9 @@ public:
                         insert_idx += 1;
                     }
                     parent->endInsertRows();
+                    if (notify_new_transaction) {
+                        Q_EMIT parent->transactionInserted(QModelIndex(), lowerIndex, upper_insert_index);
+                    }
                 }
             }
             break;
@@ -198,10 +237,29 @@ public:
             parent->endRemoveRows();
             break;
         case CT_UPDATED:
-            // Miscellaneous updates -- nothing to do, status update will take care of this, and is only computed for
-            // visible transactions.
-            for (int i = lowerIndex; i < upperIndex; i++) {
-                TransactionRecord *rec = &cachedWallet[i];
+            // History rebuilds can hydrate parent transactions after a wallet
+            // transaction was first shown, changing its debit/credit breakdown.
+            if (showTransaction && inModel) {
+                interfaces::WalletTx wtx = wallet.getWalletTx(hash);
+                if (wtx.tx) {
+                    QList<TransactionRecord> updated_records = TransactionRecord::decomposeTransaction(wtx);
+                    parent->beginRemoveRows(QModelIndex(), lowerIndex, upperIndex - 1);
+                    cachedWallet.erase(lower, upper);
+                    parent->endRemoveRows();
+                    if (!updated_records.isEmpty()) {
+                        parent->beginInsertRows(QModelIndex(), lowerIndex, lowerIndex + updated_records.size() - 1);
+                        int insert_idx = lowerIndex;
+                        for (const TransactionRecord& rec : updated_records) {
+                            cachedWallet.insert(insert_idx, rec);
+                            ++insert_idx;
+                        }
+                        parent->endInsertRows();
+                    }
+                    break;
+                }
+            }
+            for (int i = lowerIndex; i < upperIndex; ++i) {
+                TransactionRecord* rec = &cachedWallet[i];
                 rec->status.needsUpdate = true;
             }
             break;
@@ -224,17 +282,22 @@ public:
             interfaces::WalletTxStatus wtx;
             int numBlocks;
             int64_t block_time;
-            if (!cur_block_hash.IsNull() && rec->statusUpdateNeeded(cur_block_hash) && wallet.tryGetTxStatus(rec->hash, wtx, numBlocks, block_time)) {
-                rec->updateStatus(wtx, cur_block_hash, numBlocks, block_time);
+            if (!cur_block_hash.IsNull() && rec->statusUpdateNeeded(cur_block_hash)) {
+                const bool updated = rec->is_private_note_only
+                    ? wallet.tryGetPrivateNoteStatus(rec->private_note_cmx, wtx, numBlocks, block_time)
+                    : wallet.tryGetTxStatus(rec->hash, wtx, numBlocks, block_time);
+                if (updated) {
+                    rec->updateStatus(wtx, cur_block_hash, numBlocks, block_time);
+                }
             }
             return rec;
         }
         return nullptr;
     }
 
-    QString describe(interfaces::Node& node, interfaces::Wallet& wallet, TransactionRecord* rec, NitoUnit unit)
+    QString describe(interfaces::Node& node, interfaces::Wallet& wallet, TransactionRecord* rec, NitoUnit unit, bool expand_input_addresses = false)
     {
-        return TransactionDesc::toHTML(node, wallet, rec, unit);
+        return TransactionDesc::toHTML(node, wallet, rec, unit, expand_input_addresses);
     }
 
     QString getTxHex(interfaces::Wallet& wallet, TransactionRecord *rec)
@@ -281,6 +344,15 @@ void TransactionTableModel::updateTransaction(const QString &hash, int status, b
     updated.SetHex(hash.toStdString());
 
     priv->updateWallet(walletModel->wallet(), updated, status, showTransaction);
+}
+
+void TransactionTableModel::refreshWallet()
+{
+    beginResetModel();
+    priv->m_loaded = false;
+    priv->refreshWallet(walletModel->wallet(), /*dispatch_notifications=*/false);
+    endResetModel();
+    priv->DispatchNotifications();
 }
 
 void TransactionTableModel::updateConfirmations()
@@ -370,6 +442,18 @@ QString TransactionTableModel::lookupAddress(const std::string &address, bool to
 
 QString TransactionTableModel::formatTxType(const TransactionRecord *wtx) const
 {
+    if (wtx->is_private) {
+        if (wtx->type == TransactionRecord::PrivateUnshield) {
+            return tr("Bech32x to transparent");
+        }
+        if (wtx->type == TransactionRecord::RecvFromOther || wtx->type == TransactionRecord::RecvWithAddress) {
+            return tr("Private received");
+        }
+        if (wtx->type == TransactionRecord::SendToOther || wtx->type == TransactionRecord::SendToAddress) {
+            return tr("Private sent");
+        }
+    }
+
     switch(wtx->type)
     {
     case TransactionRecord::RecvWithAddress:
@@ -379,6 +463,10 @@ QString TransactionTableModel::formatTxType(const TransactionRecord *wtx) const
     case TransactionRecord::SendToAddress:
     case TransactionRecord::SendToOther:
         return tr("Sent to");
+    case TransactionRecord::PrivateUnshield:
+        return tr("Bech32x to transparent");
+    case TransactionRecord::InternalTransfer:
+        return tr("Internal transfer");
     case TransactionRecord::Generated:
         return tr("Mined");
     default:
@@ -398,6 +486,9 @@ QVariant TransactionTableModel::txAddressDecoration(const TransactionRecord *wtx
     case TransactionRecord::SendToAddress:
     case TransactionRecord::SendToOther:
         return QIcon(":/icons/tx_output");
+    case TransactionRecord::PrivateUnshield:
+    case TransactionRecord::InternalTransfer:
+        return QIcon(":/icons/tx_inout");
     default:
         return QIcon(":/icons/tx_inout");
     }
@@ -409,6 +500,28 @@ QString TransactionTableModel::formatTxToAddress(const TransactionRecord *wtx, b
     if (tooltip && wtx->involvesWatchAddress) {
         // Mark transactions involving watch-only addresses by adding " (watch-only)"
         watchAddress = QLatin1String(" (") + tr("watch-only") + QLatin1Char(')');
+    }
+
+    if (wtx->is_multi_recipient) {
+        return tr("Multiple recipients") + watchAddress;
+    }
+
+    if (wtx->type == TransactionRecord::PrivateUnshield) {
+        if (!wtx->address.empty()) {
+            return lookupAddress(wtx->address, tooltip) + watchAddress;
+        }
+        return tr("(n/a)") + watchAddress;
+    }
+
+    if (wtx->is_private) {
+        return tr("Bech32x private note") + watchAddress;
+    }
+
+    if (wtx->type == TransactionRecord::InternalTransfer) {
+        if (!wtx->address.empty()) {
+            return lookupAddress(wtx->address, tooltip) + watchAddress;
+        }
+        return tr("own wallet") + watchAddress;
     }
 
     switch(wtx->type)
@@ -507,6 +620,10 @@ QString TransactionTableModel::formatTooltip(const TransactionRecord *rec) const
     {
         tooltip += QString(" ") + formatTxToAddress(rec, true);
     }
+    else if (rec->type == TransactionRecord::PrivateUnshield || rec->type == TransactionRecord::InternalTransfer)
+    {
+        tooltip += QString(" ") + formatTxToAddress(rec, true);
+    }
     return tooltip;
 }
 
@@ -601,6 +718,8 @@ QVariant TransactionTableModel::data(const QModelIndex &index, int role) const
         return txWatchonlyDecoration(rec);
     case LongDescriptionRole:
         return priv->describe(walletModel->node(), walletModel->wallet(), rec, walletModel->getOptionsModel()->getDisplayUnit());
+    case ExpandedInputAddressesRole:
+        return priv->describe(walletModel->node(), walletModel->wallet(), rec, walletModel->getOptionsModel()->getDisplayUnit(), true);
     case AddressRole:
         return QString::fromStdString(rec->address);
     case LabelRole:

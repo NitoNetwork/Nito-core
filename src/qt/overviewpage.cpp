@@ -22,6 +22,7 @@
 #include <QDateTime>
 #include <QPainter>
 #include <QStatusTipEvent>
+#include <QStringList>
 
 #include <algorithm>
 #include <map>
@@ -146,10 +147,7 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
 {
     ui->setupUi(this);
 
-    // use a SingleColorIcon for the "out of sync warning" icon
-    QIcon icon = m_platform_style->SingleColorIcon(QStringLiteral(":/icons/warning"));
-    ui->labelTransactionsStatus->setIcon(icon);
-    ui->labelWalletStatus->setIcon(icon);
+    updateStatusIcons();
 
     // Recent transactions
     ui->listTransactions->setItemDelegate(txdelegate);
@@ -196,6 +194,20 @@ OverviewPage::~OverviewPage()
 void OverviewPage::setBalance(const interfaces::WalletBalances& balances)
 {
     NitoUnit unit = walletModel->getOptionsModel()->getDisplayUnit();
+    if (m_available_balance_sync_pending != balances.available_balance_sync_pending) {
+        m_available_balance_sync_pending = balances.available_balance_sync_pending;
+        updateStatusIcons();
+        updateAlertLabel();
+    }
+    const CAmount transparent_available = balances.balance;
+    const CAmount transparent_pending = balances.unconfirmed_balance;
+    const bool show_private_split = walletModel->privateTxUiEnabled();
+    const CAmount private_available = show_private_split ? balances.private_balance : 0;
+    const CAmount private_pending = show_private_split ? balances.unconfirmed_private_balance : 0;
+    const CAmount available_total = transparent_available + private_available;
+    const CAmount pending_total = transparent_pending + private_pending;
+    const CAmount total_balance = available_total + pending_total + balances.immature_balance;
+
     if (walletModel->wallet().isLegacy()) {
         if (walletModel->wallet().privateKeysDisabled()) {
             ui->labelBalance->setText(NitoUnits::formatWithPrivacy(unit, balances.watch_only_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
@@ -203,21 +215,28 @@ void OverviewPage::setBalance(const interfaces::WalletBalances& balances)
             ui->labelImmature->setText(NitoUnits::formatWithPrivacy(unit, balances.immature_watch_only_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
             ui->labelTotal->setText(NitoUnits::formatWithPrivacy(unit, balances.watch_only_balance + balances.unconfirmed_watch_only_balance + balances.immature_watch_only_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
         } else {
-            ui->labelBalance->setText(NitoUnits::formatWithPrivacy(unit, balances.balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
-            ui->labelUnconfirmed->setText(NitoUnits::formatWithPrivacy(unit, balances.unconfirmed_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
+            ui->labelBalance->setText(NitoUnits::formatWithPrivacy(unit, available_total, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
+            ui->labelUnconfirmed->setText(NitoUnits::formatWithPrivacy(unit, pending_total, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
             ui->labelImmature->setText(NitoUnits::formatWithPrivacy(unit, balances.immature_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
-            ui->labelTotal->setText(NitoUnits::formatWithPrivacy(unit, balances.balance + balances.unconfirmed_balance + balances.immature_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
+            ui->labelTotal->setText(NitoUnits::formatWithPrivacy(unit, total_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
             ui->labelWatchAvailable->setText(NitoUnits::formatWithPrivacy(unit, balances.watch_only_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
             ui->labelWatchPending->setText(NitoUnits::formatWithPrivacy(unit, balances.unconfirmed_watch_only_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
             ui->labelWatchImmature->setText(NitoUnits::formatWithPrivacy(unit, balances.immature_watch_only_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
             ui->labelWatchTotal->setText(NitoUnits::formatWithPrivacy(unit, balances.watch_only_balance + balances.unconfirmed_watch_only_balance + balances.immature_watch_only_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
         }
     } else {
-        ui->labelBalance->setText(NitoUnits::formatWithPrivacy(unit, balances.balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
-        ui->labelUnconfirmed->setText(NitoUnits::formatWithPrivacy(unit, balances.unconfirmed_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
+        ui->labelBalance->setText(NitoUnits::formatWithPrivacy(unit, available_total, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
+        ui->labelUnconfirmed->setText(NitoUnits::formatWithPrivacy(unit, pending_total, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
         ui->labelImmature->setText(NitoUnits::formatWithPrivacy(unit, balances.immature_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
-        ui->labelTotal->setText(NitoUnits::formatWithPrivacy(unit, balances.balance + balances.unconfirmed_balance + balances.immature_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
+        ui->labelTotal->setText(NitoUnits::formatWithPrivacy(unit, total_balance, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
     }
+    ui->labelTransparentBalanceText->setVisible(show_private_split);
+    ui->labelTransparentBalance->setVisible(show_private_split);
+    ui->labelPrivateBalanceText->setVisible(show_private_split);
+    ui->labelPrivateBalance->setVisible(show_private_split);
+    ui->labelTransparentBalance->setText(NitoUnits::formatWithPrivacy(unit, transparent_available, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
+    ui->labelPrivateBalance->setText(NitoUnits::formatWithPrivacy(unit, private_available, NitoUnits::SeparatorStyle::ALWAYS, m_privacy));
+
     // only show immature (newly mined) balance if it's non-zero, so as not to complicate things
     // for the non-mining users
     bool showImmature = balances.immature_balance != 0;
@@ -275,12 +294,21 @@ void OverviewPage::setWalletModel(WalletModel *model)
         connect(filter.get(), &TransactionFilterProxy::rowsInserted, this, &OverviewPage::LimitTransactionRows);
         connect(filter.get(), &TransactionFilterProxy::rowsRemoved, this, &OverviewPage::LimitTransactionRows);
         connect(filter.get(), &TransactionFilterProxy::rowsMoved, this, &OverviewPage::LimitTransactionRows);
+        connect(filter.get(), &QAbstractItemModel::modelReset, this, &OverviewPage::LimitTransactionRows);
+        connect(filter.get(), &QAbstractItemModel::layoutChanged, this, &OverviewPage::LimitTransactionRows);
         LimitTransactionRows();
         // Keep up to date with wallet
         setBalance(model->getCachedBalance());
         connect(model, &WalletModel::balanceChanged, this, &OverviewPage::setBalance);
+        connect(model, &WalletModel::showProgress, this, &OverviewPage::setWalletScanProgress);
+        connect(model, &WalletModel::privateTxActivationChanged, this, [this](bool) {
+            setBalance(walletModel->getCachedBalance());
+        });
 
         connect(model->getOptionsModel(), &OptionsModel::displayUnitChanged, this, &OverviewPage::updateDisplayUnit);
+        connect(model->getOptionsModel(), &OptionsModel::bech32xOrchardReceiveAddressesChanged, this, [this](bool) {
+            setBalance(walletModel->getCachedBalance());
+        });
 
         interfaces::Wallet& wallet = model->wallet();
         updateWatchOnlyLabels(wallet.haveWatchOnly() && !wallet.privateKeysDisabled());
@@ -289,16 +317,14 @@ void OverviewPage::setWalletModel(WalletModel *model)
         });
     }
 
-    // update the display unit, to not use the default ("BTC")
+    // update the display unit, to not use the default ("NITO")
     updateDisplayUnit();
 }
 
 void OverviewPage::changeEvent(QEvent* e)
 {
     if (e->type() == QEvent::PaletteChange) {
-        QIcon icon = m_platform_style->SingleColorIcon(QStringLiteral(":/icons/warning"));
-        ui->labelTransactionsStatus->setIcon(icon);
-        ui->labelWalletStatus->setIcon(icon);
+        updateStatusIcons();
     }
 
     QWidget::changeEvent(e);
@@ -331,14 +357,14 @@ void OverviewPage::updateDisplayUnit()
 
 void OverviewPage::updateAlerts(const QString &warnings)
 {
-    this->ui->labelAlerts->setVisible(!warnings.isEmpty());
-    this->ui->labelAlerts->setText(warnings);
+    m_status_bar_warnings = warnings;
+    updateAlertLabel();
 }
 
 void OverviewPage::showOutOfSyncWarning(bool fShow)
 {
-    ui->labelWalletStatus->setVisible(fShow);
-    ui->labelTransactionsStatus->setVisible(fShow);
+    m_out_of_sync_warning = fShow;
+    updateStatusIcons();
 }
 
 void OverviewPage::setMonospacedFont(const QFont& f)
@@ -351,4 +377,43 @@ void OverviewPage::setMonospacedFont(const QFont& f)
     ui->labelWatchPending->setFont(f);
     ui->labelWatchImmature->setFont(f);
     ui->labelWatchTotal->setFont(f);
+}
+
+void OverviewPage::setWalletScanProgress(const QString& title, int progress)
+{
+    Q_UNUSED(title);
+    m_wallet_scan_in_progress = progress < 100;
+    updateStatusIcons();
+}
+
+void OverviewPage::updateAlertLabel()
+{
+    QStringList messages;
+    if (!m_status_bar_warnings.isEmpty()) {
+        messages.append(m_status_bar_warnings);
+    }
+    if (m_available_balance_sync_pending) {
+        messages.append(tr("The displayed information may be out of date. Your wallet automatically synchronizes with the Nito network after a connection is established, but this process has not completed yet."));
+    }
+
+    const QString text = messages.join(QStringLiteral("\n"));
+    ui->labelAlerts->setVisible(!text.isEmpty());
+    ui->labelAlerts->setText(text);
+}
+
+void OverviewPage::updateStatusIcons()
+{
+    const bool show_status = m_out_of_sync_warning || m_wallet_scan_in_progress || m_available_balance_sync_pending;
+    const QString icon_path = m_wallet_scan_in_progress ? QStringLiteral(":/icons/transaction_3") : QStringLiteral(":/icons/warning");
+    const QIcon icon = m_platform_style->SingleColorIcon(icon_path);
+    const QString tooltip = m_wallet_scan_in_progress
+        ? tr("Wallet scan in progress. Transparent and private balances may still be loading.")
+        : tr("The displayed information may be out of date. Your wallet automatically synchronizes with the Nito network after a connection is established, but this process has not completed yet.");
+
+    ui->labelWalletStatus->setIcon(icon);
+    ui->labelTransactionsStatus->setIcon(icon);
+    ui->labelWalletStatus->setToolTip(tooltip);
+    ui->labelTransactionsStatus->setToolTip(tooltip);
+    ui->labelWalletStatus->setVisible(show_status);
+    ui->labelTransactionsStatus->setVisible(show_status);
 }

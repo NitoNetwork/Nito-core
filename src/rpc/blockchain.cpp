@@ -42,6 +42,7 @@
 #include <univalue.h>
 #include <util/check.h>
 #include <util/fs.h>
+#include <util/overflow.h>
 #include <util/strencodings.h>
 #include <util/translation.h>
 #include <validation.h>
@@ -54,6 +55,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 using kernel::CCoinsStats;
 using kernel::CoinStatsHashType;
@@ -1223,6 +1225,8 @@ RPCHelpMan getblockchaininfo()
             {
                 {RPCResult::Type::STR, "chain", "current network name (main, test, signet, regtest)"},
                 {RPCResult::Type::NUM, "blocks", "the height of the most-work fully-validated chain. The genesis block has height 0"},
+                {RPCResult::Type::NUM, "privateTxActivationHeight", "height at which private transactions become valid, or -1 if disabled"},
+                {RPCResult::Type::BOOL, "activated", "whether private transactions are active at the current tip"},
                 {RPCResult::Type::NUM, "headers", "the current number of headers we have validated"},
                 {RPCResult::Type::STR, "bestblockhash", "the hash of the currently best block"},
                 {RPCResult::Type::NUM, "difficulty", "the current difficulty"},
@@ -1250,9 +1254,12 @@ RPCHelpMan getblockchaininfo()
 
     const CBlockIndex& tip{*CHECK_NONFATAL(active_chainstate.m_chain.Tip())};
     const int height{tip.nHeight};
+    const int private_activation_height{chainman.GetParams().GetConsensus().privateTxActivationHeight};
     UniValue obj(UniValue::VOBJ);
     obj.pushKV("chain", chainman.GetParams().GetChainTypeString());
     obj.pushKV("blocks", height);
+    obj.pushKV("privateTxActivationHeight", private_activation_height);
+    obj.pushKV("activated", private_activation_height >= 0 && height >= private_activation_height);
     obj.pushKV("headers", chainman.m_best_header ? chainman.m_best_header->nHeight : -1);
     obj.pushKV("bestblockhash", tip.GetBlockHash().GetHex());
     obj.pushKV("difficulty", GetDifficulty(tip));
@@ -1261,6 +1268,7 @@ RPCHelpMan getblockchaininfo()
     obj.pushKV("verificationprogress", GuessVerificationProgress(chainman.GetParams().TxData(), &tip));
     obj.pushKV("initialblockdownload", chainman.IsInitialBlockDownload());
     obj.pushKV("chainwork", tip.nChainWork.GetHex());
+
     obj.pushKV("size_on_disk", chainman.m_blockman.CalculateCurrentUsage());
     obj.pushKV("pruned", chainman.m_blockman.IsPruneMode());
     if (chainman.m_blockman.IsPruneMode()) {
@@ -1275,6 +1283,129 @@ RPCHelpMan getblockchaininfo()
     }
 
     obj.pushKV("warnings", GetWarnings(false).original);
+    return obj;
+},
+    };
+}
+
+static RPCHelpMan getorchardpools()
+{
+    return RPCHelpMan{"getorchardpools",
+        "Returns confirmed Nito value-pool accounting for the active chain.\n"
+        "\nThis is node and explorer accounting, not wallet accounting. The value is read from chainstate and does not require a wallet.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::OBJ, "", "",
+            {
+                {RPCResult::Type::STR, "chain", "current network name (main, test, signet, regtest)"},
+                {RPCResult::Type::NUM, "blocks", "the height of the most-work fully-validated chain"},
+                {RPCResult::Type::STR, "bestblockhash", "the hash of the currently best block"},
+                {RPCResult::Type::NUM, "privateTxActivationHeight", "height at which private transactions become valid, or -1 if disabled"},
+                {RPCResult::Type::BOOL, "activated", "whether private transactions are active at the current tip"},
+                {RPCResult::Type::OBJ, "orchard", "Confirmed Orchard value pool",
+                {
+                    {RPCResult::Type::BOOL, "monitored", "whether this node tracks Orchard pool accounting"},
+                    {RPCResult::Type::STR_AMOUNT, "chainValue", /*optional=*/true, "confirmed value currently held in the Orchard pool"},
+                    {RPCResult::Type::NUM, "chainValueNitoshi", /*optional=*/true, "confirmed value currently held in the Orchard pool, in nitoshi"},
+                }},
+                {RPCResult::Type::OBJ, "transparent", "Confirmed transparent UTXO pool",
+                {
+                    {RPCResult::Type::BOOL, "monitored", "whether this node tracks transparent UTXO accounting"},
+                    {RPCResult::Type::STR_AMOUNT, "chainValue", "confirmed value currently held in the transparent UTXO set"},
+                    {RPCResult::Type::NUM, "chainValueNitoshi", "confirmed value currently held in the transparent UTXO set, in nitoshi"},
+                }},
+                {RPCResult::Type::OBJ, "total", "Confirmed transparent plus monitored Orchard value",
+                {
+                    {RPCResult::Type::BOOL, "monitored", "whether this node tracks the full enabled value accounting"},
+                    {RPCResult::Type::STR_AMOUNT, "chainValue", "confirmed transparent UTXO value plus the monitored Orchard pool"},
+                    {RPCResult::Type::NUM, "chainValueNitoshi", "confirmed transparent UTXO value plus the monitored Orchard pool, in nitoshi"},
+                }},
+            }},
+        RPCExamples{
+            HelpExampleCli("getorchardpools", "")
+            + HelpExampleRpc("getorchardpools", "")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    NodeContext& node = EnsureAnyNodeContext(request.context);
+    ChainstateManager& chainman = EnsureChainman(node);
+    Chainstate& active_chainstate = chainman.ActiveChainstate();
+
+    active_chainstate.ForceFlushStateToDisk();
+
+    CCoinsView* coins_view;
+    BlockManager* blockman;
+    {
+        LOCK(cs_main);
+        coins_view = &active_chainstate.CoinsDB();
+        blockman = &active_chainstate.m_blockman;
+    }
+
+    std::optional<CCoinsStats> maybe_stats = GetUTXOStats(coins_view, *blockman, CoinStatsHashType::NONE, node.rpc_interruption_point);
+    if (!maybe_stats) {
+        maybe_stats = GetUTXOStats(coins_view, *blockman, CoinStatsHashType::NONE, node.rpc_interruption_point, /*pindex=*/nullptr, /*index_requested=*/false);
+    }
+    if (!maybe_stats || !maybe_stats->total_amount) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Unable to read transparent UTXO value pool state");
+    }
+
+    const CAmount transparent_value_pool{*maybe_stats->total_amount};
+    if (!MoneyRange(transparent_value_pool)) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Transparent value pool state is out of range");
+    }
+
+    CAmount orchard_value_pool{0};
+    int tip_height;
+    uint256 tip_hash;
+    const int private_activation_height{chainman.GetParams().GetConsensus().privateTxActivationHeight};
+    const bool orchard_monitored{private_activation_height >= 0};
+    {
+        LOCK(cs_main);
+        const CBlockIndex& tip{*CHECK_NONFATAL(active_chainstate.m_chain.Tip())};
+        tip_height = tip.nHeight;
+        tip_hash = tip.GetBlockHash();
+        if (maybe_stats->hashBlock != tip_hash) {
+            throw JSONRPCError(RPC_INTERNAL_ERROR, "Chain tip changed while reading value pool state; retry");
+        }
+        if (orchard_monitored && !active_chainstate.CoinsTip().GetPrivateValuePool(orchard_value_pool)) {
+            throw JSONRPCError(RPC_INTERNAL_ERROR, "Unable to read Orchard value pool state");
+        }
+        if (orchard_monitored && !MoneyRange(orchard_value_pool)) {
+            throw JSONRPCError(RPC_INTERNAL_ERROR, "Orchard value pool state is out of range");
+        }
+    }
+
+    const std::optional<CAmount> total_value_pool{CheckedAdd(transparent_value_pool, orchard_value_pool)};
+    if (!total_value_pool || !MoneyRange(*total_value_pool)) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Combined value pool state is out of range");
+    }
+
+    auto make_pool = [](bool monitored, CAmount value) {
+        UniValue pool(UniValue::VOBJ);
+        pool.pushKV("monitored", monitored);
+        if (monitored) {
+            pool.pushKV("chainValue", ValueFromAmount(value));
+            pool.pushKV("chainValueNitoshi", value);
+        }
+        return pool;
+    };
+
+    UniValue orchard(UniValue::VOBJ);
+    orchard.pushKV("monitored", orchard_monitored);
+    if (orchard_monitored) {
+        orchard.pushKV("chainValue", ValueFromAmount(orchard_value_pool));
+        orchard.pushKV("chainValueNitoshi", orchard_value_pool);
+    }
+
+    UniValue obj(UniValue::VOBJ);
+    obj.pushKV("chain", chainman.GetParams().GetChainTypeString());
+    obj.pushKV("blocks", tip_height);
+    obj.pushKV("bestblockhash", tip_hash.GetHex());
+    obj.pushKV("privateTxActivationHeight", private_activation_height);
+    obj.pushKV("activated", orchard_monitored && tip_height >= private_activation_height);
+    obj.pushKV("orchard", orchard);
+    obj.pushKV("transparent", make_pool(/*monitored=*/true, transparent_value_pool));
+    obj.pushKV("total", make_pool(/*monitored=*/true, *total_value_pool));
     return obj;
 },
     };
@@ -1916,6 +2047,9 @@ static RPCHelpMan getblockstats()
                 utxo_size_inc_actual -= prevout_size;
             }
 
+            if (tx->HasPrivateBundle()) {
+                CHECK_NONFATAL(MoneyAddSigned(tx_total_in, tx->m_private_bundle->GetValueBalance(), tx_total_in));
+            }
             CAmount txfee = tx_total_in - tx_total_out;
             CHECK_NONFATAL(MoneyRange(txfee));
             if (do_medianfee) {
@@ -2572,7 +2706,8 @@ static RPCHelpMan dumptxoutset()
 {
     return RPCHelpMan{
         "dumptxoutset",
-        "Write the serialized UTXO set to a file.",
+        "Write the serialized UTXO set to a file.\n"
+        "The current snapshot format is available only before Nito private transaction activation because it does not serialize Orchard consensus state.",
         {
             {"path", RPCArg::Type::STR, RPCArg::Optional::NO, "Path to the output file. If relative, will be prefixed by datadir."},
         },
@@ -2614,12 +2749,21 @@ static RPCHelpMan dumptxoutset()
     }
 
     NodeContext& node = EnsureAnyNodeContext(request.context);
-    UniValue result = CreateUTXOSnapshot(
-        node, node.chainman->ActiveChainstate(), afile, path, temppath);
-    fs::rename(temppath, path);
-
-    result.pushKV("path", path.utf8string());
-    return result;
+    try {
+        UniValue result = CreateUTXOSnapshot(
+            node, node.chainman->ActiveChainstate(), afile, path, temppath);
+        fs::rename(temppath, path);
+        result.pushKV("path", path.utf8string());
+        return result;
+    } catch (...) {
+        afile.fclose();
+        std::error_code cleanup_error;
+        fs::remove(temppath, cleanup_error);
+        if (cleanup_error) {
+            LogPrintf("Unable to remove incomplete UTXO snapshot %s: %s\n", fs::PathToString(temppath), cleanup_error.message());
+        }
+        throw;
+    }
 },
     };
 }
@@ -2646,7 +2790,7 @@ UniValue CreateUTXOSnapshot(
         // use below this block.
         //
         // See discussion here:
-        //   https://github.com/nito/nito/pull/15606#discussion_r274479369
+        //   https://github.com/bitcoin/bitcoin/pull/15606#discussion_r274479369
         //
         LOCK(::cs_main);
 
@@ -2659,6 +2803,11 @@ UniValue CreateUTXOSnapshot(
 
         pcursor = chainstate.CoinsDB().Cursor();
         tip = CHECK_NONFATAL(chainstate.m_blockman.LookupBlockIndex(maybe_stats->hashBlock));
+        if (Consensus::PrivateTxActive(chainstate.m_chainman.GetConsensus(), tip->nHeight)) {
+            throw JSONRPCError(
+                RPC_MISC_ERROR,
+                "UTXO snapshots at or after Nito private transaction activation are disabled until the format authenticates Orchard consensus state");
+        }
     }
 
     LOG_TIME_SECONDS(strprintf("writing UTXO snapshot at height %s (%s) to file %s (via %s)",
@@ -2701,6 +2850,7 @@ static RPCHelpMan loadtxoutset()
     return RPCHelpMan{
         "loadtxoutset",
         "Load the serialized UTXO set from a file.\n"
+        "Only snapshots whose base is before Nito private transaction activation are supported.\n"
         "Once this snapshot is loaded, its contents will be "
         "deserialized into a second chainstate data structure, which is then used to sync to "
         "the network's tip. "
@@ -2713,7 +2863,7 @@ static RPCHelpMan loadtxoutset()
         "contents are always checked by hash.\n\n"
 
         "You can find more information on this process in the `assumeutxo` design "
-        "document (<https://github.com/nito/nito/blob/master/doc/design/assumeutxo.md>).",
+        "document (<https://github.com/bitcoin/bitcoin/blob/v27.0/doc/design/assumeutxo.md>).",
         {
             {"path",
                 RPCArg::Type::STR,
@@ -2862,6 +3012,7 @@ void RegisterBlockchainRPCCommands(CRPCTable& t)
         {"blockchain", &getchaintips},
         {"blockchain", &getdifficulty},
         {"blockchain", &getdeploymentinfo},
+        {"blockchain", &getorchardpools},
         {"blockchain", &gettxout},
         {"blockchain", &gettxoutsetinfo},
         {"blockchain", &pruneblockchain},

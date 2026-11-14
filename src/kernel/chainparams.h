@@ -25,14 +25,14 @@
 #include <utility>
 #include <vector>
 
-typedef std::map<int, uint256> MapCheckpoints;
+using MapCheckpoints = std::map<int, uint256>;
 
 struct CCheckpointData {
     MapCheckpoints mapCheckpoints;
 
-    int GetHeight() const {
-        const auto& final_checkpoint = mapCheckpoints.rbegin();
-        return final_checkpoint->first /* height */;
+    int GetHeight() const
+    {
+        return mapCheckpoints.rbegin()->first;
     }
 };
 
@@ -154,6 +154,7 @@ public:
     struct RegTestOptions {
         std::unordered_map<Consensus::DeploymentPos, VersionBitsParameters> version_bits_parameters{};
         std::unordered_map<Consensus::BuriedDeployment, int> activation_heights{};
+        std::optional<int> private_tx_activation_height{};
         bool fastprune{false};
     };
 

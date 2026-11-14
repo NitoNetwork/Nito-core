@@ -11,11 +11,15 @@
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
 #include <qt/paymentserver.h>
+#include <qt/psbtoperationsdialog.h>
 #include <qt/recentrequeststablemodel.h>
 #include <qt/sendcoinsdialog.h>
 #include <qt/transactiontablemodel.h>
 
+#include <chainparams.h>
 #include <common/args.h> // for GetBoolArg
+#include <consensus/amount.h>
+#include <consensus/params.h>
 #include <interfaces/handler.h>
 #include <interfaces/node.h>
 #include <key_io.h>
@@ -23,19 +27,123 @@
 #include <psbt.h>
 #include <util/translation.h>
 #include <wallet/coincontrol.h>
+#include <wallet/private_wallet.h>
 #include <wallet/wallet.h> // for CRecipient
 
 #include <stdint.h>
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <functional>
+#include <mutex>
+#include <stdexcept>
+#include <thread>
 
 #include <QDebug>
 #include <QMessageBox>
-#include <QSet>
 #include <QTimer>
 
 using wallet::CCoinControl;
 using wallet::CRecipient;
 using wallet::DEFAULT_DISABLE_WALLET;
+
+class WalletModel::PrepareTransactionTask
+{
+public:
+    struct Request {
+        std::vector<CRecipient> recipients;
+        CCoinControl coin_control;
+        bool sign{false};
+        bool private_psbt_draft{false};
+        bool f_subtract_fee{false};
+        bool use_private_source{false};
+        bool has_private_recipient{false};
+        CAmount total{0};
+        CAmount balance{0};
+    };
+
+    struct Result {
+        CTransactionRef tx;
+        CAmount fee{0};
+        int change_pos{-1};
+        std::vector<PSBTProprietary> private_psbt_records;
+        std::string error;
+    };
+
+    PrepareTransactionTask(std::shared_ptr<interfaces::Wallet> wallet, Request request,
+                           std::shared_ptr<UnlockContext> unlock_context, std::function<void()> test_hook)
+        : m_wallet(std::move(wallet)), m_request(std::move(request)), m_unlock_context(std::move(unlock_context)),
+          m_test_hook(std::move(test_hook))
+    {
+    }
+
+    ~PrepareTransactionTask()
+    {
+        cancel();
+        join();
+    }
+
+    void start()
+    {
+        m_thread = std::thread([this] {
+            Result result;
+            try {
+                if (m_test_hook) m_test_hook();
+                auto res = m_wallet->createTransaction(m_request.recipients, m_request.coin_control,
+                    m_request.sign, result.change_pos, result.fee,
+                    m_request.private_psbt_draft ? &result.private_psbt_records : nullptr);
+                if (res) {
+                    result.tx = *res;
+                } else {
+                    result.error = util::ErrorString(res).translated;
+                }
+            } catch (const std::exception& err) {
+                result.error = err.what();
+            } catch (...) {
+                // Keep the worker free of Qt and surface a stable generic
+                // failure from finishPrepareTransaction() on the GUI thread.
+            }
+            {
+                std::lock_guard<std::mutex> lock{m_mutex};
+                m_result = std::move(result);
+            }
+            m_finished.store(true, std::memory_order_release);
+        });
+    }
+
+    void cancel() { m_cancelled.store(true, std::memory_order_release); }
+    bool cancelled() const { return m_cancelled.load(std::memory_order_acquire); }
+    bool finished() const { return m_finished.load(std::memory_order_acquire); }
+
+    void join()
+    {
+        if (m_thread.joinable()) m_thread.join();
+    }
+
+    Result takeResult()
+    {
+        std::lock_guard<std::mutex> lock{m_mutex};
+        return std::move(*m_result);
+    }
+
+    const Request& request() const { return m_request; }
+
+    void releaseUnlockContext()
+    {
+        m_unlock_context.reset();
+    }
+
+private:
+    std::shared_ptr<interfaces::Wallet> m_wallet;
+    Request m_request;
+    std::shared_ptr<UnlockContext> m_unlock_context;
+    std::thread m_thread;
+    std::atomic<bool> m_cancelled{false};
+    std::atomic<bool> m_finished{false};
+    std::mutex m_mutex;
+    std::optional<Result> m_result;
+    std::function<void()> m_test_hook;
+};
 
 WalletModel::WalletModel(std::unique_ptr<interfaces::Wallet> wallet, ClientModel& client_model, const PlatformStyle *platformStyle, QObject *parent) :
     QObject(parent),
@@ -46,6 +154,8 @@ WalletModel::WalletModel(std::unique_ptr<interfaces::Wallet> wallet, ClientModel
     timer(new QTimer(this))
 {
     fHaveWatchOnly = m_wallet->haveWatchOnly();
+    m_cached_private_tx_active = privateTxActive();
+    setDisplayAuthorized(getEncryptionStatus() != Locked);
     addressTableModel = new AddressTableModel(this);
     transactionTableModel = new TransactionTableModel(platformStyle, this);
     recentRequestsTableModel = new RecentRequestsTableModel(this);
@@ -55,6 +165,9 @@ WalletModel::WalletModel(std::unique_ptr<interfaces::Wallet> wallet, ClientModel
 
 WalletModel::~WalletModel()
 {
+    for (const auto& task : m_prepare_tasks) task->cancel();
+    for (const auto& task : m_prepare_tasks) task->join();
+    m_prepare_tasks.clear();
     unsubscribeFromCoreSignals();
 }
 
@@ -76,14 +189,22 @@ void WalletModel::setClientModel(ClientModel* client_model)
 {
     m_client_model = client_model;
     if (!m_client_model) timer->stop();
+    checkPrivateTxActivationChanged();
 }
 
 void WalletModel::updateStatus()
 {
     EncryptionStatus newEncryptionStatus = getEncryptionStatus();
+    bool display_authorization_changed{false};
+    if (m_display_authorized && !m_wallet->canViewPrivateData()) {
+        setDisplayAuthorized(false);
+        display_authorization_changed = true;
+    }
 
-    if(cachedEncryptionStatus != newEncryptionStatus) {
+    if(cachedEncryptionStatus != newEncryptionStatus || display_authorization_changed) {
+        cachedEncryptionStatus = newEncryptionStatus;
         Q_EMIT encryptionStatusChanged();
+        forceBalanceUpdate();
     }
 }
 
@@ -110,8 +231,18 @@ void WalletModel::pollBalanceChanged()
         m_cached_last_update_tip = block_hash;
 
         checkBalanceChanged(new_balances);
+        checkPrivateTxActivationChanged();
         if(transactionTableModel)
             transactionTableModel->updateConfirmations();
+    }
+}
+
+void WalletModel::forceBalanceUpdate()
+{
+    checkBalanceChanged(m_wallet->getBalances());
+    checkPrivateTxActivationChanged();
+    if (transactionTableModel) {
+        transactionTableModel->refreshWallet();
     }
 }
 
@@ -120,6 +251,15 @@ void WalletModel::checkBalanceChanged(const interfaces::WalletBalances& new_bala
     if (new_balances.balanceChanged(m_cached_balances)) {
         m_cached_balances = new_balances;
         Q_EMIT balanceChanged(new_balances);
+    }
+}
+
+void WalletModel::checkPrivateTxActivationChanged()
+{
+    const bool active = privateTxActive();
+    if (active != m_cached_private_tx_active) {
+        m_cached_private_tx_active = active;
+        Q_EMIT privateTxActivationChanged(active);
     }
 }
 
@@ -149,7 +289,44 @@ void WalletModel::updateWatchOnlyFlag(bool fHaveWatchonly)
 
 bool WalletModel::validateAddress(const QString& address) const
 {
-    return IsValidDestinationString(address.toStdString());
+    return IsValidDestinationString(address.toStdString()) || isPrivateAddress(address);
+}
+
+bool WalletModel::isPrivateAddress(const QString& address) const
+{
+    std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> private_raw{};
+    std::string error;
+    return wallet::DecodeNitoPrivateAddress(address.toStdString(), Params(), private_raw, error);
+}
+
+bool WalletModel::privateTxActive() const
+{
+    const int current_height = m_client_model ? m_client_model->getNumBlocks() : m_node.getNumBlocks();
+    return Consensus::PrivateTxActive(Params().GetConsensus(), current_height);
+}
+
+bool WalletModel::privateTxUiEnabled() const
+{
+    return privateTxActive() &&
+        privateWalletIndexAvailable() &&
+        optionsModel &&
+        optionsModel->getEnableBech32xOrchardReceiveAddresses() &&
+        m_display_authorized &&
+        !m_wallet->privateKeysDisabled();
+}
+
+bool WalletModel::privateWalletIndexAvailable() const
+{
+    if (!m_client_model) return false;
+    const auto statuses{m_client_model->getWalletIndexStatuses()};
+    return std::any_of(statuses.begin(), statuses.end(), [](const interfaces::IndexStatus& status) {
+        return status.name == "orchardindex";
+    });
+}
+
+int WalletModel::privateTxActivationHeight() const
+{
+    return Params().GetConsensus().privateTxActivationHeight;
 }
 
 WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransaction &transaction, const CCoinControl& coinControl)
@@ -164,8 +341,7 @@ WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransact
         return OK;
     }
 
-    QSet<QString> setAddress; // Used to detect duplicates
-    int nAddresses = 0;
+    bool has_private_recipient{false};
 
     // Pre-check input data for validity
     for (const SendCoinsRecipient &rcp : recipients)
@@ -177,25 +353,38 @@ WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransact
             {
                 return InvalidAddress;
             }
-            if(rcp.amount <= 0)
+            if (rcp.amount <= 0 || !MoneyRange(rcp.amount) || total > MAX_MONEY - rcp.amount)
             {
                 return InvalidAmount;
             }
-            setAddress.insert(rcp.address);
-            ++nAddresses;
-
-            CRecipient recipient{DecodeDestination(rcp.address.toStdString()), rcp.amount, rcp.fSubtractFeeFromAmount};
-            vecSend.push_back(recipient);
+            std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> private_raw{};
+            std::string private_error;
+            if (wallet::DecodeNitoPrivateAddress(rcp.address.toStdString(), Params(), private_raw, private_error)) {
+                if (!privateTxActive()) {
+                    const int activation_height = privateTxActivationHeight();
+                    const int current_height = m_client_model ? m_client_model->getNumBlocks() : m_node.getNumBlocks();
+                    const QString activation_message = activation_height < 0
+                        ? tr("Nito.network private transactions are not active on this network.")
+                        : tr("Nito.network private transactions activate at block %1. Current block: %2.")
+                            .arg(activation_height)
+                            .arg(current_height);
+                    Q_EMIT message(tr("Send Coins"), activation_message, CClientUIInterface::MSG_ERROR);
+                    return TransactionCreationFailed;
+                }
+                has_private_recipient = true;
+                CRecipient recipient{CNoDestination{}, rcp.amount, rcp.fSubtractFeeFromAmount, private_raw};
+                vecSend.push_back(std::move(recipient));
+            } else {
+                CRecipient recipient{DecodeDestination(rcp.address.toStdString()), rcp.amount, rcp.fSubtractFeeFromAmount};
+                vecSend.push_back(std::move(recipient));
+            }
 
             total += rcp.amount;
         }
     }
-    if(setAddress.size() != nAddresses)
-    {
-        return DuplicateAddress;
-    }
+    const bool use_private_source = coinControl.m_private_tx_source == wallet::CCoinControl::PrivateTxSource::PRIVATE_NOTES;
 
-    // If no coin was manually selected, use the cached balance
+    // If no coin was manually selected, use the cached balance for the selected source.
     // Future: can merge this call with 'createTransaction'.
     CAmount nBalance = getAvailableBalance(&coinControl);
 
@@ -209,15 +398,24 @@ WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransact
         int nChangePosRet = -1;
 
         auto& newTx = transaction.getWtx();
-        const auto& res = m_wallet->createTransaction(vecSend, coinControl, /*sign=*/!wallet().privateKeysDisabled(), nChangePosRet, nFeeRequired);
+        const bool private_flow = has_private_recipient || use_private_source;
+        std::vector<PSBTProprietary> private_psbt_records;
+        const bool private_psbt_draft = private_flow && getOptionsModel() && getOptionsModel()->getEnablePSBTControls();
+        const bool sign = !wallet().privateKeysDisabled() && !private_psbt_draft;
+        // Keep the model and transaction alive for this synchronous call.
+        // A nested event loop could dispatch wallet unload during construction.
+        const auto res = m_wallet->createTransaction(vecSend, coinControl, sign, nChangePosRet, nFeeRequired,
+                                                    private_psbt_draft ? &private_psbt_records : nullptr);
         newTx = res ? *res : nullptr;
+        transaction.setPrivatePSBTDraft(private_psbt_draft);
+        transaction.setPrivatePSBTRecords(std::move(private_psbt_records));
         transaction.setTransactionFee(nFeeRequired);
-        if (fSubtractFeeFromAmount && newTx)
+        if (!has_private_recipient && !use_private_source && fSubtractFeeFromAmount && newTx)
             transaction.reassignAmounts(nChangePosRet);
 
         if(!newTx)
         {
-            if(!fSubtractFeeFromAmount && (total + nFeeRequired) > nBalance)
+            if(!use_private_source && !fSubtractFeeFromAmount && (total + nFeeRequired) > nBalance)
             {
                 return SendCoinsReturn(AmountWithFeeExceedsBalance);
             }
@@ -242,20 +440,157 @@ WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransact
     return SendCoinsReturn(OK);
 }
 
-void WalletModel::sendCoins(WalletModelTransaction& transaction)
+WalletModel::AsyncPrepareTransaction WalletModel::prepareTransactionAsync(
+    WalletModelTransaction& transaction, const CCoinControl& coin_control,
+    std::shared_ptr<UnlockContext> unlock_context)
+{
+    PrepareTransactionTask::Request request;
+    QList<SendCoinsRecipient> recipients = transaction.getRecipients();
+    if (recipients.empty()) return {SendCoinsReturn(OK), {}};
+
+    for (const SendCoinsRecipient& rcp : recipients) {
+        if (rcp.fSubtractFeeFromAmount) request.f_subtract_fee = true;
+        if (!validateAddress(rcp.address)) return {SendCoinsReturn(InvalidAddress), {}};
+        if (rcp.amount <= 0 || !MoneyRange(rcp.amount) || request.total > MAX_MONEY - rcp.amount) {
+            return {SendCoinsReturn(InvalidAmount), {}};
+        }
+
+        std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> private_raw{};
+        std::string private_error;
+        if (wallet::DecodeNitoPrivateAddress(rcp.address.toStdString(), Params(), private_raw, private_error)) {
+            if (!privateTxActive()) {
+                const int activation_height = privateTxActivationHeight();
+                const int current_height = m_client_model ? m_client_model->getNumBlocks() : m_node.getNumBlocks();
+                const QString activation_message = activation_height < 0
+                    ? tr("Nito.network private transactions are not active on this network.")
+                    : tr("Nito.network private transactions activate at block %1. Current block: %2.")
+                        .arg(activation_height).arg(current_height);
+                Q_EMIT message(tr("Send Coins"), activation_message, CClientUIInterface::MSG_ERROR);
+                return {SendCoinsReturn(TransactionCreationFailed), {}};
+            }
+            request.has_private_recipient = true;
+            request.recipients.push_back({CNoDestination{}, rcp.amount, rcp.fSubtractFeeFromAmount, private_raw});
+        } else {
+            request.recipients.push_back({DecodeDestination(rcp.address.toStdString()), rcp.amount, rcp.fSubtractFeeFromAmount});
+        }
+        request.total += rcp.amount;
+    }
+
+    request.coin_control = coin_control;
+    request.use_private_source = coin_control.m_private_tx_source == CCoinControl::PrivateTxSource::PRIVATE_NOTES;
+    request.balance = getAvailableBalance(&coin_control);
+    if (request.total > request.balance) return {SendCoinsReturn(AmountExceedsBalance), {}};
+
+    const bool private_flow = request.has_private_recipient || request.use_private_source;
+    request.private_psbt_draft = private_flow && getOptionsModel() && getOptionsModel()->getEnablePSBTControls();
+    request.sign = !wallet().privateKeysDisabled() && !request.private_psbt_draft;
+
+    auto task = std::make_shared<PrepareTransactionTask>(m_wallet, std::move(request), std::move(unlock_context),
+                                                          m_prepare_transaction_test_hook);
+    m_prepare_tasks.push_back(task);
+    try {
+        task->start();
+    } catch (const std::exception&) {
+        m_prepare_tasks.pop_back();
+        task->releaseUnlockContext();
+        return {SendCoinsReturn(TransactionCreationFailed), {}};
+    }
+    return {SendCoinsReturn(OK), std::move(task)};
+}
+
+std::optional<WalletModel::SendCoinsReturn> WalletModel::finishPrepareTransaction(
+    const std::shared_ptr<PrepareTransactionTask>& task, WalletModelTransaction& transaction)
+{
+    if (!task || !task->finished()) return {};
+    task->join();
+    const auto result = task->takeResult();
+    const auto& request = task->request();
+    m_prepare_tasks.erase(std::remove(m_prepare_tasks.begin(), m_prepare_tasks.end(), task), m_prepare_tasks.end());
+
+    if (task->cancelled()) {
+        task->releaseUnlockContext();
+        return SendCoinsReturn(TransactionCreationFailed);
+    }
+
+    transaction.setWtx(result.tx);
+    transaction.setPrivatePSBTDraft(request.private_psbt_draft);
+    transaction.setPrivatePSBTRecords(result.private_psbt_records);
+    transaction.setTransactionFee(result.fee);
+    task->releaseUnlockContext();
+
+    if (!result.tx) {
+        if (!request.use_private_source && !request.f_subtract_fee && request.total + result.fee > request.balance) {
+            return SendCoinsReturn(AmountWithFeeExceedsBalance);
+        }
+        const QString error = result.error.empty() ? tr("Transaction creation failed!") : QString::fromStdString(result.error);
+        Q_EMIT message(tr("Send Coins"), error, CClientUIInterface::MSG_ERROR);
+        return SendCoinsReturn(TransactionCreationFailed);
+    }
+    if (!request.has_private_recipient && !request.use_private_source && request.f_subtract_fee) {
+        transaction.reassignAmounts(result.change_pos);
+    }
+    if (result.fee > m_wallet->getDefaultMaxTxFee()) return SendCoinsReturn(AbsurdFee);
+    return SendCoinsReturn(OK);
+}
+
+void WalletModel::cancelPrepareTransaction(const std::shared_ptr<PrepareTransactionTask>& task)
+{
+    if (task) task->cancel();
+}
+
+void WalletModel::cancelAndJoinPrepareTransaction(const std::shared_ptr<PrepareTransactionTask>& task)
+{
+    if (!task) return;
+    task->cancel();
+    task->join();
+    task->releaseUnlockContext();
+    m_prepare_tasks.erase(std::remove(m_prepare_tasks.begin(), m_prepare_tasks.end(), task), m_prepare_tasks.end());
+}
+
+bool WalletModel::isPrepareTransactionFinished(const std::shared_ptr<PrepareTransactionTask>& task) const
+{
+    return task && task->finished();
+}
+
+void WalletModel::setPrepareTransactionTestHook(std::function<void()> hook)
+{
+    m_prepare_transaction_test_hook = std::move(hook);
+}
+
+bool WalletModel::sendCoins(WalletModelTransaction& transaction)
 {
     QByteArray transaction_array; /* store serialized transaction */
+    std::unique_ptr<UnlockContext> unlock_context;
+    if (transaction.getWtx()->m_private_bundle) {
+        unlock_context = requestUnlockContext();
+        if (!unlock_context->isValid()) return false;
+    }
 
     {
         std::vector<std::pair<std::string, std::string>> vOrderForm;
+        std::vector<CRecipient> recipients;
         for (const SendCoinsRecipient &rcp : transaction.getRecipients())
         {
             if (!rcp.message.isEmpty()) // Message from normal nito:URI (nito:123...?message=example)
                 vOrderForm.emplace_back("Message", rcp.message.toStdString());
+            if (transaction.getWtx()->m_private_bundle) {
+                std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> private_raw{};
+                std::string error;
+                if (wallet::DecodeNitoPrivateAddress(rcp.address.toStdString(), Params(), private_raw, error)) {
+                    recipients.push_back({CNoDestination{}, rcp.amount, rcp.fSubtractFeeFromAmount, private_raw});
+                } else {
+                    recipients.push_back({DecodeDestination(rcp.address.toStdString()), rcp.amount, rcp.fSubtractFeeFromAmount});
+                }
+            }
         }
 
         auto& newTx = transaction.getWtx();
-        wallet().commitTransaction(newTx, /*value_map=*/{}, std::move(vOrderForm));
+        const auto commit_result = wallet().commitTransaction(newTx, /*value_map=*/{}, std::move(vOrderForm), &recipients);
+        if (!commit_result) {
+            Q_EMIT message(tr("Send Coins"), QString::fromStdString(util::ErrorString(commit_result).translated),
+                CClientUIInterface::MSG_ERROR);
+            return false;
+        }
 
         DataStream ssTx;
         ssTx << TX_WITH_WITNESS(*newTx);
@@ -270,6 +605,10 @@ void WalletModel::sendCoins(WalletModelTransaction& transaction)
             std::string strAddress = rcp.address.toStdString();
             CTxDestination dest = DecodeDestination(strAddress);
             std::string strLabel = rcp.label.toStdString();
+            if (!IsValidDestination(dest)) {
+                Q_EMIT coinsSent(this, rcp, transaction_array);
+                continue;
+            }
             {
                 // Check if we have a new address or an updated label
                 std::string name;
@@ -288,6 +627,7 @@ void WalletModel::sendCoins(WalletModelTransaction& transaction)
     }
 
     checkBalanceChanged(m_wallet->getBalances()); // update balance immediately, otherwise there could be a short noticeable delay until pollBalanceChanged hits
+    return true;
 }
 
 OptionsModel* WalletModel::getOptionsModel() const
@@ -331,12 +671,25 @@ WalletModel::EncryptionStatus WalletModel::getEncryptionStatus() const
     }
 }
 
+void WalletModel::setDisplayAuthorized(bool authorized)
+{
+    m_display_authorized = authorized && m_wallet->canViewPrivateData();
+    m_wallet->setPrivateDataDisplayAuthorized(m_display_authorized);
+}
+
+util::Result<std::string> WalletModel::getNewPrivateAddress(bool internal)
+{
+    UnlockContext ctx(requestUnlock());
+    if (!ctx.isValid()) return util::Error{Untranslated("Wallet unlock was cancelled")};
+    return m_wallet->getNewPrivateAddress(internal);
+}
+
 bool WalletModel::setWalletEncrypted(const SecureString& passphrase)
 {
     return m_wallet->encryptWallet(passphrase);
 }
 
-bool WalletModel::setWalletLocked(bool locked, const SecureString &passPhrase)
+bool WalletModel::setWalletLocked(bool locked, const SecureString& passphrase, bilingual_str* error)
 {
     if(locked)
     {
@@ -346,14 +699,35 @@ bool WalletModel::setWalletLocked(bool locked, const SecureString &passPhrase)
     else
     {
         // Unlock
-        return m_wallet->unlock(passPhrase);
+        return m_wallet->unlock(passphrase, error);
     }
+}
+
+bool WalletModel::setWalletLockedForDisplay()
+{
+    return m_wallet->lockForDisplay();
 }
 
 bool WalletModel::changePassphrase(const SecureString &oldPass, const SecureString &newPass)
 {
     m_wallet->lock(); // Make sure wallet is locked before attempting pass change
     return m_wallet->changeWalletPassphrase(oldPass, newPass);
+}
+
+bool WalletModel::getHDSeedMnemonic(QString& mnemonic, QString& error) const
+{
+    auto res = m_wallet->getHDSeedMnemonic();
+    if (!res) {
+        error = QString::fromStdString(util::ErrorString(res).translated);
+        return false;
+    }
+    mnemonic = QString::fromStdString(*res);
+    return true;
+}
+
+bool WalletModel::isBIP39PassphraseEnabled() const
+{
+    return m_wallet->isBIP39PassphraseEnabled();
 }
 
 // Handlers for core signals
@@ -450,7 +824,7 @@ WalletModel::UnlockContext WalletModel::requestUnlock()
     // To avoid issues with such wallets, check if the wallet has private keys disabled, and if so, return a context
     // that indicates the wallet is not encrypted.
     if (m_wallet->privateKeysDisabled()) {
-        return UnlockContext(this, /*valid=*/true, /*relock=*/false);
+        return UnlockContext(m_wallet, /*valid=*/true, /*relock=*/false, /*relock_for_display=*/false);
     }
     bool was_locked = getEncryptionStatus() == Locked;
     if(was_locked)
@@ -461,13 +835,27 @@ WalletModel::UnlockContext WalletModel::requestUnlock()
     // If wallet is still locked, unlock was failed or cancelled, mark context as invalid
     bool valid = getEncryptionStatus() != Locked;
 
-    return UnlockContext(this, valid, was_locked);
+    return UnlockContext(m_wallet, valid, was_locked, m_display_authorized);
 }
 
-WalletModel::UnlockContext::UnlockContext(WalletModel *_wallet, bool _valid, bool _relock):
-        wallet(_wallet),
+std::unique_ptr<WalletModel::UnlockContext> WalletModel::requestUnlockContext()
+{
+    if (m_wallet->privateKeysDisabled()) {
+        return std::make_unique<UnlockContext>(m_wallet, /*valid=*/true, /*relock=*/false, /*relock_for_display=*/false);
+    }
+    bool was_locked = getEncryptionStatus() == Locked;
+    if (was_locked) {
+        Q_EMIT requireUnlock();
+    }
+    const bool valid = getEncryptionStatus() != Locked;
+    return std::make_unique<UnlockContext>(m_wallet, valid, was_locked, m_display_authorized);
+}
+
+WalletModel::UnlockContext::UnlockContext(std::shared_ptr<interfaces::Wallet> _wallet, bool _valid, bool _relock, bool _relock_for_display):
+        wallet(std::move(_wallet)),
         valid(_valid),
-        relock(_relock)
+        relock(_relock),
+        relock_for_display(_relock_for_display)
 {
 }
 
@@ -475,12 +863,21 @@ WalletModel::UnlockContext::~UnlockContext()
 {
     if(valid && relock)
     {
-        wallet->setWalletLocked(true);
+        if (relock_for_display) {
+            wallet->lockForDisplay();
+        } else {
+            wallet->lock();
+        }
     }
 }
 
 bool WalletModel::bumpFee(uint256 hash, uint256& new_hash)
 {
+    std::unique_ptr<UnlockContext> private_unlock;
+    if (const auto tx = m_wallet->getTx(hash); tx && tx->HasPrivateBundle()) {
+        private_unlock = requestUnlockContext();
+        if (!private_unlock->isValid()) return false;
+    }
     CCoinControl coin_control;
     coin_control.m_signal_bip125_rbf = true;
     std::vector<bilingual_str> errors;
@@ -536,7 +933,7 @@ bool WalletModel::bumpFee(uint256 hash, uint256& new_hash)
         return false;
     }
 
-    // Short-circuit if we are returning a bumped transaction PSBT to clipboard
+    // Short-circuit if we are returning an unsigned bumped transaction.
     if (retval == QMessageBox::Save) {
         // "Create Unsigned" clicked
         PartiallySignedTransaction psbtx(mtx);
@@ -546,11 +943,9 @@ bool WalletModel::bumpFee(uint256 hash, uint256& new_hash)
             QMessageBox::critical(nullptr, tr("Fee bump error"), tr("Can't draft transaction."));
             return false;
         }
-        // Serialize the PSBT
-        DataStream ssTx{};
-        ssTx << psbtx;
-        GUIUtil::setClipboard(EncodeBase64(ssTx.str()).c_str());
-        Q_EMIT message(tr("PSBT copied"), tr("Copied to clipboard", "Fee-bump PSBT saved"), CClientUIInterface::MSG_INFORMATION);
+        PSBTOperationsDialog dialog(nullptr, this, m_client_model);
+        dialog.openWithPSBT(psbtx);
+        dialog.exec();
         return true;
     }
 
@@ -615,9 +1010,15 @@ uint256 WalletModel::getLastBlockProcessed() const
 
 CAmount WalletModel::getAvailableBalance(const CCoinControl* control)
 {
+    if (!privateTxActive() && control && control->m_private_tx_source == wallet::CCoinControl::PrivateTxSource::PRIVATE_NOTES) {
+        return 0;
+    }
     // No selected coins, return the cached balance
-    if (!control || !control->HasSelected()) {
+    if (!control || (!control->HasSelected() && !control->HasSelectedPrivateNotes())) {
         const interfaces::WalletBalances& balances = getCachedBalance();
+        if (privateTxActive() && control && control->m_private_tx_source == wallet::CCoinControl::PrivateTxSource::PRIVATE_NOTES) {
+            return balances.private_balance;
+        }
         CAmount available_balance = balances.balance;
         // if wallet private keys are disabled, this is a watch-only wallet
         // so, let's include the watch-only balance.
@@ -628,4 +1029,63 @@ CAmount WalletModel::getAvailableBalance(const CCoinControl* control)
     }
     // Fetch balance from the wallet, taking into account the selected coins
     return wallet().getAvailableBalance(*control);
+}
+
+CAmount WalletModel::getMaximumSingleTransactionAmount(const QList<SendCoinsRecipient>& recipients, int recipient_index, const CCoinControl& coin_control, CAmount upper_bound)
+{
+    if (upper_bound <= 0 || recipient_index < 0 || recipient_index >= recipients.size()) return 0;
+
+    // Keep this helper scoped to transparent send-all ergonomics. Private-note
+    // and shielding flows have proof construction and note-specific selection.
+    if (coin_control.m_private_tx_source == wallet::CCoinControl::PrivateTxSource::PRIVATE_NOTES) {
+        return upper_bound;
+    }
+
+    auto build_recipients = [&](CAmount candidate_amount, std::vector<CRecipient>& out) {
+        out.clear();
+        out.reserve(recipients.size());
+        for (int i = 0; i < recipients.size(); ++i) {
+            SendCoinsRecipient recipient = recipients[i];
+            if (i == recipient_index) recipient.amount = candidate_amount;
+            if (recipient.amount <= 0) return false;
+
+            std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> private_raw{};
+            std::string private_error;
+            if (wallet::DecodeNitoPrivateAddress(recipient.address.toStdString(), Params(), private_raw, private_error)) {
+                return false;
+            }
+
+            if (!IsValidDestinationString(recipient.address.toStdString())) {
+                return false;
+            }
+
+            out.push_back(CRecipient{DecodeDestination(recipient.address.toStdString()), recipient.amount, recipient.fSubtractFeeFromAmount});
+        }
+        return true;
+    };
+
+    auto can_create_transaction = [&](CAmount candidate_amount) {
+        std::vector<CRecipient> vec_send;
+        if (!build_recipients(candidate_amount, vec_send)) return false;
+
+        int change_pos = -1;
+        CAmount fee = 0;
+        auto res = m_wallet->createTransaction(vec_send, coin_control, /*sign=*/false, change_pos, fee);
+        return static_cast<bool>(res);
+    };
+
+    if (can_create_transaction(upper_bound)) return upper_bound;
+
+    CAmount low = 0;
+    CAmount high = upper_bound;
+    while (low + 1 < high) {
+        const CAmount mid = low + (high - low) / 2;
+        if (can_create_transaction(mid)) {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+
+    return low;
 }

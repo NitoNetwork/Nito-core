@@ -13,8 +13,25 @@
 bool CCoinsView::GetCoin(const COutPoint &outpoint, Coin &coin) const { return false; }
 uint256 CCoinsView::GetBestBlock() const { return uint256(); }
 std::vector<uint256> CCoinsView::GetHeadBlocks() const { return std::vector<uint256>(); }
-bool CCoinsView::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase) { return false; }
+bool CCoinsView::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase, CPrivateStateCache* private_cache) { return false; }
 std::unique_ptr<CCoinsViewCursor> CCoinsView::Cursor() const { return nullptr; }
+bool CCoinsView::HavePrivateNullifier(const uint256& nullifier) const { return false; }
+bool CCoinsView::HavePrivateAnchor(const uint256& anchor) const
+{
+    uint256 empty_root;
+    std::string error;
+    return GetPrivateEmptyRoot(empty_root, error) && anchor == empty_root;
+}
+bool CCoinsView::GetPrivateRoot(uint256& root) const
+{
+    std::string error;
+    return GetPrivateEmptyRoot(root, error);
+}
+bool CCoinsView::GetPrivateCommitmentCount(uint64_t& count) const { count = 0; return true; }
+bool CCoinsView::GetPrivateCommitment(uint64_t index, uint256& cmx) const { return false; }
+bool CCoinsView::GetPrivateFrontier(std::vector<unsigned char>& frontier) const { frontier.clear(); return true; }
+bool CCoinsView::GetPrivateValuePool(CAmount& value_pool) const { value_pool = 0; return true; }
+bool CCoinsView::GetPrivateBlockUndo(const uint256& block_hash, CPrivateBlockUndo& undo) const { return false; }
 
 bool CCoinsView::HaveCoin(const COutPoint &outpoint) const
 {
@@ -28,9 +45,17 @@ bool CCoinsViewBacked::HaveCoin(const COutPoint &outpoint) const { return base->
 uint256 CCoinsViewBacked::GetBestBlock() const { return base->GetBestBlock(); }
 std::vector<uint256> CCoinsViewBacked::GetHeadBlocks() const { return base->GetHeadBlocks(); }
 void CCoinsViewBacked::SetBackend(CCoinsView &viewIn) { base = &viewIn; }
-bool CCoinsViewBacked::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase) { return base->BatchWrite(mapCoins, hashBlock, erase); }
+bool CCoinsViewBacked::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase, CPrivateStateCache* private_cache) { return base->BatchWrite(mapCoins, hashBlock, erase, private_cache); }
 std::unique_ptr<CCoinsViewCursor> CCoinsViewBacked::Cursor() const { return base->Cursor(); }
 size_t CCoinsViewBacked::EstimateSize() const { return base->EstimateSize(); }
+bool CCoinsViewBacked::HavePrivateNullifier(const uint256& nullifier) const { return base->HavePrivateNullifier(nullifier); }
+bool CCoinsViewBacked::HavePrivateAnchor(const uint256& anchor) const { return base->HavePrivateAnchor(anchor); }
+bool CCoinsViewBacked::GetPrivateRoot(uint256& root) const { return base->GetPrivateRoot(root); }
+bool CCoinsViewBacked::GetPrivateCommitmentCount(uint64_t& count) const { return base->GetPrivateCommitmentCount(count); }
+bool CCoinsViewBacked::GetPrivateCommitment(uint64_t index, uint256& cmx) const { return base->GetPrivateCommitment(index, cmx); }
+bool CCoinsViewBacked::GetPrivateFrontier(std::vector<unsigned char>& frontier) const { return base->GetPrivateFrontier(frontier); }
+bool CCoinsViewBacked::GetPrivateValuePool(CAmount& value_pool) const { return base->GetPrivateValuePool(value_pool); }
+bool CCoinsViewBacked::GetPrivateBlockUndo(const uint256& block_hash, CPrivateBlockUndo& undo) const { return base->GetPrivateBlockUndo(block_hash, undo); }
 
 CCoinsViewCache::CCoinsViewCache(CCoinsView* baseIn, bool deterministic) :
     CCoinsViewBacked(baseIn), m_deterministic(deterministic),
@@ -38,7 +63,7 @@ CCoinsViewCache::CCoinsViewCache(CCoinsView* baseIn, bool deterministic) :
 {}
 
 size_t CCoinsViewCache::DynamicMemoryUsage() const {
-    return memusage::DynamicUsage(cacheCoins) + cachedCoinsUsage;
+    return memusage::DynamicUsage(cacheCoins) + cachedCoinsUsage + cachePrivate.DynamicMemoryUsage();
 }
 
 CCoinsMap::iterator CCoinsViewCache::FetchCoin(const COutPoint &outpoint) const {
@@ -179,7 +204,7 @@ void CCoinsViewCache::SetBestBlock(const uint256 &hashBlockIn) {
     hashBlock = hashBlockIn;
 }
 
-bool CCoinsViewCache::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlockIn, bool erase) {
+bool CCoinsViewCache::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlockIn, bool erase, CPrivateStateCache* private_cache) {
     for (CCoinsMap::iterator it = mapCoins.begin();
             it != mapCoins.end();
             it = erase ? mapCoins.erase(it) : std::next(it)) {
@@ -247,16 +272,48 @@ bool CCoinsViewCache::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlockIn
             }
         }
     }
+    if (private_cache) {
+        for (const auto& [nullifier, entry] : private_cache->nullifiers) {
+            cachePrivate.nullifiers[nullifier] = entry;
+        }
+        for (const auto& [anchor, entry] : private_cache->anchors) {
+            cachePrivate.anchors[anchor] = entry;
+        }
+        for (const auto& [index, cmx] : private_cache->commitments) {
+            cachePrivate.commitments[index] = cmx;
+        }
+        for (const auto& [block_hash, entry] : private_cache->block_undos) {
+            cachePrivate.block_undos[block_hash] = entry;
+        }
+        if (private_cache->commitment_count.has_value()) {
+            cachePrivate.commitment_count = private_cache->commitment_count;
+        }
+        if (private_cache->current_root.has_value()) {
+            cachePrivate.current_root = private_cache->current_root;
+        }
+        if (private_cache->frontier.has_value()) {
+            cachePrivate.frontier = private_cache->frontier;
+        }
+        if (private_cache->value_pool.has_value()) {
+            cachePrivate.value_pool = private_cache->value_pool;
+        }
+        if (erase) {
+            private_cache->Clear();
+        }
+    }
     hashBlock = hashBlockIn;
     return true;
 }
 
 bool CCoinsViewCache::Flush() {
-    bool fOk = base->BatchWrite(cacheCoins, hashBlock, /*erase=*/true);
+    bool fOk = base->BatchWrite(cacheCoins, hashBlock, /*erase=*/true, &cachePrivate);
     if (fOk) {
         if (!cacheCoins.empty()) {
             /* BatchWrite must erase all cacheCoins elements when erase=true. */
             throw std::logic_error("Not all cached coins were erased");
+        }
+        if (cachePrivate.HasChanges()) {
+            throw std::logic_error("Not all cached private state entries were erased");
         }
         ReallocateCache();
     }
@@ -266,7 +323,7 @@ bool CCoinsViewCache::Flush() {
 
 bool CCoinsViewCache::Sync()
 {
-    bool fOk = base->BatchWrite(cacheCoins, hashBlock, /*erase=*/false);
+    bool fOk = base->BatchWrite(cacheCoins, hashBlock, /*erase=*/false, &cachePrivate);
     // Instead of clearing `cacheCoins` as we would in Flush(), just clear the
     // FRESH/DIRTY flags of any coin that isn't spent.
     for (auto it = cacheCoins.begin(); it != cacheCoins.end(); ) {
@@ -278,7 +335,142 @@ bool CCoinsViewCache::Sync()
             ++it;
         }
     }
+    if (fOk) {
+        cachePrivate.Clear();
+    }
     return fOk;
+}
+
+bool CCoinsViewCache::HavePrivateNullifier(const uint256& nullifier) const
+{
+    const auto it = cachePrivate.nullifiers.find(nullifier);
+    if (it != cachePrivate.nullifiers.end()) return it->second.present;
+    return base->HavePrivateNullifier(nullifier);
+}
+
+bool CCoinsViewCache::HavePrivateAnchor(const uint256& anchor) const
+{
+    const auto it = cachePrivate.anchors.find(anchor);
+    if (it != cachePrivate.anchors.end()) return it->second.present;
+    return base->HavePrivateAnchor(anchor);
+}
+
+bool CCoinsViewCache::GetPrivateRoot(uint256& root) const
+{
+    if (cachePrivate.current_root.has_value()) {
+        root = *cachePrivate.current_root;
+        return true;
+    }
+    return base->GetPrivateRoot(root);
+}
+
+bool CCoinsViewCache::GetPrivateCommitmentCount(uint64_t& count) const
+{
+    if (cachePrivate.commitment_count.has_value()) {
+        count = *cachePrivate.commitment_count;
+        return true;
+    }
+    return base->GetPrivateCommitmentCount(count);
+}
+
+bool CCoinsViewCache::GetPrivateCommitment(uint64_t index, uint256& cmx) const
+{
+    const auto it = cachePrivate.commitments.find(index);
+    if (it != cachePrivate.commitments.end()) {
+        if (!it->second.has_value()) return false;
+        cmx = *it->second;
+        return true;
+    }
+    return base->GetPrivateCommitment(index, cmx);
+}
+
+bool CCoinsViewCache::GetPrivateFrontier(std::vector<unsigned char>& frontier) const
+{
+    if (cachePrivate.frontier.has_value()) {
+        frontier = *cachePrivate.frontier;
+        return true;
+    }
+    return base->GetPrivateFrontier(frontier);
+}
+
+bool CCoinsViewCache::GetPrivateValuePool(CAmount& value_pool) const
+{
+    if (cachePrivate.value_pool.has_value()) {
+        value_pool = *cachePrivate.value_pool;
+        return true;
+    }
+    return base->GetPrivateValuePool(value_pool);
+}
+
+bool CCoinsViewCache::GetPrivateBlockUndo(const uint256& block_hash, CPrivateBlockUndo& undo) const
+{
+    const auto it = cachePrivate.block_undos.find(block_hash);
+    if (it != cachePrivate.block_undos.end()) {
+        if (!it->second.present) return false;
+        undo = it->second.undo;
+        return true;
+    }
+    return base->GetPrivateBlockUndo(block_hash, undo);
+}
+
+void CCoinsViewCache::AddPrivateNullifier(const uint256& nullifier)
+{
+    cachePrivate.nullifiers[nullifier] = CPrivateCacheEntry{true, CPrivateCacheEntry::DIRTY};
+}
+
+void CCoinsViewCache::ErasePrivateNullifier(const uint256& nullifier)
+{
+    cachePrivate.nullifiers[nullifier] = CPrivateCacheEntry{false, CPrivateCacheEntry::DIRTY};
+}
+
+void CCoinsViewCache::AddPrivateAnchor(const uint256& anchor)
+{
+    cachePrivate.anchors[anchor] = CPrivateCacheEntry{true, CPrivateCacheEntry::DIRTY};
+}
+
+void CCoinsViewCache::ErasePrivateAnchor(const uint256& anchor)
+{
+    cachePrivate.anchors[anchor] = CPrivateCacheEntry{false, CPrivateCacheEntry::DIRTY};
+}
+
+void CCoinsViewCache::AddPrivateCommitment(uint64_t index, const uint256& cmx)
+{
+    cachePrivate.commitments[index] = cmx;
+}
+
+void CCoinsViewCache::ErasePrivateCommitment(uint64_t index)
+{
+    cachePrivate.commitments[index] = std::nullopt;
+}
+
+void CCoinsViewCache::SetPrivateRoot(const uint256& root)
+{
+    cachePrivate.current_root = root;
+}
+
+void CCoinsViewCache::SetPrivateCommitmentCount(uint64_t count)
+{
+    cachePrivate.commitment_count = count;
+}
+
+void CCoinsViewCache::SetPrivateFrontier(const std::vector<unsigned char>& frontier)
+{
+    cachePrivate.frontier = frontier;
+}
+
+void CCoinsViewCache::SetPrivateValuePool(CAmount value_pool)
+{
+    cachePrivate.value_pool = value_pool;
+}
+
+void CCoinsViewCache::AddPrivateBlockUndo(const uint256& block_hash, const CPrivateBlockUndo& undo)
+{
+    cachePrivate.block_undos[block_hash] = CPrivateUndoCacheEntry{true, undo, CPrivateUndoCacheEntry::DIRTY};
+}
+
+void CCoinsViewCache::ErasePrivateBlockUndo(const uint256& block_hash)
+{
+    cachePrivate.block_undos[block_hash] = CPrivateUndoCacheEntry{false, CPrivateBlockUndo{}, CPrivateUndoCacheEntry::DIRTY};
 }
 
 void CCoinsViewCache::Uncache(const COutPoint& hash)

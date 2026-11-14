@@ -9,7 +9,10 @@
  * network protocol versioning
  */
 
-static const int PROTOCOL_VERSION = 70016;
+static const int PROTOCOL_VERSION = 70017;
+
+//! Minimum protocol version for peers participating after Nito private activation.
+static const int NITO_PRIVATE_MIN_PEER_PROTO_VERSION = 70017;
 
 //! initial proto version, to be increased after version/verack negotiation
 static const int INIT_PROTO_VERSION = 209;

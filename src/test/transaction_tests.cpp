@@ -16,6 +16,7 @@
 #include <key.h>
 #include <policy/policy.h>
 #include <policy/settings.h>
+#include <psbt.h>
 #include <script/script.h>
 #include <script/script_error.h>
 #include <script/sign.h>
@@ -187,6 +188,48 @@ std::set<unsigned int> ExcludeIndividualFlags(unsigned int flags)
 }
 
 BOOST_FIXTURE_TEST_SUITE(transaction_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(psbt_rejects_missing_non_witness_prevout)
+{
+    CMutableTransaction previous_tx;
+    previous_tx.vout.emplace_back(1, CScript{});
+
+    CMutableTransaction spending_tx;
+    spending_tx.vin.emplace_back(COutPoint{previous_tx.GetHash(), 1});
+
+    PartiallySignedTransaction psbt{spending_tx};
+    psbt.inputs.at(0).non_witness_utxo = MakeTransactionRef(previous_tx);
+
+    DataStream encoded{};
+    encoded << psbt;
+
+    PartiallySignedTransaction decoded;
+    BOOST_CHECK_THROW(encoded >> decoded, std::ios_base::failure);
+}
+
+BOOST_AUTO_TEST_CASE(detects_witness_program_without_script_execution)
+{
+    const auto spends_witness = [](const CScript& prev_script, const CScript& script_sig = {}) {
+        CCoinsView coins_dummy;
+        CCoinsViewCache coins{&coins_dummy};
+
+        CMutableTransaction previous_tx;
+        previous_tx.vout.emplace_back(1, prev_script);
+        CMutableTransaction spending_tx;
+        spending_tx.vin.emplace_back(COutPoint{previous_tx.GetHash(), 0}, script_sig);
+        AddCoins(coins, CTransaction{previous_tx}, 0, /*check_for_overwrite=*/false);
+        return SpendsWitnessProgram(CTransaction{spending_tx}, coins);
+    };
+
+    const CScript legacy{CScript{} << OP_TRUE};
+    const CScript witness{CScript{} << OP_0 << std::vector<unsigned char>(32, 1)};
+    BOOST_CHECK(!spends_witness(legacy));
+    BOOST_CHECK(spends_witness(witness));
+
+    const CScript p2sh{GetScriptForDestination(ScriptHash{witness})};
+    BOOST_CHECK(spends_witness(p2sh, CScript{} << ToByteVector(witness)));
+    BOOST_CHECK(!spends_witness(p2sh));
+}
 
 BOOST_AUTO_TEST_CASE(tx_valid)
 {

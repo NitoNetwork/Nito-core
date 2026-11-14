@@ -24,6 +24,7 @@ class AddressBookPage;
 QT_BEGIN_NAMESPACE
 class QModelIndex;
 class QProgressDialog;
+class QPushButton;
 QT_END_NAMESPACE
 
 /*
@@ -60,6 +61,7 @@ private:
     WalletModel* const walletModel;
 
     OverviewPage *overviewPage;
+    QWidget *lockedPage;
     QWidget *transactionsPage;
     ReceiveCoinsDialog *receiveCoinsPage;
     SendCoinsDialog *sendCoinsPage;
@@ -70,6 +72,10 @@ private:
 
     QProgressDialog* progressDialog{nullptr};
     const PlatformStyle *platformStyle;
+
+    bool isLockedForDisplay() const;
+    bool showLockedPageIfNeeded();
+    void unlockWalletForDisplay();
 
 public Q_SLOTS:
     /** Switch to overview (home) page */
@@ -95,6 +101,8 @@ public Q_SLOTS:
     void encryptWallet();
     /** Backup the wallet */
     void backupWallet();
+    /** Show the wallet recovery phrase */
+    void showHDSeedMnemonic();
     /** Change encrypted wallet passphrase */
     void changePassphrase();
     /** Ask for passphrase to unlock wallet temporarily */

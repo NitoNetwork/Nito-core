@@ -17,7 +17,7 @@ from test_framework.wallet_util import WalletUnlock
 def read_dump(file_name, addrs, script_addrs, hd_master_addr_old):
     """
     Read the given dump, count the addrs that match, count change and reserve.
-    Also check that the old hd_master is inactive
+    Also check that encryption preserves the active HD master.
     """
     with open(file_name, encoding='utf8') as inputfile:
         found_comments = []
@@ -55,8 +55,8 @@ def read_dump(file_name, addrs, script_addrs, hd_master_addr_old):
                     # ensure the old master is still available
                     assert hd_master_addr_old == addr
                 elif keytype == "hdseed=1":
-                    # ensure we have generated a new hd master key
-                    assert hd_master_addr_old != addr
+                    if hd_master_addr_old is not None:
+                        assert_equal(hd_master_addr_old, addr)
                     hd_master_addr_ret = addr
                 elif keytype == "script=1":
                     # scripts don't have keypaths
@@ -67,14 +67,14 @@ def read_dump(file_name, addrs, script_addrs, hd_master_addr_old):
                 # count key types
                 for addrObj in addrs:
                     if addrObj['address'] == addr.split(",")[0] and addrObj['hdkeypath'] == keypath and keytype == "label=":
-                        if addr.startswith('m') or addr.startswith('n'):
+                        if addr.startswith('nrt1'):
+                            found_bech32_addr += 1
+                        elif addr.startswith('m') or addr.startswith('n'):
                             # P2PKH address
                             found_legacy_addr += 1
                         elif addr.startswith('2'):
                             # P2SH-segwit address
                             found_p2sh_segwit_addr += 1
-                        elif addr.startswith('bcrt1'):
-                            found_bech32_addr += 1
                         break
                     elif keytype == "change=1":
                         found_addr_chg += 1
@@ -188,7 +188,7 @@ class WalletDumpTest(NitoTestFramework):
             assert_equal(found_p2sh_segwit_addr, test_addr_count)  # all keys must be in the dump
             assert_equal(found_bech32_addr, test_addr_count)  # all keys must be in the dump
             assert_equal(found_script_addr, 1)
-            assert_equal(found_addr_chg, 90 * 2)  # old reserve keys are marked as change now
+            assert_equal(found_addr_chg, 0)  # encryption preserves the existing reserve keys
             assert_equal(found_addr_rsv, 90 * 2)
 
             # Overwriting should fail
@@ -213,7 +213,7 @@ class WalletDumpTest(NitoTestFramework):
             self.nodes[0].getnewaddress()
 
         # Make sure that dumpwallet doesn't have a lock order issue when there is an unconfirmed tx and it is reloaded
-        # See https://github.com/nito/nito/issues/22489
+        # See https://github.com/bitcoin/bitcoin/issues/22489
         self.nodes[0].createwallet("w3")
         w3 = self.nodes[0].get_wallet_rpc("w3")
         w3.importprivkey(privkey=self.nodes[0].get_deterministic_priv_key().key, label="coinbase_import")

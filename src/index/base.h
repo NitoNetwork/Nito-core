@@ -76,6 +76,10 @@ private:
     /// The last block in the chain that the index is in sync with.
     std::atomic<const CBlockIndex*> m_best_block_index{nullptr};
 
+    /// Whether initialization had to recover from a locator whose newest hash
+    /// was not present in the durable block index.
+    bool m_recovered_from_locator{false};
+
     std::thread m_thread_sync;
     CThreadInterrupt m_interrupt;
 
@@ -96,6 +100,9 @@ private:
     /// getting corrupted.
     bool Commit();
 
+    /// Commit a new locator before publishing it as the indexed best block.
+    bool Commit(const CBlockIndex* block);
+
     /// Loop over disconnected blocks and call CustomRewind.
     bool Rewind(const CBlockIndex* current_tip, const CBlockIndex* new_tip);
 
@@ -109,7 +116,11 @@ protected:
     Chainstate* m_chainstate{nullptr};
     const std::string m_name;
 
+    bool RecoveredFromLocator() const { return m_recovered_from_locator; }
+
     void BlockConnected(ChainstateRole role, const std::shared_ptr<const CBlock>& block, const CBlockIndex* pindex) override;
+
+    void BlockDisconnected(const std::shared_ptr<const CBlock>& block, const CBlockIndex* pindex) override;
 
     void ChainStateFlushed(ChainstateRole role, const CBlockLocator& locator) override;
 
@@ -118,6 +129,10 @@ protected:
 
     /// Write update index entries for a newly connected block.
     [[nodiscard]] virtual bool CustomAppend(const interfaces::BlockInfo& block) { return true; }
+
+    /// Whether each successful append must immediately commit subclass state
+    /// atomically with the BaseIndex locator.
+    virtual bool CommitOnAppend() const { return false; }
 
     /// Virtual method called internally by Commit that can be overridden to atomically
     /// commit more index state.

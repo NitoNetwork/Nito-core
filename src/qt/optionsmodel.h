@@ -75,6 +75,8 @@ public:
         Listen,                 // bool
         Server,                 // bool
         EnablePSBTControls,     // bool
+        EnableLegacyReceiveAddressTypes, // bool
+        EnableBech32xOrchardReceiveAddresses, // bool
         MaskValues,             // bool
         OptionIDRowCount,
     };
@@ -94,7 +96,7 @@ public:
     QVariant data(const QModelIndex & index, int role = Qt::DisplayRole) const override;
     bool setData(const QModelIndex & index, const QVariant & value, int role = Qt::EditRole) override;
     QVariant getOption(OptionID option, const std::string& suffix="") const;
-    bool setOption(OptionID option, const QVariant& value, const std::string& suffix="");
+    bool setOption(OptionID option, const QVariant& value, const std::string& suffix="", bool force_write=false);
     /** Updates current unit in memory, settings and emits displayUnitChanged(new_unit) signal */
     void setDisplayUnit(const QVariant& new_unit);
 
@@ -108,6 +110,8 @@ public:
     bool getCoinControlFeatures() const { return fCoinControlFeatures; }
     bool getSubFeeFromAmount() const { return m_sub_fee_from_amount; }
     bool getEnablePSBTControls() const { return m_enable_psbt_controls; }
+    bool getEnableLegacyReceiveAddressTypes() const { return m_enable_legacy_receive_address_types; }
+    bool getEnableBech32xOrchardReceiveAddresses() const { return m_enable_bech32x_orchard_receive_addresses; }
     const QString& getOverriddenByCommandLine() { return strOverriddenByCommandLine; }
 
     /** Whether -signer was set or not */
@@ -135,6 +139,8 @@ private:
     bool fCoinControlFeatures;
     bool m_sub_fee_from_amount;
     bool m_enable_psbt_controls;
+    bool m_enable_legacy_receive_address_types;
+    bool m_enable_bech32x_orchard_receive_addresses;
     bool m_mask_values;
 
     /* settings that were overridden by command-line */
@@ -152,6 +158,8 @@ private:
 Q_SIGNALS:
     void displayUnitChanged(NitoUnit unit);
     void coinControlFeaturesChanged(bool);
+    void legacyReceiveAddressTypesChanged(bool);
+    void bech32xOrchardReceiveAddressesChanged(bool);
     void showTrayIconChanged(bool);
     void fontForMoneyChanged(const QFont&);
 };

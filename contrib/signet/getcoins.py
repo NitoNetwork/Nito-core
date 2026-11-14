@@ -10,10 +10,6 @@ import subprocess
 import sys
 import xml.etree.ElementTree
 
-DEFAULT_GLOBAL_FAUCET = 'https://signetfaucet.com/claim'
-DEFAULT_GLOBAL_CAPTCHA = 'https://signetfaucet.com/captcha'
-GLOBAL_FIRST_BLOCK_HASH = '00000086d6b2636cb2a392d45edc4ec544a10024d30141c9adf4bfd9de533b53'
-
 # braille unicode block
 BASE = 0x2800
 BIT_PER_PIXEL = [
@@ -70,8 +66,8 @@ def print_image(img, threshold=128):
 
 parser = argparse.ArgumentParser(description='Script to get coins from a faucet.', epilog='You may need to start with double-dash (--) when providing nito-cli arguments.')
 parser.add_argument('-c', '--cmd', dest='cmd', default='nito-cli', help='nito-cli command to use')
-parser.add_argument('-f', '--faucet', dest='faucet', default=DEFAULT_GLOBAL_FAUCET, help='URL of the faucet')
-parser.add_argument('-g', '--captcha', dest='captcha', default=DEFAULT_GLOBAL_CAPTCHA, help='URL of the faucet captcha, or empty if no captcha is needed')
+parser.add_argument('-f', '--faucet', dest='faucet', required=True, help='URL of a faucet for your Nito Signet challenge')
+parser.add_argument('-g', '--captcha', dest='captcha', default='', help='URL of the faucet captcha, or empty if no captcha is needed')
 parser.add_argument('-a', '--addr', dest='addr', default='', help='Nito address to which the faucet should send')
 parser.add_argument('-p', '--password', dest='password', default='', help='Faucet password, if any')
 parser.add_argument('-n', '--amount', dest='amount', default='0.001', help='Amount to request (0.001-0.1, default is 0.001)')
@@ -95,16 +91,6 @@ def nito_cli(rpc_command_and_params):
         raise SystemExit(f"-----\nError while calling {cmdline} (see output above).")
 
 
-if args.faucet.lower() == DEFAULT_GLOBAL_FAUCET:
-    # Get the hash of the block at height 1 of the currently active signet chain
-    curr_signet_hash = nito_cli(['getblockhash', '1'])
-    if curr_signet_hash != GLOBAL_FIRST_BLOCK_HASH:
-        raise SystemExit('The global faucet cannot be used with a custom Signet network. Please use the global signet or setup your custom faucet to use this functionality.\n')
-else:
-    # For custom faucets, don't request captcha by default.
-    if args.captcha == DEFAULT_GLOBAL_CAPTCHA:
-        args.captcha = ''
-
 if args.addr == '':
     # get address for receiving coins
     args.addr = nito_cli(['getnewaddress', 'faucet', 'bech32'])
@@ -112,7 +98,6 @@ if args.addr == '':
 data = {'address': args.addr, 'password': args.password, 'amount': args.amount}
 
 # Store cookies
-# for debugging: print(session.cookies.get_dict())
 session = requests.Session()
 
 if args.captcha != '': # Retrieve a captcha
@@ -152,7 +137,7 @@ if res:
 elif res.status_code == 404:
     print('The specified faucet URL does not exist. Please check for any server issues/typo.')
 elif res.status_code == 429:
-    print('The script does not allow for repeated transactions as the global faucet is rate-limitied to 1 request/IP/day. You can access the faucet website to get more coins manually')
+    print('The faucet rate limit was reached. Follow the retry policy published by its operator.')
 else:
     print(f'Returned Error Code {res.status_code}\n{res.text}\n')
     print('Please check the provided arguments for their validity and/or any possible typo.')

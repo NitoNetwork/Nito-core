@@ -6,6 +6,9 @@
 #include <qt/nitoaddressvalidator.h>
 
 #include <key_io.h>
+#include <private/private_address.h>
+
+#include <array>
 
 /* Base58 characters are:
      "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -91,6 +94,12 @@ QValidator::State NitoAddressCheckValidator::validate(QString &input, int &pos) 
     Q_UNUSED(pos);
     // Validate the passed Nito address
     if (IsValidDestinationString(input.toStdString())) {
+        return QValidator::Acceptable;
+    }
+
+    std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> private_raw{};
+    std::string error;
+    if (wallet::DecodeNitoPrivateAddress(input.toStdString(), Params(), private_raw, error)) {
         return QValidator::Acceptable;
     }
 

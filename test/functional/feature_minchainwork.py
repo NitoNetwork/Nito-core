@@ -18,19 +18,22 @@ only succeeds past a given node once its nMinimumChainWork has been exceeded.
 import time
 
 from test_framework.p2p import P2PInterface, msg_getheaders
+from test_framework.messages import uint256_from_compact
 from test_framework.test_framework import NitoTestFramework
 from test_framework.util import assert_equal
 
 # 2 hashes required per regtest block (with no difficulty adjustment)
 REGTEST_WORK_PER_BLOCK = 2
+REGTEST_GENESIS_WORK = (1 << 256) // (uint256_from_compact(0x1d00ffff) + 1)
 
 class MinimumChainWorkTest(NitoTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 3
 
-        self.extra_args = [[], ["-minimumchainwork=0x65"], ["-minimumchainwork=0x65"]]
-        self.node_min_work = [0, 101, 101]
+        minimum_work = REGTEST_GENESIS_WORK + 99
+        self.extra_args = [[], [f"-minimumchainwork={minimum_work:x}"], [f"-minimumchainwork={minimum_work:x}"]]
+        self.node_min_work = [0, minimum_work, minimum_work]
 
     def setup_network(self):
         # This test relies on the chain setup being:
@@ -48,7 +51,7 @@ class MinimumChainWorkTest(NitoTestFramework):
     def run_test(self):
         # Start building a chain on node0.  node2 shouldn't be able to sync until node1's
         # minchainwork is exceeded
-        starting_chain_work = REGTEST_WORK_PER_BLOCK # Genesis block's work
+        starting_chain_work = REGTEST_GENESIS_WORK
         self.log.info(f"Testing relay across node 1 (minChainWork = {self.node_min_work[1]})")
 
         starting_blockcount = self.nodes[2].getblockcount()

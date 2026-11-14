@@ -30,6 +30,32 @@ static inline size_t RecursiveDynamicUsage(const CTxOut& out) {
     return RecursiveDynamicUsage(out.scriptPubKey);
 }
 
+static inline size_t RecursiveDynamicUsage(const CPrivateActionEffects& action) {
+    return memusage::DynamicUsage(action.ephemeral_key) +
+           memusage::DynamicUsage(action.enc_ciphertext) +
+           memusage::DynamicUsage(action.out_ciphertext);
+}
+
+static inline size_t RecursiveDynamicUsage(const CPrivateActionAuth& auth) {
+    return memusage::DynamicUsage(auth.spend_auth_sig);
+}
+
+static inline size_t RecursiveDynamicUsage(const CPrivateBundle& bundle) {
+    size_t mem = memusage::DynamicUsage(bundle.effects.actions);
+    for (const auto& action : bundle.effects.actions) {
+        mem += RecursiveDynamicUsage(action);
+    }
+    if (bundle.auth) {
+        mem += memusage::DynamicUsage(bundle.auth->actions_auth);
+        for (const auto& auth : bundle.auth->actions_auth) {
+            mem += RecursiveDynamicUsage(auth);
+        }
+        mem += memusage::DynamicUsage(bundle.auth->proof);
+        mem += memusage::DynamicUsage(bundle.auth->binding_sig);
+    }
+    return mem;
+}
+
 static inline size_t RecursiveDynamicUsage(const CTransaction& tx) {
     size_t mem = memusage::DynamicUsage(tx.vin) + memusage::DynamicUsage(tx.vout);
     for (std::vector<CTxIn>::const_iterator it = tx.vin.begin(); it != tx.vin.end(); it++) {
@@ -37,6 +63,9 @@ static inline size_t RecursiveDynamicUsage(const CTransaction& tx) {
     }
     for (std::vector<CTxOut>::const_iterator it = tx.vout.begin(); it != tx.vout.end(); it++) {
         mem += RecursiveDynamicUsage(*it);
+    }
+    if (tx.m_private_bundle) {
+        mem += RecursiveDynamicUsage(*tx.m_private_bundle);
     }
     return mem;
 }
@@ -48,6 +77,9 @@ static inline size_t RecursiveDynamicUsage(const CMutableTransaction& tx) {
     }
     for (std::vector<CTxOut>::const_iterator it = tx.vout.begin(); it != tx.vout.end(); it++) {
         mem += RecursiveDynamicUsage(*it);
+    }
+    if (tx.m_private_bundle) {
+        mem += RecursiveDynamicUsage(*tx.m_private_bundle);
     }
     return mem;
 }

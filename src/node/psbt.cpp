@@ -11,6 +11,7 @@
 #include <policy/settings.h>
 #include <tinyformat.h>
 
+#include <ios>
 #include <numeric>
 
 namespace node {
@@ -18,6 +19,23 @@ PSBTAnalysis AnalyzePSBT(PartiallySignedTransaction psbtx)
 {
     // Go through each input and build status
     PSBTAnalysis result;
+    try {
+        psbtx.ApplyNitoPrivateAuthProprietary();
+    } catch (const std::ios_base::failure& e) {
+        result.SetInvalid(strprintf("PSBT is not valid. %s", e.what()));
+        return result;
+    }
+    NitoPrivatePSBTSigningData private_signing_data;
+    try {
+        private_signing_data = psbtx.GetNitoPrivateSigningData();
+    } catch (const std::ios_base::failure& e) {
+        result.SetInvalid(strprintf("PSBT is not valid. %s", e.what()));
+        return result;
+    }
+    if (private_signing_data.HasAny() && psbtx.tx->HasPrivateAuth()) {
+        result.SetInvalid("PSBT is not valid. Nito Orchard signing material is mixed with private authorization");
+        return result;
+    }
 
     bool calc_fee = true;
 
@@ -94,6 +112,9 @@ PSBTAnalysis AnalyzePSBT(PartiallySignedTransaction psbtx)
         PSBTInputAnalysis& input_analysis = result.inputs[i];
         result.next = std::min(result.next, input_analysis.next);
     }
+    if (private_signing_data.HasAny()) {
+        result.next = std::min(result.next, PSBTRole::SIGNER);
+    }
     assert(result.next > PSBTRole::CREATOR);
 
     if (calc_fee) {
@@ -111,15 +132,31 @@ PSBTAnalysis AnalyzePSBT(PartiallySignedTransaction psbtx)
             return result;
         }
 
-        // Get the fee
-        CAmount fee = in_amt - out_amt;
+        // Get the fee. Private bundles carry their shielded value balance as
+        // txid data, so account for it the same way consensus validation does.
+        CAmount value_in_effective = in_amt;
+        CAmount private_value_balance{0};
+        if (private_signing_data.plan) {
+            private_value_balance = private_signing_data.plan->value_balance;
+            if (psbtx.tx->HasPrivateBundle() && psbtx.tx->m_private_bundle->GetValueBalance() != private_value_balance) {
+                result.SetInvalid("PSBT is not valid. Private signing plan value balance mismatch");
+                return result;
+            }
+        } else if (psbtx.tx->HasPrivateBundle()) {
+            private_value_balance = psbtx.tx->m_private_bundle->GetValueBalance();
+        }
+        if (!MoneyAddSigned(value_in_effective, private_value_balance, value_in_effective)) {
+            result.SetInvalid("PSBT is not valid. Private value balance overflow");
+            return result;
+        }
+        CAmount fee = value_in_effective - out_amt;
         result.fee = fee;
 
         // Estimate the size
         CMutableTransaction mtx(*psbtx.tx);
         CCoinsView view_dummy;
         CCoinsViewCache view(&view_dummy);
-        bool success = true;
+        bool success = !private_signing_data.HasAny();
 
         for (unsigned int i = 0; i < psbtx.tx->vin.size(); ++i) {
             PSBTInput& input = psbtx.inputs[i];

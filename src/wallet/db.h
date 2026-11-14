@@ -186,6 +186,7 @@ struct DatabaseOptions {
     std::optional<DatabaseFormat> require_format;
     uint64_t create_flags = 0;
     SecureString create_passphrase;
+    SecureString create_bip39_passphrase;
 
     // Specialized options. Not every option is supported by every backend.
     bool verify = true;             //!< Check data integrity on load.
@@ -217,6 +218,9 @@ std::unique_ptr<WalletDatabase> MakeDatabase(const fs::path& path, const Databas
 fs::path BDBDataFile(const fs::path& path);
 fs::path SQLiteDataFile(const fs::path& path);
 bool IsBDBFile(const fs::path& path);
+/** Return true for a structurally recognizable SQLite database header,
+ * without treating its application id as a Nito network match. */
+bool IsSQLiteFileHeader(const fs::path& path);
 bool IsSQLiteFile(const fs::path& path);
 } // namespace wallet
 

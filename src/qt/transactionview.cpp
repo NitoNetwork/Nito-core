@@ -23,7 +23,6 @@
 #include <chrono>
 #include <optional>
 
-#include <QApplication>
 #include <QComboBox>
 #include <QDateTimeEdit>
 #include <QDesktopServices>
@@ -441,7 +440,6 @@ void TransactionView::bumpFee([[maybe_unused]] bool checked)
         transactionView->selectionModel()->clearSelection();
         model->getTransactionTableModel()->updateTransaction(hashQStr, CT_UPDATED, true);
 
-        qApp->processEvents();
         Q_EMIT bumpedFee(newHash);
     }
 }

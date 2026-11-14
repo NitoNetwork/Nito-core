@@ -8,8 +8,10 @@
 #define BITCOIN_COINS_H
 
 #include <compressor.h>
+#include <consensus/amount.h>
 #include <core_memusage.h>
 #include <memusage.h>
+#include <private/private_state.h>
 #include <primitives/transaction.h>
 #include <serialize.h>
 #include <support/allocators/pool.h>
@@ -20,7 +22,10 @@
 #include <stdint.h>
 
 #include <functional>
+#include <map>
+#include <optional>
 #include <unordered_map>
+#include <utility>
 
 /**
  * A UTXO entry.
@@ -150,6 +155,84 @@ using CCoinsMap = std::unordered_map<COutPoint,
 
 using CCoinsMapMemoryResource = CCoinsMap::allocator_type::ResourceType;
 
+struct CPrivateCacheEntry
+{
+    bool present{false};
+    unsigned char flags{0};
+
+    enum Flags {
+        DIRTY = (1 << 0),
+    };
+
+    CPrivateCacheEntry() = default;
+    CPrivateCacheEntry(bool present_in, unsigned char flags_in) : present(present_in), flags(flags_in) {}
+};
+
+struct CPrivateUndoCacheEntry
+{
+    bool present{false};
+    CPrivateBlockUndo undo;
+    unsigned char flags{0};
+
+    enum Flags {
+        DIRTY = (1 << 0),
+    };
+
+    CPrivateUndoCacheEntry() = default;
+    CPrivateUndoCacheEntry(bool present_in, CPrivateBlockUndo undo_in, unsigned char flags_in)
+        : present(present_in), undo(std::move(undo_in)), flags(flags_in) {}
+};
+
+struct CPrivateStateCache
+{
+    std::unordered_map<uint256, CPrivateCacheEntry, SaltedTxidHasher> nullifiers;
+    std::unordered_map<uint256, CPrivateCacheEntry, SaltedTxidHasher> anchors;
+    std::map<uint64_t, std::optional<uint256>> commitments;
+    std::unordered_map<uint256, CPrivateUndoCacheEntry, SaltedTxidHasher> block_undos;
+    std::optional<uint64_t> commitment_count;
+    std::optional<uint256> current_root;
+    std::optional<std::vector<unsigned char>> frontier;
+    std::optional<CAmount> value_pool;
+
+    size_t DynamicMemoryUsage() const
+    {
+        size_t usage = memusage::DynamicUsage(nullifiers) +
+                       memusage::DynamicUsage(anchors) +
+                       memusage::DynamicUsage(commitments) +
+                       memusage::DynamicUsage(block_undos);
+        if (frontier) usage += memusage::DynamicUsage(*frontier);
+        for (const auto& [_, entry] : block_undos) {
+            usage += memusage::DynamicUsage(entry.undo.vtxundo);
+            for (const CPrivateTxUndo& txundo : entry.undo.vtxundo) {
+                usage += memusage::DynamicUsage(txundo.previous_frontier) +
+                         memusage::DynamicUsage(txundo.connected_frontier) +
+                         memusage::DynamicUsage(txundo.added_nullifiers) +
+                         memusage::DynamicUsage(txundo.added_commitment_indices);
+            }
+        }
+        return usage;
+    }
+
+    bool HasChanges() const
+    {
+        return !nullifiers.empty() || !anchors.empty() || !commitments.empty() || !block_undos.empty() ||
+               commitment_count.has_value() || current_root.has_value() || frontier.has_value() ||
+               value_pool.has_value();
+    }
+
+    void Clear()
+    {
+        nullifiers.clear();
+        anchors.clear();
+        commitments.clear();
+        block_undos.clear();
+        commitment_count.reset();
+        current_root.reset();
+        frontier.reset();
+        value_pool.reset();
+    }
+};
+
 /** Cursor for iterating over CoinsView state */
 class CCoinsViewCursor
 {
@@ -193,7 +276,16 @@ public:
 
     //! Do a bulk modification (multiple Coin changes + BestBlock change).
     //! The passed mapCoins can be modified.
-    virtual bool BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase = true);
+    virtual bool BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase = true, CPrivateStateCache* private_cache = nullptr);
+
+    virtual bool HavePrivateNullifier(const uint256& nullifier) const;
+    virtual bool HavePrivateAnchor(const uint256& anchor) const;
+    virtual bool GetPrivateRoot(uint256& root) const;
+    virtual bool GetPrivateCommitmentCount(uint64_t& count) const;
+    virtual bool GetPrivateCommitment(uint64_t index, uint256& cmx) const;
+    virtual bool GetPrivateFrontier(std::vector<unsigned char>& frontier) const;
+    virtual bool GetPrivateValuePool(CAmount& value_pool) const;
+    virtual bool GetPrivateBlockUndo(const uint256& block_hash, CPrivateBlockUndo& undo) const;
 
     //! Get a cursor to iterate over the whole state
     virtual std::unique_ptr<CCoinsViewCursor> Cursor() const;
@@ -219,9 +311,17 @@ public:
     uint256 GetBestBlock() const override;
     std::vector<uint256> GetHeadBlocks() const override;
     void SetBackend(CCoinsView &viewIn);
-    bool BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase = true) override;
+    bool BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase = true, CPrivateStateCache* private_cache = nullptr) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override;
     size_t EstimateSize() const override;
+    bool HavePrivateNullifier(const uint256& nullifier) const override;
+    bool HavePrivateAnchor(const uint256& anchor) const override;
+    bool GetPrivateRoot(uint256& root) const override;
+    bool GetPrivateCommitmentCount(uint64_t& count) const override;
+    bool GetPrivateCommitment(uint64_t index, uint256& cmx) const override;
+    bool GetPrivateFrontier(std::vector<unsigned char>& frontier) const override;
+    bool GetPrivateValuePool(CAmount& value_pool) const override;
+    bool GetPrivateBlockUndo(const uint256& block_hash, CPrivateBlockUndo& undo) const override;
 };
 
 
@@ -239,6 +339,7 @@ protected:
     mutable uint256 hashBlock;
     mutable CCoinsMapMemoryResource m_cache_coins_memory_resource{};
     mutable CCoinsMap cacheCoins;
+    mutable CPrivateStateCache cachePrivate;
 
     /* Cached dynamic memory usage for the inner Coin objects. */
     mutable size_t cachedCoinsUsage{0};
@@ -256,10 +357,32 @@ public:
     bool HaveCoin(const COutPoint &outpoint) const override;
     uint256 GetBestBlock() const override;
     void SetBestBlock(const uint256 &hashBlock);
-    bool BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase = true) override;
+    bool BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase = true, CPrivateStateCache* private_cache = nullptr) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override {
         throw std::logic_error("CCoinsViewCache cursor iteration not supported.");
     }
+
+    bool HavePrivateNullifier(const uint256& nullifier) const override;
+    bool HavePrivateAnchor(const uint256& anchor) const override;
+    bool GetPrivateRoot(uint256& root) const override;
+    bool GetPrivateCommitmentCount(uint64_t& count) const override;
+    bool GetPrivateCommitment(uint64_t index, uint256& cmx) const override;
+    bool GetPrivateFrontier(std::vector<unsigned char>& frontier) const override;
+    bool GetPrivateValuePool(CAmount& value_pool) const override;
+    bool GetPrivateBlockUndo(const uint256& block_hash, CPrivateBlockUndo& undo) const override;
+
+    void AddPrivateNullifier(const uint256& nullifier);
+    void ErasePrivateNullifier(const uint256& nullifier);
+    void AddPrivateAnchor(const uint256& anchor);
+    void ErasePrivateAnchor(const uint256& anchor);
+    void AddPrivateCommitment(uint64_t index, const uint256& cmx);
+    void ErasePrivateCommitment(uint64_t index);
+    void SetPrivateRoot(const uint256& root);
+    void SetPrivateCommitmentCount(uint64_t count);
+    void SetPrivateFrontier(const std::vector<unsigned char>& frontier);
+    void SetPrivateValuePool(CAmount value_pool);
+    void AddPrivateBlockUndo(const uint256& block_hash, const CPrivateBlockUndo& undo);
+    void ErasePrivateBlockUndo(const uint256& block_hash);
 
     /**
      * Check if we have the given utxo already loaded in this cache.

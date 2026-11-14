@@ -8,6 +8,7 @@ import random
 import shutil
 import struct
 import time
+from pathlib import Path
 
 from test_framework.address import (
     script_to_p2sh,
@@ -19,6 +20,7 @@ from test_framework.descriptors import descsum_create
 from test_framework.key import ECPubKey
 from test_framework.test_framework import NitoTestFramework
 from test_framework.messages import COIN, CTransaction, CTxOut
+from test_framework.previous_releases import add_v3_options, v3_binaries
 from test_framework.script_util import key_to_p2pkh_script, script_to_p2sh_script, script_to_p2wsh_script
 from test_framework.util import (
     assert_equal,
@@ -33,17 +35,46 @@ from test_framework.wallet_util import (
 class WalletMigrationTest(NitoTestFramework):
     def add_options(self, parser):
         self.add_wallet_options(parser)
+        add_v3_options(parser)
 
     def set_test_params(self):
         self.setup_clean_chain = True
-        self.num_nodes = 1
-        self.extra_args = [[]]
+        # The wallets under test must originate from the released V3 binary.
+        # Keep a V4 funder separate so the empty-name fixture remains available
+        # in both descriptor and legacy test modes.
+        self.num_nodes = 2
+        self.default_wallet_name = "migration_funder"
+        self.wallet_names = [self.default_wallet_name, None]
+        self.extra_args = [[], []]
         self.supports_cli = False
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
         self.skip_if_no_sqlite()
         self.skip_if_no_bdb()
+        self.v3_binary, self.v3_cli = v3_binaries(self)
+
+    def setup_network(self):
+        # Node 1 is deliberately disconnected. It exists only to create and
+        # close authentic V3 BDB fixtures before V4 restores them on node 0.
+        self.add_nodes(
+            self.num_nodes,
+            extra_args=self.extra_args,
+            binary=[self.options.nitod, self.v3_binary],
+            binary_cli=[self.options.nitocli, self.v3_cli],
+        )
+        self.start_node(0)
+        self.init_wallet(node=0)
+        self.start_node(1)
+        assert_equal(self.nodes[1].getnetworkinfo()["version"], 30001)
+        self.v3_fixture_backups = Path(self.options.tmpdir) / "v3-wallet-fixtures"
+        self.v3_fixture_backups.mkdir()
+        self.v3_fixture_number = 0
+
+    def sync_all(self, nodes=None):
+        # The V3 fixture node intentionally has no peers and never shares the
+        # V4 test chain. All test transactions are local to node 0.
+        super().sync_all(nodes=[self.nodes[0]])
 
     def assert_is_sqlite(self, wallet_name):
         wallet_file_path = self.nodes[0].wallets_path / wallet_name / self.wallet_data_filename
@@ -53,7 +84,31 @@ class WalletMigrationTest(NitoTestFramework):
         assert_equal(self.nodes[0].get_wallet_rpc(wallet_name).getwalletinfo()["format"], "sqlite")
 
     def create_legacy_wallet(self, wallet_name, **kwargs):
-        self.nodes[0].createwallet(wallet_name=wallet_name, descriptors=False, **kwargs)
+        old_node = self.nodes[1]
+        old_node.createwallet(wallet_name=wallet_name, descriptors=False, **kwargs)
+        old_wallet = old_node.get_wallet_rpc(wallet_name)
+        info = old_wallet.getwalletinfo()
+        assert_equal(info["descriptors"], False)
+        assert_equal(info["format"], "bdb")
+
+        # A V4-created legacy wallet already has V4-only Orchard state and is
+        # intentionally refused by migratewallet. Use an official V3 backup
+        # instead, and close the V3 wallet before V4 copies it into its wallet
+        # directory.
+        self.v3_fixture_number += 1
+        fixture_name = wallet_name or "default"
+        backup = self.v3_fixture_backups / f"{self.v3_fixture_number:02d}-{fixture_name}.dat"
+        old_wallet.backupwallet(str(backup))
+        old_wallet.unloadwallet()
+
+        if wallet_name:
+            self.nodes[0].restorewallet(wallet_name, str(backup), False)
+        else:
+            # The default wallet lives directly in wallets/, which already
+            # exists for the V4 funder. restorewallet cannot create that
+            # directory again, so install the closed V3 BDB file in place.
+            shutil.copyfile(backup, self.nodes[0].wallets_path / self.wallet_data_filename)
+            self.nodes[0].loadwallet(wallet_name)
         wallet = self.nodes[0].get_wallet_rpc(wallet_name)
         info = wallet.getwalletinfo()
         assert_equal(info["descriptors"], False)

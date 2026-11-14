@@ -1,1102 +1,1552 @@
 <TS version="2.1" language="mn">
-<context>
-    <name>AddressBookPage</name>
-    <message>
-        <source>Create a new address</source>
-        <translation type="unfinished">Шинэ хаяг нээх</translation>
-    </message>
-    <message>
-        <source>&amp;New</source>
-        <translation type="unfinished">&amp;Шинэ</translation>
-    </message>
-    <message>
-        <source>Copy the currently selected address to the system clipboard</source>
-        <translation type="unfinished">Одоогоор сонгогдсон байгаа хаягуудыг сануулах</translation>
-    </message>
-    <message>
-        <source>&amp;Copy</source>
-        <translation type="unfinished">&amp;Хуулах</translation>
-    </message>
-    <message>
-        <source>C&amp;lose</source>
-        <translation type="unfinished">&amp;Хаах</translation>
-    </message>
-    <message>
-        <source>Delete the currently selected address from the list</source>
-        <translation type="unfinished">Одоо сонгогдсон байгаа хаягуудыг жагсаалтаас устгах</translation>
-    </message>
-    <message>
-        <source>Enter address or label to search</source>
-        <translation type="unfinished">Хайлт хийхийн тулд хаяг эсвэл шошгыг оруул</translation>
-    </message>
-    <message>
-        <source>Export the data in the current tab to a file</source>
-        <translation type="unfinished">Сонгогдсон таб дээрхи дата-г экспортлох</translation>
-    </message>
-    <message>
-        <source>&amp;Export</source>
-        <translation type="unfinished">&amp;Экспорт</translation>
-    </message>
-    <message>
-        <source>&amp;Delete</source>
-        <translation type="unfinished">&amp;Устгах</translation>
-    </message>
-    <message>
-        <source>Choose the address to send coins to</source>
-        <translation type="unfinished">Зооснуудыг илгээх хаягийг сонгоно уу</translation>
-    </message>
-    <message>
-        <source>Choose the address to receive coins with</source>
-        <translation type="unfinished">Зооснуудыг хүлээн авах хаягийг сонгоно уу</translation>
-    </message>
-    <message>
-        <source>C&amp;hoose</source>
-        <translation type="unfinished">С&amp;онго</translation>
-    </message>
-    <message>
-        <source>These are your Nito addresses for sending payments. Always check the amount and the receiving address before sending coins.</source>
-        <translation type="unfinished">Эдгээр Биткойн хаягууд нь илгээх хаягууд. Хүлээн авах хаяг болон тоо хэмжээг илгээхээсээ өмнө сайн нягталж үзэж байна уу</translation>
-    </message>
-    <message>
-        <source>&amp;Copy Address</source>
-        <translation type="unfinished">Хаягийг &amp;Хуулбарлах</translation>
-    </message>
-    <message>
-        <source>Copy &amp;Label</source>
-        <translation type="unfinished">&amp;Шошгыг хуулбарлах</translation>
-    </message>
-    <message>
-        <source>&amp;Edit</source>
-        <translation type="unfinished">&amp;Ѳѳрчлѳх</translation>
-    </message>
-    <message>
-        <source>Export Address List</source>
-        <translation type="unfinished">Экспорт хийх хаягуудын жагсаалт</translation>
-    </message>
-    <message>
-        <source>Exporting Failed</source>
-        <translation type="unfinished">Экспорт амжилтгүй боллоо</translation>
-    </message>
-</context>
-<context>
-    <name>AddressTableModel</name>
-    <message>
-        <source>Label</source>
-        <translation type="unfinished">Шошго</translation>
-    </message>
-    <message>
-        <source>Address</source>
-        <translation type="unfinished">Хаяг</translation>
-    </message>
-    <message>
-        <source>(no label)</source>
-        <translation type="unfinished">(шошгогүй)</translation>
-    </message>
-</context>
-<context>
-    <name>AskPassphraseDialog</name>
-    <message>
-        <source>Enter passphrase</source>
-        <translation type="unfinished">Нууц үгийг оруул</translation>
-    </message>
-    <message>
-        <source>New passphrase</source>
-        <translation type="unfinished">Шинэ нууц үг</translation>
-    </message>
-    <message>
-        <source>Repeat new passphrase</source>
-        <translation type="unfinished">Шинэ нууц үгийг давтана уу</translation>
-    </message>
-    <message>
-        <source>Encrypt wallet</source>
-        <translation type="unfinished">Түрүйвчийг цоожлох</translation>
-    </message>
-    <message>
-        <source>This operation needs your wallet passphrase to unlock the wallet.</source>
-        <translation type="unfinished">Энэ үйлдэлийг гүйцэтгэхийн тулд та нууц үгээрээ түрүйвчийн цоожийг тайлах хэрэгтэй</translation>
-    </message>
-    <message>
-        <source>Unlock wallet</source>
-        <translation type="unfinished">Түрүйвчийн цоожийг тайлах</translation>
-    </message>
-    <message>
-        <source>Change passphrase</source>
-        <translation type="unfinished">Нууц үгийг солих</translation>
-    </message>
-    <message>
-        <source>Confirm wallet encryption</source>
-        <translation type="unfinished">Түрүйвчийн цоожийг баталгаажуулах</translation>
-    </message>
-    <message>
-        <source>Wallet encrypted</source>
-        <translation type="unfinished">Түрүйвч цоожлогдлоо</translation>
-    </message>
-    <message>
-        <source>Wallet encryption failed</source>
-        <translation type="unfinished">Түрүйвчийн цоожлол амжилттай болсонгүй</translation>
-    </message>
-    <message>
-        <source>Wallet encryption failed due to an internal error. Your wallet was not encrypted.</source>
-        <translation type="unfinished">Түрүйвчийн цоожлол дотоод алдаанаас үүдэн амжилттай болсонгүй. Түрүйвч цоожлогдоогүй байна.</translation>
-    </message>
-    <message>
-        <source>The supplied passphrases do not match.</source>
-        <translation type="unfinished">Таны оруулсан нууц үг таарсангүй</translation>
-    </message>
-    <message>
-        <source>Wallet unlock failed</source>
-        <translation type="unfinished">Түрүйвчийн цоож тайлагдсангүй</translation>
-    </message>
-    <message>
-        <source>The passphrase entered for the wallet decryption was incorrect.</source>
-        <translation type="unfinished">Таны оруулсан түрүйвчийн цоожийг тайлах нууц үг буруу байна</translation>
-    </message>
-    <message>
-        <source>Wallet passphrase was successfully changed.</source>
-        <translation type="unfinished">Түрүйвчийн нууц үг амжилттай ѳѳр</translation>
-    </message>
+    <context>
+        <name>AddressBookPage</name>
+        <message>
+            <source>Create a new address</source>
+            <translation>Шинэ хаяг нээх</translation>
+        </message>
+        <message>
+            <source>&amp;New</source>
+            <translation>&amp;Шинэ</translation>
+        </message>
+        <message>
+            <source>Copy the currently selected address to the system clipboard</source>
+            <translation>Одоогоор сонгогдсон байгаа хаягуудыг сануулах</translation>
+        </message>
+        <message>
+            <source>&amp;Copy</source>
+            <translation>&amp;Хуулах</translation>
+        </message>
+        <message>
+            <source>C&amp;lose</source>
+            <translation>&amp;Хаах</translation>
+        </message>
+        <message>
+            <source>Delete the currently selected address from the list</source>
+            <translation>Одоо сонгогдсон байгаа хаягуудыг жагсаалтаас устгах</translation>
+        </message>
+        <message>
+            <source>Enter address or label to search</source>
+            <translation>Хайлт хийхийн тулд хаяг эсвэл шошгыг оруул</translation>
+        </message>
+        <message>
+            <source>Export the data in the current tab to a file</source>
+            <translation>Сонгогдсон таб дээрхи дата-г экспортлох</translation>
+        </message>
+        <message>
+            <source>&amp;Export</source>
+            <translation>&amp;Экспорт</translation>
+        </message>
+        <message>
+            <source>&amp;Delete</source>
+            <translation>&amp;Устгах</translation>
+        </message>
+        <message>
+            <source>Choose the address to send coins to</source>
+            <translation>Зооснуудыг илгээх хаягийг сонгоно уу</translation>
+        </message>
+        <message>
+            <source>Choose the address to receive coins with</source>
+            <translation>Зооснуудыг хүлээн авах хаягийг сонгоно уу</translation>
+        </message>
+        <message>
+            <source>C&amp;hoose</source>
+            <translation>С&amp;онго</translation>
+        </message>
+        <message>
+            <source>These are your Nito addresses for sending payments. Always check the amount and the receiving address before sending coins.</source>
+            <translation>Эдгээр Биткойн хаягууд нь илгээх хаягууд. Хүлээн авах хаяг болон тоо хэмжээг илгээхээсээ өмнө сайн нягталж үзэж байна уу</translation>
+        </message>
+        <message>
+            <source>&amp;Copy Address</source>
+            <translation>Хаягийг &amp;Хуулбарлах</translation>
+        </message>
+        <message>
+            <source>Copy &amp;Label</source>
+            <translation>&amp;Шошгыг хуулбарлах</translation>
+        </message>
+        <message>
+            <source>&amp;Edit</source>
+            <translation>&amp;Ѳѳрчлѳх</translation>
+        </message>
+        <message>
+            <source>Export Address List</source>
+            <translation>Экспорт хийх хаягуудын жагсаалт</translation>
+        </message>
+        <message>
+            <source>Exporting Failed</source>
+            <translation>Экспорт амжилтгүй боллоо</translation>
+        </message>
     </context>
-<context>
-    <name>NitoApplication</name>
-    <message>
-        <source>Internal error</source>
-        <translation type="unfinished">Дотоод алдаа</translation>
-    </message>
+    <context>
+        <name>AddressTableModel</name>
+        <message>
+            <source>Label</source>
+            <translation>Шошго</translation>
+        </message>
+        <message>
+            <source>Address</source>
+            <translation>Хаяг</translation>
+        </message>
+        <message>
+            <source>(no label)</source>
+            <translation>(шошгогүй)</translation>
+        </message>
     </context>
-<context>
-    <name>QObject</name>
-    <message>
-        <source>Error: %1</source>
-        <translation type="unfinished">Алдаа: %1</translation>
-    </message>
-    <message>
-        <source>unknown</source>
-        <translation type="unfinished">үл мэдэгдэх</translation>
-    </message>
-    <message>
-        <source>Amount</source>
-        <translation type="unfinished">Хэмжээ</translation>
-    </message>
-    <message>
-        <source>N/A</source>
-        <translation type="unfinished">Алга Байна</translation>
-    </message>
-    <message numerus="yes">
-        <source>%n second(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n minute(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n hour(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n day(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n week(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%n year(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
+    <context>
+        <name>AskPassphraseDialog</name>
+        <message>
+            <source>Enter passphrase</source>
+            <translation>Нууц үгийг оруул</translation>
+        </message>
+        <message>
+            <source>New passphrase</source>
+            <translation>Шинэ нууц үг</translation>
+        </message>
+        <message>
+            <source>Repeat new passphrase</source>
+            <translation>Шинэ нууц үгийг давтана уу</translation>
+        </message>
+        <message>
+            <source>Encrypt wallet</source>
+            <translation>Түрүйвчийг цоожлох</translation>
+        </message>
+        <message>
+            <source>This operation needs your wallet passphrase to unlock the wallet.</source>
+            <translation>Энэ үйлдэлийг гүйцэтгэхийн тулд та нууц үгээрээ түрүйвчийн цоожийг тайлах хэрэгтэй</translation>
+        </message>
+        <message>
+            <source>Unlock wallet</source>
+            <translation>Түрүйвчийн цоожийг тайлах</translation>
+        </message>
+        <message>
+            <source>Change passphrase</source>
+            <translation>Нууц үгийг солих</translation>
+        </message>
+        <message>
+            <source>Confirm wallet encryption</source>
+            <translation>Түрүйвчийн цоожийг баталгаажуулах</translation>
+        </message>
+        <message>
+            <source>Wallet encrypted</source>
+            <translation>Түрүйвч цоожлогдлоо</translation>
+        </message>
+        <message>
+            <source>Wallet encryption failed</source>
+            <translation>Түрүйвчийн цоожлол амжилттай болсонгүй</translation>
+        </message>
+        <message>
+            <source>Wallet encryption failed due to an internal error. Your wallet was not encrypted.</source>
+            <translation>Түрүйвчийн цоожлол дотоод алдаанаас үүдэн амжилттай болсонгүй. Түрүйвч цоожлогдоогүй байна.</translation>
+        </message>
+        <message>
+            <source>The supplied passphrases do not match.</source>
+            <translation>Таны оруулсан нууц үг таарсангүй</translation>
+        </message>
+        <message>
+            <source>Wallet unlock failed</source>
+            <translation>Түрүйвчийн цоож тайлагдсангүй</translation>
+        </message>
+        <message>
+            <source>The passphrase entered for the wallet decryption was incorrect.</source>
+            <translation>Таны оруулсан түрүйвчийн цоожийг тайлах нууц үг буруу байна</translation>
+        </message>
+        <message>
+            <source>Wallet passphrase was successfully changed.</source>
+            <translation>Түрүйвчийн нууц үг амжилттай ѳѳр</translation>
+        </message>
     </context>
-<context>
-    <name>NitoGUI</name>
-    <message>
-        <source>&amp;Transactions</source>
-        <translation type="unfinished">Гүйлгээнүүд</translation>
-    </message>
-    <message>
-        <source>Browse transaction history</source>
-        <translation type="unfinished">Гүйлгээнүүдийн түүхийг харах</translation>
-    </message>
-    <message>
-        <source>E&amp;xit</source>
-        <translation type="unfinished">Гарах</translation>
-    </message>
-    <message>
-        <source>Quit application</source>
-        <translation type="unfinished">Програмаас Гарах</translation>
-    </message>
-    <message>
-        <source>About &amp;Qt</source>
-        <translation type="unfinished">&amp;Клиентийн тухай</translation>
-    </message>
-    <message>
-        <source>Show information about Qt</source>
-        <translation type="unfinished">Клиентийн тухай мэдээллийг харуул</translation>
-    </message>
-    <message>
-        <source>Create a new wallet</source>
-        <translation type="unfinished">Шинэ түрийвч үүсгэх</translation>
-    </message>
-    <message>
-        <source>Wallet:</source>
-        <translation type="unfinished">Хэтэвч:</translation>
-    </message>
-    <message>
-        <source>Network activity disabled.</source>
-        <extracomment>A substring of the tooltip.</extracomment>
-        <translation type="unfinished">Сүлжээний үйл ажиллагааг идэвхгүй болгосон.</translation>
-    </message>
-    <message>
-        <source>Change the passphrase used for wallet encryption</source>
-        <translation type="unfinished">Түрүйвчийг цоожлох нууц үгийг солих</translation>
-    </message>
-    <message>
-        <source>&amp;Send</source>
-        <translation type="unfinished">&amp;Илгээх
+    <context>
+        <name>NitoApplication</name>
+        <message>
+            <source>Internal error</source>
+            <translation>Дотоод алдаа</translation>
+        </message>
+    </context>
+    <context>
+        <name>QObject</name>
+        <message>
+            <source>Error: %1</source>
+            <translation>Алдаа: %1</translation>
+        </message>
+        <message>
+            <source>unknown</source>
+            <translation>үл мэдэгдэх</translation>
+        </message>
+        <message>
+            <source>Amount</source>
+            <translation>Хэмжээ</translation>
+        </message>
+        <message>
+            <source>N/A</source>
+            <translation>Алга Байна</translation>
+        </message>
+        <message numerus="yes">
+            <source>%n second(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n minute(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n hour(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n day(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n week(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n year(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+    </context>
+    <context>
+        <name>NitoGUI</name>
+        <message>
+            <source>&amp;Transactions</source>
+            <translation>Гүйлгээнүүд</translation>
+        </message>
+        <message>
+            <source>Browse transaction history</source>
+            <translation>Гүйлгээнүүдийн түүхийг харах</translation>
+        </message>
+        <message>
+            <source>E&amp;xit</source>
+            <translation>Гарах</translation>
+        </message>
+        <message>
+            <source>Quit application</source>
+            <translation>Програмаас Гарах</translation>
+        </message>
+        <message>
+            <source>About &amp;Qt</source>
+            <translation>&amp;Клиентийн тухай</translation>
+        </message>
+        <message>
+            <source>Show information about Qt</source>
+            <translation>Клиентийн тухай мэдээллийг харуул</translation>
+        </message>
+        <message>
+            <source>Create a new wallet</source>
+            <translation>Шинэ түрийвч үүсгэх</translation>
+        </message>
+        <message>
+            <source>Wallet:</source>
+            <translation>Хэтэвч:</translation>
+        </message>
+        <message>
+            <source>Network activity disabled.</source>
+            <extracomment>A substring of the tooltip.</extracomment>
+            <translation>Сүлжээний үйл ажиллагааг идэвхгүй болгосон.</translation>
+        </message>
+        <message>
+            <source>Change the passphrase used for wallet encryption</source>
+            <translation>Түрүйвчийг цоожлох нууц үгийг солих</translation>
+        </message>
+        <message>
+            <source>&amp;Send</source>
+            <translation>&amp;Илгээх
  </translation>
-    </message>
-    <message>
-        <source>&amp;Receive</source>
-        <translation type="unfinished">&amp;Хүлээж авах</translation>
-    </message>
-    <message>
-        <source>&amp;Verify message…</source>
-        <translation type="unfinished">&amp;Баталгаажуулах мэссэж</translation>
-    </message>
-    <message>
-        <source>Close Wallet…</source>
-        <translation type="unfinished">Хэтэвч хаах…</translation>
-    </message>
-    <message>
-        <source>Create Wallet…</source>
-        <translation type="unfinished">Хэтэвч үүсгэх…</translation>
-    </message>
-    <message>
-        <source>&amp;File</source>
-        <translation type="unfinished">&amp;Файл</translation>
-    </message>
-    <message>
-        <source>&amp;Settings</source>
-        <translation type="unfinished">&amp;Тохиргоо</translation>
-    </message>
-    <message>
-        <source>&amp;Help</source>
-        <translation type="unfinished">&amp;Тусламж</translation>
-    </message>
-    <message numerus="yes">
-        <source>Processed %n block(s) of transaction history.</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message>
-        <source>Error</source>
-        <translation type="unfinished">Алдаа</translation>
-    </message>
-    <message>
-        <source>Warning</source>
-        <translation type="unfinished">Анхааруулга</translation>
-    </message>
-    <message>
-        <source>Information</source>
-        <translation type="unfinished">Мэдээллэл</translation>
-    </message>
-    <message>
-        <source>Up to date</source>
-        <translation type="unfinished">Шинэчлэгдсэн</translation>
-    </message>
-    <message numerus="yes">
-        <source>%n active connection(s) to Nito network.</source>
-        <extracomment>A substring of the tooltip.</extracomment>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message>
-        <source>Error: %1</source>
-        <translation type="unfinished">Алдаа: %1</translation>
-    </message>
-    <message>
-        <source>Warning: %1</source>
-        <translation type="unfinished">Анхааруулга:%1</translation>
-    </message>
-    <message>
-        <source>Date: %1
+        </message>
+        <message>
+            <source>&amp;Receive</source>
+            <translation>&amp;Хүлээж авах</translation>
+        </message>
+        <message>
+            <source>&amp;Verify message…</source>
+            <translation>&amp;Баталгаажуулах мэссэж</translation>
+        </message>
+        <message>
+            <source>Close Wallet…</source>
+            <translation>Хэтэвч хаах…</translation>
+        </message>
+        <message>
+            <source>Create Wallet…</source>
+            <translation>Хэтэвч үүсгэх…</translation>
+        </message>
+        <message>
+            <source>&amp;File</source>
+            <translation>&amp;Файл</translation>
+        </message>
+        <message>
+            <source>&amp;Settings</source>
+            <translation>&amp;Settings</translation>
+        </message>
+        <message>
+            <source>&amp;Help</source>
+            <translation>&amp;Тусламж</translation>
+        </message>
+        <message numerus="yes">
+            <source>Processed %n block(s) of transaction history.</source>
+            <translation>
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message>
+            <source>Error</source>
+            <translation>Алдаа</translation>
+        </message>
+        <message>
+            <source>Warning</source>
+            <translation>Анхааруулга</translation>
+        </message>
+        <message>
+            <source>Information</source>
+            <translation>Мэдээллэл</translation>
+        </message>
+        <message>
+            <source>Up to date</source>
+            <translation>Шинэчлэгдсэн</translation>
+        </message>
+        <message numerus="yes">
+            <source>%n active connection(s) to Nito network.</source>
+            <extracomment>A substring of the tooltip.</extracomment>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message>
+            <source>Error: %1</source>
+            <translation>Алдаа: %1</translation>
+        </message>
+        <message>
+            <source>Warning: %1</source>
+            <translation>Анхааруулга:%1</translation>
+        </message>
+        <message>
+            <source>Date: %1
 </source>
-        <translation type="unfinished">Огноо:%1
+            <translation>Огноо:%1
 </translation>
-    </message>
-    <message>
-        <source>Amount: %1
+        </message>
+        <message>
+            <source>Amount: %1
 </source>
-        <translation type="unfinished">Дүн: %1
+            <translation>Дүн: %1
 </translation>
-    </message>
-    <message>
-        <source>Wallet: %1
+        </message>
+        <message>
+            <source>Wallet: %1
 </source>
-        <translation type="unfinished">Түрийвч: %1
+            <translation>Түрийвч: %1
 </translation>
-    </message>
-    <message>
-        <source>Type: %1
+        </message>
+        <message>
+            <source>Type: %1
 </source>
-        <translation type="unfinished">Төрөл: %1
+            <translation>Төрөл: %1
 </translation>
-    </message>
-    <message>
-        <source>Label: %1
+        </message>
+        <message>
+            <source>Label: %1
 </source>
-        <translation type="unfinished">Шошго: %1
+            <translation>Шошго: %1
 </translation>
-    </message>
-    <message>
-        <source>Address: %1
+        </message>
+        <message>
+            <source>Address: %1
 </source>
-        <translation type="unfinished">Хаяг: %1
+            <translation>Хаяг: %1
 </translation>
-    </message>
-    <message>
-        <source>Sent transaction</source>
-        <translation type="unfinished">Гадагшаа гүйлгээ</translation>
-    </message>
-    <message>
-        <source>Incoming transaction</source>
-        <translation type="unfinished">Дотогшоо гүйлгээ</translation>
-    </message>
-    <message>
-        <source>Wallet is &lt;b&gt;encrypted&lt;/b&gt; and currently &lt;b&gt;unlocked&lt;/b&gt;</source>
-        <translation type="unfinished">Түрүйвч &lt;b&gt;цоожтой&lt;/b&gt; ба одоогоор цоож &lt;b&gt;онгорхой&lt;/b&gt; байна</translation>
-    </message>
-    <message>
-        <source>Wallet is &lt;b&gt;encrypted&lt;/b&gt; and currently &lt;b&gt;locked&lt;/b&gt;</source>
-        <translation type="unfinished">Түрүйвч &lt;b&gt;цоожтой&lt;/b&gt; ба одоогоор цоож &lt;b&gt;хаалттай&lt;/b&gt; байна</translation>
-    </message>
-    <message>
-        <source>Original message:</source>
-        <translation type="unfinished">Эх зурвас:</translation>
-    </message>
-</context>
-<context>
-    <name>CoinControlDialog</name>
-    <message>
-        <source>Amount:</source>
-        <translation type="unfinished">Хэмжээ:</translation>
-    </message>
-    <message>
-        <source>Fee:</source>
-        <translation type="unfinished">Тѳлбѳр:</translation>
-    </message>
-    <message>
-        <source>Amount</source>
-        <translation type="unfinished">Хэмжээ</translation>
-    </message>
-    <message>
-        <source>Date</source>
-        <translation type="unfinished">Огноо</translation>
-    </message>
-    <message>
-        <source>Confirmed</source>
-        <translation type="unfinished">Баталгаажлаа</translation>
-    </message>
-    <message>
-        <source>Copy amount</source>
-        <translation type="unfinished">Хэмжээг санах</translation>
-    </message>
-    <message>
-        <source>Copy change</source>
-        <translation type="unfinished">Ѳѳрчлѳлтийг санах</translation>
-    </message>
-    <message>
-        <source>(no label)</source>
-        <translation type="unfinished">(шошгогүй)</translation>
-    </message>
-    <message>
-        <source>(change)</source>
-        <translation type="unfinished">(ѳѳрчлѳх)</translation>
-    </message>
-</context>
-<context>
-    <name>CreateWalletDialog</name>
-    <message>
-        <source>Wallet</source>
-        <translation type="unfinished">Түрүйвч</translation>
-    </message>
+        </message>
+        <message>
+            <source>Sent transaction</source>
+            <translation>Гадагшаа гүйлгээ</translation>
+        </message>
+        <message>
+            <source>Incoming transaction</source>
+            <translation>Дотогшоо гүйлгээ</translation>
+        </message>
+        <message>
+            <source>Wallet is &lt;b&gt;encrypted&lt;/b&gt; and currently &lt;b&gt;unlocked&lt;/b&gt;</source>
+            <translation>Түрүйвч &lt;b&gt;цоожтой&lt;/b&gt; ба одоогоор цоож &lt;b&gt;онгорхой&lt;/b&gt; байна</translation>
+        </message>
+        <message>
+            <source>Wallet is &lt;b&gt;encrypted&lt;/b&gt; and currently &lt;b&gt;locked&lt;/b&gt;</source>
+            <translation>Түрүйвч &lt;b&gt;цоожтой&lt;/b&gt; ба одоогоор цоож &lt;b&gt;хаалттай&lt;/b&gt; байна</translation>
+        </message>
+        <message>
+            <source>Original message:</source>
+            <translation>Эх зурвас:</translation>
+        </message>
+        <message>
+            <source>Show Recovery Phrase…</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Show the wallet's BIP39 recovery phrase</source>
+            <translation>Show the wallet's BIP39 recovery phrase</translation>
+        </message>
+        <message>
+            <source>Open Wallet</source>
+            <translation>Open Wallet</translation>
+        </message>
+        <message>
+            <source>&amp;Overview</source>
+            <translation>&amp;Overview</translation>
+        </message>
     </context>
-<context>
-    <name>EditAddressDialog</name>
-    <message>
-        <source>Edit Address</source>
-        <translation type="unfinished">Хаягийг ѳѳрчлѳх</translation>
-    </message>
-    <message>
-        <source>&amp;Label</source>
-        <translation type="unfinished">&amp;Шошго</translation>
-    </message>
-    <message>
-        <source>&amp;Address</source>
-        <translation type="unfinished">&amp;Хаяг</translation>
-    </message>
-    <message>
-        <source>New sending address</source>
-        <translation type="unfinished">Шинэ явуулах хаяг</translation>
-    </message>
-    <message>
-        <source>Edit receiving address</source>
-        <translation type="unfinished">Хүлээн авах хаягийг ѳѳрчлѳх</translation>
-    </message>
-    <message>
-        <source>Edit sending address</source>
-        <translation type="unfinished">Явуулах хаягийг ѳѳрчлѳх</translation>
-    </message>
-    <message>
-        <source>Could not unlock wallet.</source>
-        <translation type="unfinished">Түрүйвчийн цоожийг тайлж чадсангүй</translation>
-    </message>
-    <message>
-        <source>New key generation failed.</source>
-        <translation type="unfinished">Шинэ түлхүүр амжилттай гарсангүй</translation>
-    </message>
-</context>
-<context>
-    <name>Intro</name>
-    <message>
-        <source>Nito</source>
-        <translation type="unfinished">Биткойн</translation>
-    </message>
-    <message numerus="yes">
-        <source>%n GB of space available</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>(of %n GB needed)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>(%n GB needed for full chain)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>(sufficient to restore backups %n day(s) old)</source>
-        <extracomment>Explanatory text on the capability of the current prune target.</extracomment>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message>
-        <source>Error</source>
-        <translation type="unfinished">Алдаа</translation>
-    </message>
+    <context>
+        <name>CoinControlDialog</name>
+        <message>
+            <source>Amount:</source>
+            <translation>Хэмжээ:</translation>
+        </message>
+        <message>
+            <source>Fee:</source>
+            <translation>Тѳлбѳр:</translation>
+        </message>
+        <message>
+            <source>Amount</source>
+            <translation>Хэмжээ</translation>
+        </message>
+        <message>
+            <source>Date</source>
+            <translation>Огноо</translation>
+        </message>
+        <message>
+            <source>Confirmed</source>
+            <translation>Баталгаажлаа</translation>
+        </message>
+        <message>
+            <source>Copy amount</source>
+            <translation>Хэмжээг санах</translation>
+        </message>
+        <message>
+            <source>Copy change</source>
+            <translation>Ѳѳрчлѳлтийг санах</translation>
+        </message>
+        <message>
+            <source>(no label)</source>
+            <translation>(шошгогүй)</translation>
+        </message>
+        <message>
+            <source>(change)</source>
+            <translation>(ѳѳрчлѳх)</translation>
+        </message>
     </context>
-<context>
-    <name>HelpMessageDialog</name>
-    <message>
-        <source>version</source>
-        <translation type="unfinished">хувилбар</translation>
-    </message>
+    <context>
+        <name>CreateWalletDialog</name>
+        <message>
+            <source>Wallet</source>
+            <translation>Түрүйвч</translation>
+        </message>
+        <message>
+            <source>Create this wallet from a BIP39 recovery phrase. The wallet restores currently spendable funds first; full visible history can be rebuilt from the Transactions page after it opens.</source>
+            <translation>Create this wallet from a BIP39 recovery phrase. The wallet restores currently spendable funds first; full visible history can be rebuilt from the Transactions page after it opens.</translation>
+        </message>
+        <message>
+            <source>Recovery phrase</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Restore</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Restore from recovery phrase</source>
+            <translation>Restore from recovery phrase</translation>
+        </message>
+        <message>
+            <source>word1 word2 ... word12/24</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Create or Restore Wallet</source>
+            <translation>Create or Restore Wallet</translation>
+        </message>
+        <message>
+            <source>Create a new wallet or restore an existing wallet.</source>
+            <translation>Create a new wallet or restore an existing wallet.</translation>
+        </message>
+        <message>
+            <source>Provide a wallet name, then choose how to continue.</source>
+            <translation>Provide a wallet name, then choose how to continue.</translation>
+        </message>
+        <message>
+            <source>Restore this wallet from an existing wallet.dat backup file. This keeps the wallet history stored in that file.</source>
+            <translation>Restore this wallet from an existing wallet.dat backup file. This keeps the wallet history stored in that file.</translation>
+        </message>
+        <message>
+            <source>Restore from wallet.dat file</source>
+            <translation>Restore from wallet.dat file</translation>
+        </message>
+        <message>
+            <source>Enter 12 or 24 BIP39 English words separated by spaces. This restores currently spendable funds. Older spent transaction history is not imported during seed restore; use the Transactions page after the wallet opens if you want to rebuild visible history.</source>
+            <translation>Enter 12 or 24 BIP39 English words separated by spaces. This restores currently spendable funds. Older spent transaction history is not imported during seed restore; use the Transactions page after the wallet opens if you want to rebuild visible history.</translation>
+        </message>
     </context>
-<context>
-    <name>ShutdownWindow</name>
-    <message>
-        <source>Do not shut down the computer until this window disappears.</source>
-        <translation type="unfinished">Энэ цонхыг хаагдтал компьютерээ бүү унтраагаарай</translation>
-    </message>
-</context>
-<context>
-    <name>ModalOverlay</name>
-    <message>
-        <source>Last block time</source>
-        <translation type="unfinished">Сүүлийн блокийн хугацаа</translation>
-    </message>
+    <context>
+        <name>EditAddressDialog</name>
+        <message>
+            <source>Edit Address</source>
+            <translation>Хаягийг ѳѳрчлѳх</translation>
+        </message>
+        <message>
+            <source>&amp;Label</source>
+            <translation>&amp;Шошго</translation>
+        </message>
+        <message>
+            <source>&amp;Address</source>
+            <translation>&amp;Хаяг</translation>
+        </message>
+        <message>
+            <source>New sending address</source>
+            <translation>Шинэ явуулах хаяг</translation>
+        </message>
+        <message>
+            <source>Edit receiving address</source>
+            <translation>Хүлээн авах хаягийг ѳѳрчлѳх</translation>
+        </message>
+        <message>
+            <source>Edit sending address</source>
+            <translation>Явуулах хаягийг ѳѳрчлѳх</translation>
+        </message>
+        <message>
+            <source>Could not unlock wallet.</source>
+            <translation>Түрүйвчийн цоожийг тайлж чадсангүй</translation>
+        </message>
+        <message>
+            <source>New key generation failed.</source>
+            <translation>Шинэ түлхүүр амжилттай гарсангүй</translation>
+        </message>
     </context>
-<context>
-    <name>OpenURIDialog</name>
-    <message>
-        <source>Paste address from clipboard</source>
-        <extracomment>Tooltip text for button that allows you to paste an address that is in your clipboard.</extracomment>
-        <translation type="unfinished">Копидсон хаягийг буулгах</translation>
-    </message>
-</context>
-<context>
-    <name>OptionsDialog</name>
-    <message>
-        <source>Options</source>
-        <translation type="unfinished">Сонголтууд</translation>
-    </message>
-    <message>
-        <source>IP address of the proxy (e.g. IPv4: 127.0.0.1 / IPv6: ::1)</source>
-        <translation type="unfinished">проксигийн IP хаяг (жишээ нь: IPv4: 127.0.0.1 / IPv6: ::1)</translation>
-    </message>
-    <message>
-        <source>&amp;Network</source>
-        <translation type="unfinished">Сүлжээ</translation>
-    </message>
-    <message>
-        <source>W&amp;allet</source>
-        <translation type="unfinished">Түрүйвч</translation>
-    </message>
-    <message>
-        <source>Client restart required to activate changes.</source>
-        <extracomment>Text explaining that the settings changed will not come into effect until the client is restarted.</extracomment>
-        <translation type="unfinished">Ѳѳрчлѳлтүүдийг идэвхижүүлхийн тулд клиентийг ахин эхлүүлэх шаардлагтай</translation>
-    </message>
-    <message>
-        <source>Error</source>
-        <translation type="unfinished">Алдаа</translation>
-    </message>
-    <message>
-        <source>This change would require a client restart.</source>
-        <translation type="unfinished">Энэ ѳѳрчлѳлтийг оруулахын тулд кли1нт програмыг ахин эхлүүлэх шаардлагтай</translation>
-    </message>
+    <context>
+        <name>Intro</name>
+        <message>
+            <source>Nito</source>
+            <translation>Биткойн</translation>
+        </message>
+        <message numerus="yes">
+            <source>%n GB of space available</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>(of %n GB needed)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>(%n GB needed for full chain)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>(sufficient to restore backups %n day(s) old)</source>
+            <extracomment>Explanatory text on the capability of the current prune target.</extracomment>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message>
+            <source>Error</source>
+            <translation>Алдаа</translation>
+        </message>
     </context>
-<context>
-    <name>OverviewPage</name>
-    <message>
-        <source>Available:</source>
-        <translation type="unfinished">Хэрэглэж болох хэмжээ:</translation>
-    </message>
+    <context>
+        <name>HelpMessageDialog</name>
+        <message>
+            <source>version</source>
+            <translation>хувилбар</translation>
+        </message>
     </context>
-<context>
-    <name>PSBTOperationsDialog</name>
-    <message>
-        <source>or</source>
-        <translation type="unfinished">эсвэл</translation>
-    </message>
+    <context>
+        <name>ShutdownWindow</name>
+        <message>
+            <source>Do not shut down the computer until this window disappears.</source>
+            <translation>Энэ цонхыг хаагдтал компьютерээ бүү унтраагаарай</translation>
+        </message>
     </context>
-<context>
-    <name>PeerTableModel</name>
-    <message>
-        <source>Address</source>
-        <extracomment>Title of Peers Table column which contains the IP/Onion/I2P address of the connected peer.</extracomment>
-        <translation type="unfinished">Хаяг</translation>
-    </message>
-    <message>
-        <source>Type</source>
-        <extracomment>Title of Peers Table column which describes the type of peer connection. The "type" describes why the connection exists.</extracomment>
-        <translation type="unfinished">Тѳрѳл</translation>
-    </message>
-    <message>
-        <source>Network</source>
-        <extracomment>Title of Peers Table column which states the network the peer connected through.</extracomment>
-        <translation type="unfinished">Сүлжээ</translation>
-    </message>
+    <context>
+        <name>ModalOverlay</name>
+        <message>
+            <source>Last block time</source>
+            <translation>Сүүлийн блокийн хугацаа</translation>
+        </message>
+        <message>
+            <source>Wallet history index</source>
+            <translation>Wallet history index</translation>
+        </message>
+        <message>
+            <source>Unknown...</source>
+            <translation>Unknown...</translation>
+        </message>
+        <message>
+            <source>Recent transactions may not yet be visible, and therefore your wallet's balance might be incorrect. This information will be correct once your wallet has finished synchronizing with the Nito network, as detailed below.</source>
+            <translation>Recent transactions may not yet be visible, and therefore your wallet's balance might be incorrect. This information will be correct once your wallet has finished synchronizing with the Nito network, as detailed below.</translation>
+        </message>
     </context>
-<context>
-    <name>RPCConsole</name>
-    <message>
-        <source>N/A</source>
-        <translation type="unfinished">Алга Байна</translation>
-    </message>
-    <message>
-        <source>Client version</source>
-        <translation type="unfinished">Клиентийн хувилбар</translation>
-    </message>
-    <message>
-        <source>&amp;Information</source>
-        <translation type="unfinished">&amp;Мэдээллэл</translation>
-    </message>
-    <message>
-        <source>General</source>
-        <translation type="unfinished">Ерѳнхий</translation>
-    </message>
-    <message>
-        <source>Network</source>
-        <translation type="unfinished">Сүлжээ</translation>
-    </message>
-    <message>
-        <source>Name</source>
-        <translation type="unfinished">Нэр</translation>
-    </message>
-    <message>
-        <source>Number of connections</source>
-        <translation type="unfinished">Холболтын тоо</translation>
-    </message>
-    <message>
-        <source>Block chain</source>
-        <translation type="unfinished">Блокийн цуваа</translation>
-    </message>
-    <message>
-        <source>Last block time</source>
-        <translation type="unfinished">Сүүлийн блокийн хугацаа</translation>
-    </message>
-    <message>
-        <source>&amp;Open</source>
-        <translation type="unfinished">&amp;Нээх</translation>
-    </message>
-    <message>
-        <source>&amp;Console</source>
-        <translation type="unfinished">&amp;Консол</translation>
-    </message>
-    <message>
-        <source>Clear console</source>
-        <translation type="unfinished">Консолыг цэвэрлэх</translation>
-    </message>
+    <context>
+        <name>OpenURIDialog</name>
+        <message>
+            <source>Paste address from clipboard</source>
+            <extracomment>Tooltip text for button that allows you to paste an address that is in your clipboard.</extracomment>
+            <translation>Копидсон хаягийг буулгах</translation>
+        </message>
     </context>
-<context>
-    <name>ReceiveCoinsDialog</name>
-    <message>
-        <source>&amp;Amount:</source>
-        <translation type="unfinished">Хэмжээ:</translation>
-    </message>
-    <message>
-        <source>&amp;Label:</source>
-        <translation type="unfinished">&amp;Шошго:</translation>
-    </message>
-    <message>
-        <source>&amp;Message:</source>
-        <translation type="unfinished">Зурвас:</translation>
-    </message>
-    <message>
-        <source>Show</source>
-        <translation type="unfinished">Харуул</translation>
-    </message>
-    <message>
-        <source>Remove the selected entries from the list</source>
-        <translation type="unfinished">Сонгогдсон ѳгѳгдлүүдийг устгах</translation>
-    </message>
-    <message>
-        <source>Remove</source>
-        <translation type="unfinished">Устгах</translation>
-    </message>
-    <message>
-        <source>Could not unlock wallet.</source>
-        <translation type="unfinished">Түрүйвчийн цоожийг тайлж чадсангүй</translation>
-    </message>
+    <context>
+        <name>OptionsDialog</name>
+        <message>
+            <source>Options</source>
+            <translation>Сонголтууд</translation>
+        </message>
+        <message>
+            <source>IP address of the proxy (e.g. IPv4: 127.0.0.1 / IPv6: ::1)</source>
+            <translation>проксигийн IP хаяг (жишээ нь: IPv4: 127.0.0.1 / IPv6: ::1)</translation>
+        </message>
+        <message>
+            <source>&amp;Network</source>
+            <translation>Сүлжээ</translation>
+        </message>
+        <message>
+            <source>W&amp;allet</source>
+            <translation>Түрүйвч</translation>
+        </message>
+        <message>
+            <source>Client restart required to activate changes.</source>
+            <extracomment>Text explaining that the settings changed will not come into effect until the client is restarted.</extracomment>
+            <translation>Ѳѳрчлѳлтүүдийг идэвхижүүлхийн тулд клиентийг ахин эхлүүлэх шаардлагтай</translation>
+        </message>
+        <message>
+            <source>Error</source>
+            <translation>Алдаа</translation>
+        </message>
+        <message>
+            <source>This change would require a client restart.</source>
+            <translation>Энэ ѳѳрчлѳлтийг оруулахын тулд кли1нт програмыг ахин эхлүүлэх шаардлагтай</translation>
+        </message>
+        <message>
+            <source>Enable private Bech32x receiving addresses</source>
+            <translation>Enable private Bech32x receiving addresses</translation>
+        </message>
+        <message>
+            <source>Enable Legacy/P2SH receiving addresses</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Show Bech32x private receiving addresses, private balances and private balance controls after the activation block.</source>
+            <translation>Show Bech32x private receiving addresses, private balances and private balance controls after the activation block.</translation>
+        </message>
+        <message>
+            <source>Show Legacy (P2PKH) and P2SH-SegWit in the receiving address type selector.</source>
+            <translation type="unfinished" />
+        </message>
     </context>
-<context>
-    <name>ReceiveRequestDialog</name>
-    <message>
-        <source>Amount:</source>
-        <translation type="unfinished">Хэмжээ:</translation>
-    </message>
-    <message>
-        <source>Message:</source>
-        <translation type="unfinished">Зурвас:</translation>
-    </message>
-    <message>
-        <source>Wallet:</source>
-        <translation type="unfinished">Хэтэвч:</translation>
-    </message>
-    <message>
-        <source>Copy &amp;Address</source>
-        <translation type="unfinished">Хаягийг &amp;Хуулбарлах</translation>
-    </message>
+    <context>
+        <name>OverviewPage</name>
+        <message>
+            <source>Available:</source>
+            <translation>Хэрэглэж болох хэмжээ:</translation>
+        </message>
+        <message>
+            <source>Transparent:</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Private:</source>
+            <translation>Private:</translation>
+        </message>
+        <message>
+            <source>Wallet scan in progress. Transparent and private balances may still be loading.</source>
+            <translation>Wallet scan in progress. Transparent and private balances may still be loading.</translation>
+        </message>
     </context>
-<context>
-    <name>RecentRequestsTableModel</name>
-    <message>
-        <source>Date</source>
-        <translation type="unfinished">Огноо</translation>
-    </message>
-    <message>
-        <source>Label</source>
-        <translation type="unfinished">Шошго</translation>
-    </message>
-    <message>
-        <source>Message</source>
-        <translation type="unfinished">Зурвас</translation>
-    </message>
-    <message>
-        <source>(no label)</source>
-        <translation type="unfinished">(шошгогүй)</translation>
-    </message>
-    <message>
-        <source>(no message)</source>
-        <translation type="unfinished">(зурвас алга)</translation>
-    </message>
+    <context>
+        <name>PSBTOperationsDialog</name>
+        <message>
+            <source>or</source>
+            <translation>эсвэл</translation>
+        </message>
     </context>
-<context>
-    <name>SendCoinsDialog</name>
-    <message>
-        <source>Send Coins</source>
-        <translation type="unfinished">Зоос явуулах</translation>
-    </message>
-    <message>
-        <source>automatically selected</source>
-        <translation type="unfinished">автоматаар сонгогдсон</translation>
-    </message>
-    <message>
-        <source>Insufficient funds!</source>
-        <translation type="unfinished">Таны дансны үлдэгдэл хүрэлцэхгүй байна!</translation>
-    </message>
-    <message>
-        <source>Amount:</source>
-        <translation type="unfinished">Хэмжээ:</translation>
-    </message>
-    <message>
-        <source>Fee:</source>
-        <translation type="unfinished">Тѳлбѳр:</translation>
-    </message>
-    <message>
-        <source>Send to multiple recipients at once</source>
-        <translation type="unfinished">Нэгэн зэрэг олон хүлээн авагчруу явуулах</translation>
-    </message>
-    <message>
-        <source>Add &amp;Recipient</source>
-        <translation type="unfinished">&amp;Хүлээн авагчийг Нэмэх</translation>
-    </message>
-    <message>
-        <source>Clear &amp;All</source>
-        <translation type="unfinished">&amp;Бүгдийг Цэвэрлэ</translation>
-    </message>
-    <message>
-        <source>Balance:</source>
-        <translation type="unfinished">Баланс:</translation>
-    </message>
-    <message>
-        <source>Confirm the send action</source>
-        <translation type="unfinished">Явуулах үйлдлийг баталгаажуулна уу</translation>
-    </message>
-    <message>
-        <source>S&amp;end</source>
-        <translation type="unfinished">Яв&amp;уул</translation>
-    </message>
-    <message>
-        <source>Copy amount</source>
-        <translation type="unfinished">Хэмжээг санах</translation>
-    </message>
-    <message>
-        <source>Copy change</source>
-        <translation type="unfinished">Ѳѳрчлѳлтийг санах</translation>
-    </message>
-    <message>
-        <source>or</source>
-        <translation type="unfinished">эсвэл</translation>
-    </message>
-    <message>
-        <source>Confirm send coins</source>
-        <translation type="unfinished">Зоос явуулахыг баталгаажуулна уу</translation>
-    </message>
-    <message>
-        <source>The amount to pay must be larger than 0.</source>
-        <translation type="unfinished">Тѳлѳх хэмжээ 0.-оос их байх ёстой</translation>
-    </message>
-    <message>
-        <source>The amount exceeds your balance.</source>
-        <translation type="unfinished">Энэ хэмжээ таны балансаас хэтэрсэн байна.</translation>
-    </message>
-    <message>
-        <source>The total exceeds your balance when the %1 transaction fee is included.</source>
-        <translation type="unfinished">Гүйлгээний тѳлбѳр %1-ийг тооцхоор нийт дүн нь таны балансаас хэтрээд байна.</translation>
-    </message>
-    <message numerus="yes">
-        <source>Estimated to begin confirmation within %n block(s).</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message>
-        <source>Warning: Invalid Nito address</source>
-        <translation type="unfinished">Анхаар:Буруу Биткойны хаяг байна</translation>
-    </message>
-    <message>
-        <source>(no label)</source>
-        <translation type="unfinished">(шошгогүй)</translation>
-    </message>
-</context>
-<context>
-    <name>SendCoinsEntry</name>
-    <message>
-        <source>A&amp;mount:</source>
-        <translation type="unfinished">Дүн:</translation>
-    </message>
-    <message>
-        <source>Pay &amp;To:</source>
-        <translation type="unfinished">Тѳлѳх &amp;хаяг:</translation>
-    </message>
-    <message>
-        <source>&amp;Label:</source>
-        <translation type="unfinished">&amp;Шошго:</translation>
-    </message>
-    <message>
-        <source>Paste address from clipboard</source>
-        <translation type="unfinished">Копидсон хаягийг буулгах</translation>
-    </message>
-    <message>
-        <source>Message:</source>
-        <translation type="unfinished">Зурвас:</translation>
-    </message>
+    <context>
+        <name>PeerTableModel</name>
+        <message>
+            <source>Address</source>
+            <extracomment>Title of Peers Table column which contains the IP/Onion/I2P address of the connected peer.</extracomment>
+            <translation>Хаяг</translation>
+        </message>
+        <message>
+            <source>Type</source>
+            <extracomment>Title of Peers Table column which describes the type of peer connection. The "type" describes why the connection exists.</extracomment>
+            <translation>Тѳрѳл</translation>
+        </message>
+        <message>
+            <source>Network</source>
+            <extracomment>Title of Peers Table column which states the network the peer connected through.</extracomment>
+            <translation>Сүлжээ</translation>
+        </message>
     </context>
-<context>
-    <name>SignVerifyMessageDialog</name>
-    <message>
-        <source>Paste address from clipboard</source>
-        <translation type="unfinished">Копидсон хаягийг буулгах</translation>
-    </message>
-    <message>
-        <source>Clear &amp;All</source>
-        <translation type="unfinished">&amp;Бүгдийг Цэвэрлэ</translation>
-    </message>
+    <context>
+        <name>RPCConsole</name>
+        <message>
+            <source>N/A</source>
+            <translation>Алга Байна</translation>
+        </message>
+        <message>
+            <source>Client version</source>
+            <translation>Клиентийн хувилбар</translation>
+        </message>
+        <message>
+            <source>&amp;Information</source>
+            <translation>&amp;Мэдээллэл</translation>
+        </message>
+        <message>
+            <source>General</source>
+            <translation>Ерѳнхий</translation>
+        </message>
+        <message>
+            <source>Network</source>
+            <translation>Сүлжээ</translation>
+        </message>
+        <message>
+            <source>Name</source>
+            <translation>Нэр</translation>
+        </message>
+        <message>
+            <source>Number of connections</source>
+            <translation>Холболтын тоо</translation>
+        </message>
+        <message>
+            <source>Block chain</source>
+            <translation>Блокийн цуваа</translation>
+        </message>
+        <message>
+            <source>Last block time</source>
+            <translation>Сүүлийн блокийн хугацаа</translation>
+        </message>
+        <message>
+            <source>&amp;Open</source>
+            <translation>&amp;Нээх</translation>
+        </message>
+        <message>
+            <source>&amp;Console</source>
+            <translation>&amp;Консол</translation>
+        </message>
+        <message>
+            <source>Clear console</source>
+            <translation>Консолыг цэвэрлэх</translation>
+        </message>
     </context>
-<context>
-    <name>TransactionDesc</name>
-    <message>
-        <source>%1/unconfirmed</source>
-        <extracomment>Text explaining the current status of a transaction, shown in the status field of the details window for this transaction. This status represents a transaction confirmed in at least one block, but less than 6 blocks.</extracomment>
-        <translation type="unfinished">%1/баталгаажаагүй</translation>
-    </message>
-    <message>
-        <source>%1 confirmations</source>
-        <extracomment>Text explaining the current status of a transaction, shown in the status field of the details window for this transaction. This status represents a transaction confirmed in 6 or more blocks.</extracomment>
-        <translation type="unfinished">%1 баталгаажилтууд</translation>
-    </message>
-    <message>
-        <source>Date</source>
-        <translation type="unfinished">Огноо</translation>
-    </message>
-    <message>
-        <source>unknown</source>
-        <translation type="unfinished">үл мэдэгдэх</translation>
-    </message>
-    <message numerus="yes">
-        <source>matures in %n more block(s)</source>
-        <translation type="unfinished">
-            <numerusform />
-            <numerusform />
-        </translation>
-    </message>
-    <message>
-        <source>Message</source>
-        <translation type="unfinished">Зурвас</translation>
-    </message>
-    <message>
-        <source>Transaction ID</source>
-        <translation type="unfinished">Тодорхойлолт</translation>
-    </message>
-    <message>
-        <source>Amount</source>
-        <translation type="unfinished">Хэмжээ</translation>
-    </message>
+    <context>
+        <name>ReceiveCoinsDialog</name>
+        <message>
+            <source>&amp;Amount:</source>
+            <translation>Хэмжээ:</translation>
+        </message>
+        <message>
+            <source>&amp;Label:</source>
+            <translation>&amp;Шошго:</translation>
+        </message>
+        <message>
+            <source>&amp;Message:</source>
+            <translation>Зурвас:</translation>
+        </message>
+        <message>
+            <source>Show</source>
+            <translation>Харуул</translation>
+        </message>
+        <message>
+            <source>Remove the selected entries from the list</source>
+            <translation>Сонгогдсон ѳгѳгдлүүдийг устгах</translation>
+        </message>
+        <message>
+            <source>Remove</source>
+            <translation>Устгах</translation>
+        </message>
+        <message>
+            <source>Could not unlock wallet.</source>
+            <translation>Түрүйвчийн цоожийг тайлж чадсангүй</translation>
+        </message>
+        <message>
+            <source>Bech32x</source>
+            <translation>Bech32x</translation>
+        </message>
+        <message>
+            <source>Generates a private Bech32x receiving address starting with nito1x.</source>
+            <translation>Generates a private Bech32x receiving address starting with nito1x.</translation>
+        </message>
+        <message>
+            <source>Generates a P2SH-wrapped SegWit address starting with 3.</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Generates a legacy address starting with 1.</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Generates a native segwit address.</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Legacy (P2PKH)</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Nito.network private transactions activate at block %1. Current block: %2.</source>
+            <translation>Nito.network private transactions activate at block %1. Current block: %2.</translation>
+        </message>
+        <message>
+            <source>P2SH-SegWit</source>
+            <translation type="unfinished" />
+        </message>
     </context>
-<context>
-    <name>TransactionDescDialog</name>
-    <message>
-        <source>This pane shows a detailed description of the transaction</source>
-        <translation type="unfinished">Гүйлгээний дэлгэрэнгүйг энэ бичил цонх харуулж байна</translation>
-    </message>
+    <context>
+        <name>ReceiveRequestDialog</name>
+        <message>
+            <source>Amount:</source>
+            <translation>Хэмжээ:</translation>
+        </message>
+        <message>
+            <source>Message:</source>
+            <translation>Зурвас:</translation>
+        </message>
+        <message>
+            <source>Wallet:</source>
+            <translation>Хэтэвч:</translation>
+        </message>
+        <message>
+            <source>Copy &amp;Address</source>
+            <translation>Хаягийг &amp;Хуулбарлах</translation>
+        </message>
     </context>
-<context>
-    <name>TransactionTableModel</name>
-    <message>
-        <source>Date</source>
-        <translation type="unfinished">Огноо</translation>
-    </message>
-    <message>
-        <source>Type</source>
-        <translation type="unfinished">Тѳрѳл</translation>
-    </message>
-    <message>
-        <source>Label</source>
-        <translation type="unfinished">Шошго</translation>
-    </message>
-    <message>
-        <source>Unconfirmed</source>
-        <translation type="unfinished">Баталгаажаагүй</translation>
-    </message>
-    <message>
-        <source>Confirmed (%1 confirmations)</source>
-        <translation type="unfinished">Баталгаажлаа (%1 баталгаажилт)</translation>
-    </message>
-    <message>
-        <source>Conflicted</source>
-        <translation type="unfinished">Зѳрчилдлѳѳ</translation>
-    </message>
-    <message>
-        <source>Generated but not accepted</source>
-        <translation type="unfinished">Үүсгэгдсэн гэхдээ хүлээн авагдаагүй</translation>
-    </message>
-    <message>
-        <source>Received with</source>
-        <translation type="unfinished">Хүлээн авсан хаяг</translation>
-    </message>
-    <message>
-        <source>Received from</source>
-        <translation type="unfinished">Хүлээн авагдсан хаяг</translation>
-    </message>
-    <message>
-        <source>Sent to</source>
-        <translation type="unfinished">Явуулсан хаяг</translation>
-    </message>
-    <message>
-        <source>Mined</source>
-        <translation type="unfinished">Олборлогдсон</translation>
-    </message>
-    <message>
-        <source>(n/a)</source>
-        <translation type="unfinished">(алга байна)</translation>
-    </message>
-    <message>
-        <source>(no label)</source>
-        <translation type="unfinished">(шошгогүй)</translation>
-    </message>
-    <message>
-        <source>Transaction status. Hover over this field to show number of confirmations.</source>
-        <translation type="unfinished">Гүйлгээний байдал. Энд хулганыг авчирч баталгаажуулалтын тоог харна уу.</translation>
-    </message>
-    <message>
-        <source>Date and time that the transaction was received.</source>
-        <translation type="unfinished">Гүйлгээг хүлээн авсан огноо ба цаг.</translation>
-    </message>
-    <message>
-        <source>Type of transaction.</source>
-        <translation type="unfinished">Гүйлгээний тѳрѳл</translation>
-    </message>
-    <message>
-        <source>Amount removed from or added to balance.</source>
-        <translation type="unfinished">Балансаас авагдсан болон нэмэгдсэн хэмжээ.</translation>
-    </message>
-</context>
-<context>
-    <name>TransactionView</name>
-    <message>
-        <source>All</source>
-        <translation type="unfinished">Бүгд</translation>
-    </message>
-    <message>
-        <source>Today</source>
-        <translation type="unfinished">Ѳнѳѳдѳр</translation>
-    </message>
-    <message>
-        <source>This week</source>
-        <translation type="unfinished">Энэ долоо хоног</translation>
-    </message>
-    <message>
-        <source>This month</source>
-        <translation type="unfinished">Энэ сар</translation>
-    </message>
-    <message>
-        <source>Last month</source>
-        <translation type="unfinished">Ѳнгѳрсѳн сар</translation>
-    </message>
-    <message>
-        <source>This year</source>
-        <translation type="unfinished">Энэ жил</translation>
-    </message>
-    <message>
-        <source>Received with</source>
-        <translation type="unfinished">Хүлээн авсан хаяг</translation>
-    </message>
-    <message>
-        <source>Sent to</source>
-        <translation type="unfinished">Явуулсан хаяг</translation>
-    </message>
-    <message>
-        <source>Mined</source>
-        <translation type="unfinished">Олборлогдсон</translation>
-    </message>
-    <message>
-        <source>Other</source>
-        <translation type="unfinished">Бусад</translation>
-    </message>
-    <message>
-        <source>Min amount</source>
-        <translation type="unfinished">Хамгийн бага хэмжээ</translation>
-    </message>
-    <message>
-        <source>Confirmed</source>
-        <translation type="unfinished">Баталгаажлаа</translation>
-    </message>
-    <message>
-        <source>Date</source>
-        <translation type="unfinished">Огноо</translation>
-    </message>
-    <message>
-        <source>Type</source>
-        <translation type="unfinished">Тѳрѳл</translation>
-    </message>
-    <message>
-        <source>Label</source>
-        <translation type="unfinished">Шошго</translation>
-    </message>
-    <message>
-        <source>Address</source>
-        <translation type="unfinished">Хаяг</translation>
-    </message>
-    <message>
-        <source>ID</source>
-        <translation type="unfinished">Тодорхойлолт</translation>
-    </message>
-    <message>
-        <source>Exporting Failed</source>
-        <translation type="unfinished">Экспорт амжилтгүй боллоо</translation>
-    </message>
-    <message>
-        <source>The transaction history was successfully saved to %1.</source>
-        <translation type="unfinished">Гүйлгээнүй түүхийг %1-д амжилттай хадгаллаа.</translation>
-    </message>
-    <message>
-        <source>to</source>
-        <translation type="unfinished">-рүү/руу</translation>
-    </message>
-</context>
-<context>
-    <name>WalletFrame</name>
-    <message>
-        <source>Create a new wallet</source>
-        <translation type="unfinished">Шинэ түрийвч үүсгэх</translation>
-    </message>
-    <message>
-        <source>Error</source>
-        <translation type="unfinished">Алдаа</translation>
-    </message>
+    <context>
+        <name>RecentRequestsTableModel</name>
+        <message>
+            <source>Date</source>
+            <translation>Огноо</translation>
+        </message>
+        <message>
+            <source>Label</source>
+            <translation>Шошго</translation>
+        </message>
+        <message>
+            <source>Message</source>
+            <translation>Зурвас</translation>
+        </message>
+        <message>
+            <source>(no label)</source>
+            <translation>(шошгогүй)</translation>
+        </message>
+        <message>
+            <source>(no message)</source>
+            <translation>(зурвас алга)</translation>
+        </message>
     </context>
-<context>
-    <name>WalletModel</name>
-    <message>
-        <source>Send Coins</source>
-        <translation type="unfinished">Зоос явуулах</translation>
-    </message>
+    <context>
+        <name>SendCoinsDialog</name>
+        <message>
+            <source>Send Coins</source>
+            <translation>Зоос явуулах</translation>
+        </message>
+        <message>
+            <source>automatically selected</source>
+            <translation>автоматаар сонгогдсон</translation>
+        </message>
+        <message>
+            <source>Insufficient funds!</source>
+            <translation>Таны дансны үлдэгдэл хүрэлцэхгүй байна!</translation>
+        </message>
+        <message>
+            <source>Amount:</source>
+            <translation>Хэмжээ:</translation>
+        </message>
+        <message>
+            <source>Fee:</source>
+            <translation>Тѳлбѳр:</translation>
+        </message>
+        <message>
+            <source>Send to multiple recipients at once</source>
+            <translation>Нэгэн зэрэг олон хүлээн авагчруу явуулах</translation>
+        </message>
+        <message>
+            <source>Add &amp;Recipient</source>
+            <translation>&amp;Хүлээн авагчийг Нэмэх</translation>
+        </message>
+        <message>
+            <source>Clear &amp;All</source>
+            <translation>&amp;Бүгдийг Цэвэрлэ</translation>
+        </message>
+        <message>
+            <source>Balance:</source>
+            <translation>Баланс:</translation>
+        </message>
+        <message>
+            <source>Transparent:</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Private:</source>
+            <translation>Private:</translation>
+        </message>
+        <message>
+            <source>Total balance:</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Confirm the send action</source>
+            <translation>Явуулах үйлдлийг баталгаажуулна уу</translation>
+        </message>
+        <message>
+            <source>S&amp;end</source>
+            <translation>Яв&amp;уул</translation>
+        </message>
+        <message>
+            <source>Copy amount</source>
+            <translation>Хэмжээг санах</translation>
+        </message>
+        <message>
+            <source>Copy change</source>
+            <translation>Ѳѳрчлѳлтийг санах</translation>
+        </message>
+        <message>
+            <source>Private balance</source>
+            <translation>Private balance</translation>
+        </message>
+        <message>
+            <source>Transparent balance</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>or</source>
+            <translation>эсвэл</translation>
+        </message>
+        <message>
+            <source>Confirm send coins</source>
+            <translation>Зоос явуулахыг баталгаажуулна уу</translation>
+        </message>
+        <message>
+            <source>The amount to pay must be larger than 0.</source>
+            <translation>Тѳлѳх хэмжээ 0.-оос их байх ёстой</translation>
+        </message>
+        <message>
+            <source>The amount exceeds your balance.</source>
+            <translation>Энэ хэмжээ таны балансаас хэтэрсэн байна.</translation>
+        </message>
+        <message>
+            <source>The total exceeds your balance when the %1 transaction fee is included.</source>
+            <translation>Гүйлгээний тѳлбѳр %1-ийг тооцхоор нийт дүн нь таны балансаас хэтрээд байна.</translation>
+        </message>
+        <message numerus="yes">
+            <source>Estimated to begin confirmation within %n block(s).</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message>
+            <source>Warning: Invalid Nito address</source>
+            <translation>Анхаар:Буруу Биткойны хаяг байна</translation>
+        </message>
+        <message>
+            <source>(no label)</source>
+            <translation>(шошгогүй)</translation>
+        </message>
+        <message>
+            <source>Spend Bech32x private notes. Leave unchecked to spend transparent UTXOs.</source>
+            <translation>Spend Bech32x private notes. Leave unchecked to spend transparent UTXOs.</translation>
+        </message>
+        <message>
+            <source>Use private balance</source>
+            <translation>Use private balance</translation>
+        </message>
+        <message>
+            <source>Creating private transaction proof...</source>
+            <translation>Creating private transaction proof...</translation>
+        </message>
     </context>
-<context>
-    <name>WalletView</name>
-    <message>
-        <source>&amp;Export</source>
-        <translation type="unfinished">&amp;Экспорт</translation>
-    </message>
-    <message>
-        <source>Export the data in the current tab to a file</source>
-        <translation type="unfinished">Сонгогдсон таб дээрхи дата-г экспортлох</translation>
-    </message>
+    <context>
+        <name>SendCoinsEntry</name>
+        <message>
+            <source>A&amp;mount:</source>
+            <translation>Дүн:</translation>
+        </message>
+        <message>
+            <source>Pay &amp;To:</source>
+            <translation>Тѳлѳх &amp;хаяг:</translation>
+        </message>
+        <message>
+            <source>&amp;Label:</source>
+            <translation>&amp;Шошго:</translation>
+        </message>
+        <message>
+            <source>Paste address from clipboard</source>
+            <translation>Копидсон хаягийг буулгах</translation>
+        </message>
+        <message>
+            <source>Message:</source>
+            <translation>Зурвас:</translation>
+        </message>
     </context>
-<context>
-    <name>nito-core</name>
-    <message>
-        <source>Done loading</source>
-        <translation type="unfinished">Ачааллаж дууслаа</translation>
-    </message>
-    <message>
-        <source>Insufficient funds</source>
-        <translation type="unfinished">Таны дансны үлдэгдэл хүрэлцэхгүй байна</translation>
-    </message>
+    <context>
+        <name>SignVerifyMessageDialog</name>
+        <message>
+            <source>Paste address from clipboard</source>
+            <translation>Копидсон хаягийг буулгах</translation>
+        </message>
+        <message>
+            <source>Clear &amp;All</source>
+            <translation>&amp;Бүгдийг Цэвэрлэ</translation>
+        </message>
+    </context>
+    <context>
+        <name>TransactionDesc</name>
+        <message>
+            <source>%1/unconfirmed</source>
+            <extracomment>Text explaining the current status of a transaction, shown in the status field of the details window for this transaction. This status represents a transaction confirmed in at least one block, but less than 6 blocks.</extracomment>
+            <translation>%1/баталгаажаагүй</translation>
+        </message>
+        <message>
+            <source>%1 confirmations</source>
+            <extracomment>Text explaining the current status of a transaction, shown in the status field of the details window for this transaction. This status represents a transaction confirmed in 6 or more blocks.</extracomment>
+            <translation>%1 баталгаажилтууд</translation>
+        </message>
+        <message>
+            <source>Date</source>
+            <translation>Огноо</translation>
+        </message>
+        <message>
+            <source>unknown</source>
+            <translation>үл мэдэгдэх</translation>
+        </message>
+        <message numerus="yes">
+            <source>matures in %n more block(s)</source>
+            <translation type="unfinished">
+                <numerusform />
+                <numerusform />
+            </translation>
+        </message>
+        <message>
+            <source>Message</source>
+            <translation>Зурвас</translation>
+        </message>
+        <message>
+            <source>Transaction ID</source>
+            <translation>Тодорхойлолт</translation>
+        </message>
+        <message>
+            <source>Amount</source>
+            <translation>Хэмжээ</translation>
+        </message>
+        <message>
+            <source>Source address unavailable</source>
+            <translation>Source address unavailable</translation>
+        </message>
+        <message>
+            <source>%1 input addresses</source>
+            <translation>%1 input addresses</translation>
+        </message>
+        <message>
+            <source>Show input addresses</source>
+            <translation>Show input addresses</translation>
+        </message>
+        <message>
+            <source>Hide input addresses</source>
+            <translation>Hide input addresses</translation>
+        </message>
+        <message>
+            <source>Some input addresses are unavailable.</source>
+            <translation>Some input addresses are unavailable.</translation>
+        </message>
+    </context>
+    <context>
+        <name>TransactionDescDialog</name>
+        <message>
+            <source>This pane shows a detailed description of the transaction</source>
+            <translation>Гүйлгээний дэлгэрэнгүйг энэ бичил цонх харуулж байна</translation>
+        </message>
+    </context>
+    <context>
+        <name>TransactionTableModel</name>
+        <message>
+            <source>Date</source>
+            <translation>Огноо</translation>
+        </message>
+        <message>
+            <source>Type</source>
+            <translation>Тѳрѳл</translation>
+        </message>
+        <message>
+            <source>Label</source>
+            <translation>Шошго</translation>
+        </message>
+        <message>
+            <source>Unconfirmed</source>
+            <translation>Баталгаажаагүй</translation>
+        </message>
+        <message>
+            <source>Confirmed (%1 confirmations)</source>
+            <translation>Баталгаажлаа (%1 баталгаажилт)</translation>
+        </message>
+        <message>
+            <source>Conflicted</source>
+            <translation>Зѳрчилдлѳѳ</translation>
+        </message>
+        <message>
+            <source>Generated but not accepted</source>
+            <translation>Үүсгэгдсэн гэхдээ хүлээн авагдаагүй</translation>
+        </message>
+        <message>
+            <source>Received with</source>
+            <translation>Хүлээн авсан хаяг</translation>
+        </message>
+        <message>
+            <source>Received from</source>
+            <translation>Хүлээн авагдсан хаяг</translation>
+        </message>
+        <message>
+            <source>Sent to</source>
+            <translation>Явуулсан хаяг</translation>
+        </message>
+        <message>
+            <source>Mined</source>
+            <translation>Олборлогдсон</translation>
+        </message>
+        <message>
+            <source>(n/a)</source>
+            <translation>(алга байна)</translation>
+        </message>
+        <message>
+            <source>(no label)</source>
+            <translation>(шошгогүй)</translation>
+        </message>
+        <message>
+            <source>Transaction status. Hover over this field to show number of confirmations.</source>
+            <translation>Гүйлгээний байдал. Энд хулганыг авчирч баталгаажуулалтын тоог харна уу.</translation>
+        </message>
+        <message>
+            <source>Date and time that the transaction was received.</source>
+            <translation>Гүйлгээг хүлээн авсан огноо ба цаг.</translation>
+        </message>
+        <message>
+            <source>Type of transaction.</source>
+            <translation>Гүйлгээний тѳрѳл</translation>
+        </message>
+        <message>
+            <source>Amount removed from or added to balance.</source>
+            <translation>Балансаас авагдсан болон нэмэгдсэн хэмжээ.</translation>
+        </message>
+        <message>
+            <source>Bech32x private note</source>
+            <translation>Bech32x private note</translation>
+        </message>
+        <message>
+            <source>Bech32x to transparent</source>
+            <translation>Bech32x to transparent</translation>
+        </message>
+        <message>
+            <source>Private received</source>
+            <translation>Private received</translation>
+        </message>
+        <message>
+            <source>Private sent</source>
+            <translation>Private sent</translation>
+        </message>
+        <message>
+            <source>Internal transfer</source>
+            <translation>Internal transfer</translation>
+        </message>
+        <message>
+            <source>own wallet</source>
+            <translation>own wallet</translation>
+        </message>
+    </context>
+    <context>
+        <name>TransactionView</name>
+        <message>
+            <source>All</source>
+            <translation>Бүгд</translation>
+        </message>
+        <message>
+            <source>Today</source>
+            <translation>Ѳнѳѳдѳр</translation>
+        </message>
+        <message>
+            <source>This week</source>
+            <translation>Энэ долоо хоног</translation>
+        </message>
+        <message>
+            <source>This month</source>
+            <translation>Энэ сар</translation>
+        </message>
+        <message>
+            <source>Last month</source>
+            <translation>Ѳнгѳрсѳн сар</translation>
+        </message>
+        <message>
+            <source>This year</source>
+            <translation>Энэ жил</translation>
+        </message>
+        <message>
+            <source>Received with</source>
+            <translation>Хүлээн авсан хаяг</translation>
+        </message>
+        <message>
+            <source>Sent to</source>
+            <translation>Явуулсан хаяг</translation>
+        </message>
+        <message>
+            <source>Mined</source>
+            <translation>Олборлогдсон</translation>
+        </message>
+        <message>
+            <source>Other</source>
+            <translation>Бусад</translation>
+        </message>
+        <message>
+            <source>Min amount</source>
+            <translation>Хамгийн бага хэмжээ</translation>
+        </message>
+        <message>
+            <source>Confirmed</source>
+            <translation>Баталгаажлаа</translation>
+        </message>
+        <message>
+            <source>Date</source>
+            <translation>Огноо</translation>
+        </message>
+        <message>
+            <source>Type</source>
+            <translation>Тѳрѳл</translation>
+        </message>
+        <message>
+            <source>Label</source>
+            <translation>Шошго</translation>
+        </message>
+        <message>
+            <source>Address</source>
+            <translation>Хаяг</translation>
+        </message>
+        <message>
+            <source>ID</source>
+            <translation>Тодорхойлолт</translation>
+        </message>
+        <message>
+            <source>Exporting Failed</source>
+            <translation>Экспорт амжилтгүй боллоо</translation>
+        </message>
+        <message>
+            <source>The transaction history was successfully saved to %1.</source>
+            <translation>Гүйлгээнүй түүхийг %1-д амжилттай хадгаллаа.</translation>
+        </message>
+        <message>
+            <source>to</source>
+            <translation>-рүү/руу</translation>
+        </message>
+    </context>
+    <context>
+        <name>WalletFrame</name>
+        <message>
+            <source>Create a new wallet</source>
+            <translation>Шинэ түрийвч үүсгэх</translation>
+        </message>
+        <message>
+            <source>Error</source>
+            <translation>Алдаа</translation>
+        </message>
+        <message>
+            <source>Import or create a wallet</source>
+            <translation>Import or create a wallet</translation>
+        </message>
+    </context>
+    <context>
+        <name>WalletModel</name>
+        <message>
+            <source>Send Coins</source>
+            <translation>Зоос явуулах</translation>
+        </message>
+        <message>
+            <source>Nito.network private transactions activate at block %1. Current block: %2.</source>
+            <translation>Nito.network private transactions activate at block %1. Current block: %2.</translation>
+        </message>
+        <message>
+            <source>Nito.network private transactions are not active on this network.</source>
+            <translation>Nito.network private transactions are not active on this network.</translation>
+        </message>
+    </context>
+    <context>
+        <name>WalletView</name>
+        <message>
+            <source>&amp;Export</source>
+            <translation>&amp;Экспорт</translation>
+        </message>
+        <message>
+            <source>Export the data in the current tab to a file</source>
+            <translation>Сонгогдсон таб дээрхи дата-г экспортлох</translation>
+        </message>
+        <message>
+            <source>Recovery Phrase</source>
+            <translation>Recovery Phrase</translation>
+        </message>
+        <message>
+            <source>Show Recovery Phrase</source>
+            <translation>Show Recovery Phrase</translation>
+        </message>
+        <message>
+            <source>Write these words down in order. Anyone with this phrase can spend funds derived from this wallet seed.</source>
+            <translation>Write these words down in order. Anyone with this phrase can spend funds derived from this wallet seed.</translation>
+        </message>
+        <message>
+            <source>Rebuild &amp;Transaction History</source>
+            <translation>Rebuild &amp;Transaction History</translation>
+        </message>
+        <message>
+            <source>Rebuild this wallet's full sent and received transaction history from its recovery phrase</source>
+            <translation>Rebuild this wallet's full sent and received transaction history from its recovery phrase</translation>
+        </message>
+        <message>
+            <source>Rebuild Transaction History</source>
+            <translation>Rebuild Transaction History</translation>
+        </message>
+        <message>
+            <source>This will scan the blockchain to rebuild the wallet's full sent and received transaction history. Available funds stay spendable during the rebuild, but the transaction list may change when it completes.
+
+Continue?</source>
+            <translation>This will scan the blockchain to rebuild the wallet's full sent and received transaction history. Available funds stay spendable during the rebuild, but the transaction list may change when it completes.
+
+Continue?</translation>
+        </message>
+        <message>
+            <source>Wallet transaction history was rebuilt through block %1.</source>
+            <translation>Wallet transaction history was rebuilt through block %1.</translation>
+        </message>
+        <message>
+            <source>Wallet transaction history was already complete through block %1.</source>
+            <translation>Wallet transaction history was already complete through block %1.</translation>
+        </message>
+        <message>
+            <source>The recovery phrase gives full control over this wallet's funds. Only reveal it in a private place and store it offline.</source>
+            <translation>The recovery phrase gives full control over this wallet's funds. Only reveal it in a private place and store it offline.</translation>
+        </message>
+    </context>
+    <context>
+        <name>nito-core</name>
+        <message>
+            <source>Done loading</source>
+            <translation>Ачааллаж дууслаа</translation>
+        </message>
+        <message>
+            <source>Insufficient funds</source>
+            <translation>Таны дансны үлдэгдэл хүрэлцэхгүй байна</translation>
+        </message>
+        <message>
+            <source>A wallet restored from a recovery phrase cannot use an external signer.</source>
+            <translation>A wallet restored from a recovery phrase cannot use an external signer.</translation>
+        </message>
+        <message>
+            <source>A wallet restored from a recovery phrase must have private keys enabled.</source>
+            <translation>A wallet restored from a recovery phrase must have private keys enabled.</translation>
+        </message>
+        <message>
+            <source>BIP39 mnemonic entropy is not valid Nito HD seed key material.</source>
+            <translation>BIP39 mnemonic entropy is not valid Nito HD seed key material.</translation>
+        </message>
+        <message>
+            <source>Current spendable balance discovered.</source>
+            <translation>Current spendable balance discovered.</translation>
+        </message>
+        <message>
+            <source>Discovering current spendable balance...</source>
+            <translation>Discovering current spendable balance...</translation>
+        </message>
+        <message>
+            <source>Expected a BIP39 English mnemonic with 12 or 24 words, got %u words.</source>
+            <translation>Expected a BIP39 English mnemonic with 12 or 24 words, got %u words.</translation>
+        </message>
+        <message>
+            <source>Invalid BIP39 mnemonic checksum.</source>
+            <translation>Invalid BIP39 mnemonic checksum.</translation>
+        </message>
+        <message>
+            <source>Nito.network mnemonic export requires 16-byte or 32-byte BIP39 entropy.</source>
+            <translation>Nito.network mnemonic export requires 16-byte or 32-byte BIP39 entropy.</translation>
+        </message>
+        <message>
+            <source>Nito.network mnemonic export requires a 32-byte HD seed metadata key.</source>
+            <translation>Nito.network mnemonic export requires a 32-byte HD seed metadata key.</translation>
+        </message>
+        <message>
+            <source>Nito.network mnemonic metadata requires 12-word or 24-word BIP39 entropy.</source>
+            <translation>Nito.network mnemonic metadata requires 12-word or 24-word BIP39 entropy.</translation>
+        </message>
+        <message>
+            <source>Nito.network mnemonic seed metadata checksum is invalid.</source>
+            <translation>Nito.network mnemonic seed metadata checksum is invalid.</translation>
+        </message>
+        <message>
+            <source>Preparing wallet recovery...</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Restoring private balance...</source>
+            <translation>Restoring private balance...</translation>
+        </message>
+        <message>
+            <source>This descriptor wallet does not contain exportable Nito.network seed metadata. Create a new wallet from a recovery phrase before using dumpmnemonic.</source>
+            <translation>This descriptor wallet does not contain exportable Nito.network seed metadata. Create a new wallet from a recovery phrase before using dumpmnemonic.</translation>
+        </message>
+        <message>
+            <source>Unable to access the Nito.network wallet seed. Unlock the wallet or restore from the recovery phrase.</source>
+            <translation>Unable to access the Nito.network wallet seed. Unlock the wallet or restore from the recovery phrase.</translation>
+        </message>
+        <message>
+            <source>Unknown BIP39 English mnemonic word: %s</source>
+            <translation>Unknown BIP39 English mnemonic word: %s</translation>
+        </message>
+        <message>
+            <source>Wallet created but could not be unlocked to restore the recovery phrase.</source>
+            <translation>Wallet created but could not be unlocked to restore the recovery phrase.</translation>
+        </message>
+        <message>
+            <source>Wallet created but recovery phrase restore failed: %s</source>
+            <translation>Wallet created but recovery phrase restore failed: %s</translation>
+        </message>
+        <message>
+            <source>Wallet recovery complete.</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase but could not be opened.</source>
+            <translation>Wallet restored from recovery phrase but could not be opened.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but current UTXO discovery could not complete. Current transparent balance may be incomplete until you rescan.</source>
+            <translation>Wallet restored from recovery phrase, but current UTXO discovery could not complete. Current transparent balance may be incomplete until you rescan.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but current UTXO discovery could not start because another rescan is already running.</source>
+            <translation>Wallet restored from recovery phrase, but current UTXO discovery could not start because another rescan is already running.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but current UTXO discovery was aborted. Current transparent balance may be incomplete until you rescan.</source>
+            <translation>Wallet restored from recovery phrase, but current UTXO discovery was aborted. Current transparent balance may be incomplete until you rescan.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but current UTXO discovery was skipped because the chain height is not available yet. Keep the node running until it is synced, then rescan.</source>
+            <translation>Wallet restored from recovery phrase, but current UTXO discovery was skipped because the chain height is not available yet. Keep the node running until it is synced, then rescan.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but private balance recovery could not complete. Current private balance may be incomplete until the wallet rescans private notes.</source>
+            <translation>Wallet restored from recovery phrase, but private balance recovery could not complete. Current private balance may be incomplete until the wallet rescans private notes.</translation>
+        </message>
+        <message>
+            <source>Wallet restored from recovery phrase, but private balance recovery was aborted. Current private balance may be incomplete until the wallet rescans private notes.</source>
+            <translation>Wallet restored from recovery phrase, but private balance recovery was aborted. Current private balance may be incomplete until the wallet rescans private notes.</translation>
+        </message>
+        <message>
+            <source>No spendable private notes are available.</source>
+            <translation>No spendable private notes are available.</translation>
+        </message>
+        <message>
+            <source>Private funds are waiting for confirmation. Wait for the next block before spending private notes.</source>
+            <translation>Private funds are waiting for confirmation. Wait for the next block before spending private notes.</translation>
+        </message>
+        <message>
+            <source>The selected private notes are waiting for confirmation. Wait for the next block before spending them.</source>
+            <translation>The selected private notes are waiting for confirmation. Wait for the next block before spending them.</translation>
+        </message>
+        <message>
+            <source>The selected private notes do not cover the transaction target.</source>
+            <translation>The selected private notes do not cover the transaction target.</translation>
+        </message>
+        <message>
+            <source>Some private funds are still waiting for confirmation. Wait for the next block or spend a smaller confirmed amount.</source>
+            <translation>Some private funds are still waiting for confirmation. Wait for the next block or spend a smaller confirmed amount.</translation>
+        </message>
+        <message>
+            <source>Insufficient confirmed private funds. Available private balance: %s; required: %s.</source>
+            <translation>Insufficient confirmed private funds. Available private balance: %s; required: %s.</translation>
+        </message>
+        <message>
+            <source>A selected private note has already been spent by another transaction. Wait for the wallet to synchronize or for the next block, then create a new private transaction.</source>
+            <translation>A selected private note has already been spent by another transaction. Wait for the wallet to synchronize or for the next block, then create a new private transaction.</translation>
+        </message>
+        <message>
+            <source>Rebuilding transaction history...</source>
+            <translation>Rebuilding transaction history...</translation>
+        </message>
+        <message>
+            <source>The transparent history index is not available. Restart Nito Core with -transparenthistoryindex=1 before rebuilding wallet history.</source>
+            <translation>The transparent history index is not available. Restart Nito Core with -transparenthistoryindex=1 before rebuilding wallet history.</translation>
+        </message>
+        <message>
+            <source>The transparent history index is being prepared. Progress: %.1f%% (%d/%d). Try again in a few minutes.</source>
+            <translation>The transparent history index is being prepared. Progress: %.1f%% (%d/%d). Try again in a few minutes.</translation>
+        </message>
+        <message>
+            <source>The private wallet index is not available. Restart Nito Core with private wallet indexing enabled (-orchardindex=1) before rebuilding private transaction history.</source>
+            <translation>The private wallet index is not available. Restart Nito Core with private wallet indexing enabled (-orchardindex=1) before rebuilding private transaction history.</translation>
+        </message>
+        <message>
+            <source>The private wallet index is being prepared. Progress: %.1f%% (%d/%d). Try again in a few minutes before rebuilding private transaction history.</source>
+            <translation>The private wallet index is being prepared. Progress: %.1f%% (%d/%d). Try again in a few minutes before rebuilding private transaction history.</translation>
+        </message>
+        <message>
+            <source>Private receiving address metadata is not available yet for this encrypted wallet. Unlock the wallet once or restore it from the recovery phrase to prepare private receiving addresses.</source>
+            <translation>Private receiving address metadata is not available yet for this encrypted wallet. Unlock the wallet once or restore it from the recovery phrase to prepare private receiving addresses.</translation>
+        </message>
+    </context>
+    <context>
+        <name>CreateWalletActivity</name>
+        <message>
+            <source>Restore Wallet</source>
+            <translation type="unfinished" />
+        </message>
+        <message>
+            <source>Restoring Wallet &lt;b&gt;%1&lt;/b&gt; from recovery phrase…</source>
+            <translation>Restoring Wallet &lt;b&gt;%1&lt;/b&gt; from recovery phrase…</translation>
+        </message>
+        <message>
+            <source>Restoring available funds for Wallet &lt;b&gt;%1&lt;/b&gt; from recovery phrase...</source>
+            <translation>Restoring available funds for Wallet &lt;b&gt;%1&lt;/b&gt; from recovery phrase...</translation>
+        </message>
+        <message>
+            <source>Restoring Wallet &lt;b&gt;%1&lt;/b&gt; from backup file...</source>
+            <translation>Restoring Wallet &lt;b&gt;%1&lt;/b&gt; from backup file...</translation>
+        </message>
+        <message>
+            <source>Restore wallet failed</source>
+            <translation>Restore wallet failed</translation>
+        </message>
+        <message>
+            <source>Restore wallet warning</source>
+            <translation>Restore wallet warning</translation>
+        </message>
+    </context>
+    <context>
+        <name>LoadWalletsActivity</name>
     </context>
 </TS>

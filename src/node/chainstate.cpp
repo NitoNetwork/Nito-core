@@ -187,7 +187,11 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
     chainman.InitializeChainstate(options.mempool);
 
     // Load a chain created from a UTXO snapshot, if any exist.
-    bool has_snapshot = chainman.DetectSnapshotChainstate();
+    std::string snapshot_error;
+    bool has_snapshot = chainman.DetectSnapshotChainstate(snapshot_error);
+    if (!snapshot_error.empty()) {
+        return {ChainstateLoadStatus::FAILURE_INCOMPATIBLE_DB, Untranslated(snapshot_error)};
+    }
 
     if (has_snapshot && (options.reindex || options.reindex_chainstate)) {
         LogPrintf("[snapshot] deleting snapshot chainstate due to reindexing\n");

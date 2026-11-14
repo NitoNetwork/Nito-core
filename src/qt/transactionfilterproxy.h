@@ -50,6 +50,9 @@ protected:
     bool filterAcceptsRow(int source_row, const QModelIndex & source_parent) const override;
 
 private:
+    void beginFilterUpdate();
+    void endFilterUpdate();
+
     std::optional<QDateTime> dateFrom;
     std::optional<QDateTime> dateTo;
     QString m_search_string;

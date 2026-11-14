@@ -10,9 +10,12 @@
   <ItemGroup>
     <ClCompile Include="..\..\src\arith_uint256.cpp" />
     <ClCompile Include="..\..\src\consensus\merkle.cpp" />
+    <ClCompile Include="..\..\src\consensus\private_tx_verify.cpp" />
     <ClCompile Include="..\..\src\consensus\tx_check.cpp" />
     <ClCompile Include="..\..\src\hash.cpp" />
+    <ClCompile Include="..\..\src\private\orchard_verifier.cpp" />
     <ClCompile Include="..\..\src\primitives\block.cpp" />
+    <ClCompile Include="..\..\src\primitives\private_transaction.cpp" />
     <ClCompile Include="..\..\src\primitives\transaction.cpp" />
     <ClCompile Include="..\..\src\pubkey.cpp" />
     <ClCompile Include="..\..\src\script\nitoconsensus.cpp" />

@@ -7,7 +7,9 @@
 #include <wallet/load.h>
 
 #include <common/args.h>
+#include <common/settings.h>
 #include <interfaces/chain.h>
+#include <logging.h>
 #include <scheduler.h>
 #include <util/check.h>
 #include <util/fs.h>
@@ -23,6 +25,18 @@
 #include <system_error>
 
 namespace wallet {
+namespace {
+bool WalletInRwSettings(interfaces::Chain& chain, const std::string& wallet_name)
+{
+    const common::SettingsValue setting_value = chain.getRwSetting("wallet");
+    if (!setting_value.isArray()) return false;
+    for (const common::SettingsValue& value : setting_value.getValues()) {
+        if (value.isStr() && value.get_str() == wallet_name) return true;
+    }
+    return false;
+}
+} // namespace
+
 bool VerifyWallets(WalletContext& context)
 {
     interfaces::Chain& chain = *context.chain;
@@ -50,6 +64,11 @@ bool VerifyWallets(WalletContext& context)
     }
 
     LogPrintf("Using wallet directory %s\n", fs::PathToString(GetWalletDir()));
+
+    if (args.GetBoolArg("-qtkeepwalletsclosed", false)) {
+        LogPrintf("Qt wallet autoload is disabled; wallets will remain closed until opened from the GUI.\n");
+        return true;
+    }
 
     chain.initMessage(_("Verifying wallet(s)…").translated);
 
@@ -93,6 +112,13 @@ bool VerifyWallets(WalletContext& context)
         if (!MakeWalletDatabase(wallet_file, options, status, error_string)) {
             if (status == DatabaseStatus::FAILED_NOT_FOUND) {
                 chain.initWarning(Untranslated(strprintf("Skipping -wallet path that doesn't exist. %s", error_string.original)));
+                if (WalletInRwSettings(chain, wallet_file)) {
+                    if (RemoveWalletSetting(chain, wallet_file)) {
+                        LogPrintf("Removed missing wallet %s from startup settings\n", wallet_file);
+                    } else {
+                        chain.initWarning(Untranslated(strprintf("Failed to remove missing wallet %s from startup settings.", wallet_file)));
+                    }
+                }
             } else {
                 chain.initError(error_string);
                 return false;
@@ -106,6 +132,10 @@ bool VerifyWallets(WalletContext& context)
 bool LoadWallets(WalletContext& context)
 {
     interfaces::Chain& chain = *context.chain;
+    if (Assert(context.args)->GetBoolArg("-qtkeepwalletsclosed", false)) {
+        return true;
+    }
+
     try {
         std::set<fs::path> wallet_paths;
         for (const auto& wallet : chain.getSettingsList("wallet")) {
@@ -125,7 +155,8 @@ bool LoadWallets(WalletContext& context)
                 continue;
             }
             chain.initMessage(_("Loading wallet…").translated);
-            std::shared_ptr<CWallet> pwallet = database ? CWallet::Create(context, name, std::move(database), options.create_flags, error, warnings) : nullptr;
+            const SecureString empty_bip39_passphrase;
+            std::shared_ptr<CWallet> pwallet = database ? CWallet::Create(context, name, std::move(database), options.create_flags, empty_bip39_passphrase, error, warnings) : nullptr;
             if (!warnings.empty()) chain.initWarning(Join(warnings, Untranslated("\n")));
             if (!pwallet) {
                 chain.initError(error);
@@ -153,6 +184,7 @@ void StartWallets(WalletContext& context)
         context.scheduler->scheduleEvery([&context] { MaybeCompactWalletDB(context); }, 500ms);
     }
     context.scheduler->scheduleEvery([&context] { MaybeResendWalletTxs(context); }, 1min);
+    context.scheduler->scheduleEvery([&context] { MaybeCatchUpPrivateWallets(context); }, 10s);
 }
 
 void FlushWallets(WalletContext& context)

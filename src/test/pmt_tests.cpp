@@ -4,6 +4,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <consensus/merkle.h>
+#include <consensus/consensus.h>
 #include <merkleblock.h>
 #include <serialize.h>
 #include <streams.h>
@@ -18,6 +19,11 @@
 class CPartialMerkleTreeTester : public CPartialMerkleTree
 {
 public:
+    using CPartialMerkleTree::CPartialMerkleTree;
+
+    size_t HashCount() const { return vHash.size(); }
+    size_t BitCount() const { return vBits.size(); }
+
     // flip one bit in one of the hashes - this should break the authentication
     void Damage() {
         unsigned int n = InsecureRandRange(vHash.size());
@@ -30,7 +36,7 @@ BOOST_FIXTURE_TEST_SUITE(pmt_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(pmt_test1)
 {
-    static const unsigned int nTxCounts[] = {1, 4, 7, 17, 56, 100, 127, 256, 312, 513, 1000, 4095};
+    static const unsigned int nTxCounts[] = {1, 4, 7, 17, 56, 100, 127, 256, 312, 513, 1000, MAX_BLOCK_WEIGHT / MIN_TRANSACTION_WEIGHT};
 
     for (int i = 0; i < 12; i++) {
         unsigned int nTx = nTxCounts[i];
@@ -67,7 +73,7 @@ BOOST_AUTO_TEST_CASE(pmt_test1)
             }
 
             // build the partial merkle tree
-            CPartialMerkleTree pmt1(vTxid, vMatch);
+            CPartialMerkleTreeTester pmt1(vTxid, vMatch);
 
             // serialize
             DataStream ss{};
@@ -75,7 +81,14 @@ BOOST_AUTO_TEST_CASE(pmt_test1)
 
             // verify CPartialMerkleTree's size guarantees
             unsigned int n = std::min<unsigned int>(nTx, 1 + vMatchTxid1.size()*nHeight);
-            BOOST_CHECK(ss.size() <= 10 + (258*n+7)/8);
+            unsigned int bit_bound = 2 * n + nHeight;
+            BOOST_TEST_CONTEXT("nTx=" << nTx << " matched=" << vMatchTxid1.size() << " height=" << nHeight
+                               << " n=" << n << " hashes=" << pmt1.HashCount() << " bits=" << pmt1.BitCount()
+                               << " serialized=" << ss.size() << " bound=" << 10 + 32 * n + (bit_bound + 7) / 8) {
+                BOOST_CHECK(pmt1.HashCount() <= n);
+                BOOST_CHECK(pmt1.BitCount() <= bit_bound);
+                BOOST_CHECK(ss.size() <= 10 + 32 * n + (bit_bound + 7) / 8);
+            }
 
             // deserialize into a tester copy
             CPartialMerkleTreeTester pmt2;

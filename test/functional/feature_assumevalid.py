@@ -5,7 +5,7 @@
 """Test logic for skipping signature validation on old blocks.
 
 Test logic for skipping signature validation on blocks which we've assumed
-valid (https://github.com/nito/nito/pull/9484)
+valid (https://github.com/bitcoin/bitcoin/pull/9484)
 
 We build a chain that includes and invalid signature for one of the
 transactions:
@@ -56,9 +56,10 @@ from test_framework.wallet_util import generate_keypair
 
 class BaseNode(P2PInterface):
     def send_header_for_blocks(self, new_blocks):
-        headers_message = msg_headers()
-        headers_message.headers = [CBlockHeader(b) for b in new_blocks]
-        self.send_message(headers_message)
+        for offset in range(0, len(new_blocks), 2000):
+            headers_message = msg_headers()
+            headers_message.headers = [CBlockHeader(b) for b in new_blocks[offset:offset + 2000]]
+            self.send_message(headers_message)
 
 
 class AssumeValidTest(NitoTestFramework):
@@ -88,7 +89,9 @@ class AssumeValidTest(NitoTestFramework):
     def run_test(self):
         # Build the blockchain
         self.tip = int(self.nodes[0].getbestblockhash(), 16)
-        self.block_time = self.nodes[0].getblock(self.nodes[0].getbestblockhash())['time'] + 1
+        # The genesis has mainnet difficulty; a gap over 2 * 60 seconds enables
+        # the regtest minimum-difficulty rule for the first generated block.
+        self.block_time = self.nodes[0].getblock(self.nodes[0].getbestblockhash())['time'] + 121
 
         self.blocks = []
 
@@ -129,8 +132,8 @@ class AssumeValidTest(NitoTestFramework):
         self.block_time += 1
         height += 1
 
-        # Bury the assumed valid block 2100 deep
-        for _ in range(2100):
+        # Bury the block by more than two weeks of work at Nito's 60-second spacing.
+        for _ in range(14 * 24 * 60 + 100):
             block = create_block(self.tip, create_coinbase(height), self.block_time)
             block.solve()
             self.blocks.append(block)
@@ -143,24 +146,26 @@ class AssumeValidTest(NitoTestFramework):
         self.start_node(2, extra_args=["-assumevalid=" + hex(block102.sha256)])
 
         p2p0 = self.nodes[0].add_p2p_connection(BaseNode())
-        p2p0.send_header_for_blocks(self.blocks[0:2000])
-        p2p0.send_header_for_blocks(self.blocks[2000:])
+        p2p0.send_header_for_blocks(self.blocks[:200])
 
         # Send blocks to node0. Block 102 will be rejected.
         self.send_blocks_until_disconnected(p2p0)
         self.wait_until(lambda: self.nodes[0].getblockcount() >= COINBASE_MATURITY + 1)
         assert_equal(self.nodes[0].getblockcount(), COINBASE_MATURITY + 1)
 
+        # Load burial headers before connecting the block source. Processing
+        # two weeks of 60-second headers must not consume a block-download
+        # timeout before the first body is delivered.
+        for block in self.blocks:
+            self.nodes[1].submitheader(CBlockHeader(block).serialize().hex())
         p2p1 = self.nodes[1].add_p2p_connection(BaseNode())
-        p2p1.send_header_for_blocks(self.blocks[0:2000])
-        p2p1.send_header_for_blocks(self.blocks[2000:])
 
         # Send all blocks to node1. All blocks will be accepted.
-        for i in range(2202):
-            p2p1.send_message(msg_block(self.blocks[i]))
-        # Syncing 2200 blocks can take a while on slow systems. Give it plenty of time to sync.
+        for block in self.blocks:
+            p2p1.send_message(msg_block(block))
+        # Give the full chain time to sync on slow systems.
         p2p1.sync_with_ping(960)
-        assert_equal(self.nodes[1].getblock(self.nodes[1].getbestblockhash())['height'], 2202)
+        assert_equal(self.nodes[1].getblock(self.nodes[1].getbestblockhash())['height'], len(self.blocks))
 
         p2p2 = self.nodes[2].add_p2p_connection(BaseNode())
         p2p2.send_header_for_blocks(self.blocks[0:200])

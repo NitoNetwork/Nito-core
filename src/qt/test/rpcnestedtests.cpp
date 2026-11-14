@@ -5,6 +5,7 @@
 
 #include <qt/test/rpcnestedtests.h>
 
+#include <chainparams.h>
 #include <common/system.h>
 #include <interfaces/node.h>
 #include <qt/rpcconsole.h>
@@ -83,11 +84,17 @@ void RPCNestedTests::rpcNestedTests()
     QVERIFY(result == result2);
 
     RPCConsole::RPCExecuteCommandLine(m_node, result, "getblock(getbestblockhash())[tx][0]", &filtered);
-    QVERIFY(result == "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b");
+    QVERIFY(result == Params().GenesisBlock().vtx[0]->GetHash().ToString());
     QVERIFY(filtered == "getblock(getbestblockhash())[tx][0]");
 
     RPCConsole::RPCParseCommandLine(nullptr, result, "importprivkey", false, &filtered);
     QVERIFY(filtered == "importprivkey(…)");
+    RPCConsole::RPCParseCommandLine(nullptr, result, "createwallet test false false wallet-password false true null false bip39-secret", false, &filtered);
+    QVERIFY(filtered == "createwallet(…)");
+    RPCConsole::RPCParseCommandLine(nullptr, result, "sethdseed true \"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\" bip39-secret", false, &filtered);
+    QVERIFY(filtered == "sethdseed(…)");
+    RPCConsole::RPCParseCommandLine(nullptr, result, "upgradeorchardwallet \"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\" bip39-secret", false, &filtered);
+    QVERIFY(filtered == "upgradeorchardwallet(…)");
     RPCConsole::RPCParseCommandLine(nullptr, result, "signmessagewithprivkey abc", false, &filtered);
     QVERIFY(filtered == "signmessagewithprivkey(…)");
     RPCConsole::RPCParseCommandLine(nullptr, result, "signmessagewithprivkey abc,def", false, &filtered);
@@ -128,13 +135,13 @@ void RPCNestedTests::rpcNestedTests()
     RPCConsole::RPCExecuteCommandLine(m_node, result, "rpcNestedTest(   abc   ,   cba )");
     QVERIFY(result == "[\"abc\",\"cba\"]");
 
-    QVERIFY_EXCEPTION_THROWN(RPCConsole::RPCExecuteCommandLine(m_node, result, "getblockchaininfo() .\n"), std::runtime_error); //invalid syntax
-    QVERIFY_EXCEPTION_THROWN(RPCConsole::RPCExecuteCommandLine(m_node, result, "getblockchaininfo() getblockchaininfo()"), std::runtime_error); //invalid syntax
+    QVERIFY_THROWS_EXCEPTION(std::runtime_error, RPCConsole::RPCExecuteCommandLine(m_node, result, "getblockchaininfo() .\n")); //invalid syntax
+    QVERIFY_THROWS_EXCEPTION(std::runtime_error, RPCConsole::RPCExecuteCommandLine(m_node, result, "getblockchaininfo() getblockchaininfo()")); //invalid syntax
     RPCConsole::RPCExecuteCommandLine(m_node, result, "getblockchaininfo("); //tolerate non closing brackets if we have no arguments
     RPCConsole::RPCExecuteCommandLine(m_node, result, "getblockchaininfo()()()"); //tolerate non command brackets
-    QVERIFY_EXCEPTION_THROWN(RPCConsole::RPCExecuteCommandLine(m_node, result, "getblockchaininfo(True)"), UniValue); //invalid argument
-    QVERIFY_EXCEPTION_THROWN(RPCConsole::RPCExecuteCommandLine(m_node, result, "a(getblockchaininfo(True))"), UniValue); //method not found
-    QVERIFY_EXCEPTION_THROWN(RPCConsole::RPCExecuteCommandLine(m_node, result, "rpcNestedTest abc,,abc"), std::runtime_error); //don't tolerate empty arguments when using ,
-    QVERIFY_EXCEPTION_THROWN(RPCConsole::RPCExecuteCommandLine(m_node, result, "rpcNestedTest(abc,,abc)"), std::runtime_error); //don't tolerate empty arguments when using ,
-    QVERIFY_EXCEPTION_THROWN(RPCConsole::RPCExecuteCommandLine(m_node, result, "rpcNestedTest(abc,,)"), std::runtime_error); //don't tolerate empty arguments when using ,
+    QVERIFY_THROWS_EXCEPTION(UniValue, RPCConsole::RPCExecuteCommandLine(m_node, result, "getblockchaininfo(True)")); //invalid argument
+    QVERIFY_THROWS_EXCEPTION(UniValue, RPCConsole::RPCExecuteCommandLine(m_node, result, "a(getblockchaininfo(True))")); //method not found
+    QVERIFY_THROWS_EXCEPTION(std::runtime_error, RPCConsole::RPCExecuteCommandLine(m_node, result, "rpcNestedTest abc,,abc")); //don't tolerate empty arguments when using ,
+    QVERIFY_THROWS_EXCEPTION(std::runtime_error, RPCConsole::RPCExecuteCommandLine(m_node, result, "rpcNestedTest(abc,,abc)")); //don't tolerate empty arguments when using ,
+    QVERIFY_THROWS_EXCEPTION(std::runtime_error, RPCConsole::RPCExecuteCommandLine(m_node, result, "rpcNestedTest(abc,,)")); //don't tolerate empty arguments when using ,
 }

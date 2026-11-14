@@ -14,6 +14,8 @@
 #include <wallet/db.h>
 
 #include <memory>
+#include <optional>
+#include <string>
 
 class ArgsManager;
 class CChain;
@@ -73,7 +75,12 @@ class MockableBatch : public DatabaseBatch
 {
 private:
     MockableData& m_records;
-    bool m_pass;
+    bool& m_pass;
+    std::optional<std::string>& m_fail_key_type;
+    std::optional<MockableData> m_txn_snapshot;
+
+    bool ShouldFailKey(const SerializeData& key);
+    void RestoreTransaction();
 
     bool ReadKey(DataStream&& key, DataStream& value) override;
     bool WriteKey(DataStream&& key, DataStream&& value, bool overwrite=true) override;
@@ -82,8 +89,9 @@ private:
     bool ErasePrefix(Span<const std::byte> prefix) override;
 
 public:
-    explicit MockableBatch(MockableData& records, bool pass) : m_records(records), m_pass(pass) {}
-    ~MockableBatch() {}
+    explicit MockableBatch(MockableData& records, bool& pass, std::optional<std::string>& fail_key_type)
+        : m_records(records), m_pass(pass), m_fail_key_type(fail_key_type) {}
+    ~MockableBatch() { RestoreTransaction(); }
 
     void Flush() override {}
     void Close() override {}
@@ -95,9 +103,27 @@ public:
     std::unique_ptr<DatabaseCursor> GetNewPrefixCursor(Span<const std::byte> prefix) override {
         return std::make_unique<MockableCursor>(m_records, m_pass, prefix);
     }
-    bool TxnBegin() override { return m_pass; }
-    bool TxnCommit() override { return m_pass; }
-    bool TxnAbort() override { return m_pass; }
+    bool TxnBegin() override
+    {
+        if (!m_pass || m_txn_snapshot) return false;
+        m_txn_snapshot = m_records;
+        return true;
+    }
+    bool TxnCommit() override
+    {
+        if (!m_pass) {
+            RestoreTransaction();
+            return false;
+        }
+        m_txn_snapshot.reset();
+        return true;
+    }
+    bool TxnAbort() override
+    {
+        if (!m_txn_snapshot) return false;
+        RestoreTransaction();
+        return true;
+    }
 };
 
 /** A WalletDatabase whose contents and return values can be modified as needed for testing
@@ -107,6 +133,7 @@ class MockableDatabase : public WalletDatabase
 public:
     MockableData m_records;
     bool m_pass{true};
+    std::optional<std::string> m_fail_key_type;
 
     MockableDatabase(MockableData records = {}) : WalletDatabase(), m_records(records) {}
     ~MockableDatabase() {};
@@ -125,7 +152,7 @@ public:
 
     std::string Filename() override { return "mockable"; }
     std::string Format() override { return "mock"; }
-    std::unique_ptr<DatabaseBatch> MakeBatch(bool flush_on_close = true) override { return std::make_unique<MockableBatch>(m_records, m_pass); }
+    std::unique_ptr<DatabaseBatch> MakeBatch(bool flush_on_close = true) override { return std::make_unique<MockableBatch>(m_records, m_pass, m_fail_key_type); }
 };
 
 std::unique_ptr<WalletDatabase> CreateMockableWalletDatabase(MockableData records = {});

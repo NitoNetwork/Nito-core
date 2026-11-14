@@ -11,6 +11,7 @@
 #include <qt/walletmodel.h>
 
 #include <support/allocators/secure.h>
+#include <util/translation.h>
 
 #include <QKeyEvent>
 #include <QMessageBox>
@@ -23,6 +24,7 @@ AskPassphraseDialog::AskPassphraseDialog(Mode _mode, QWidget *parent, SecureStri
     m_passphrase_out(passphrase_out)
 {
     ui->setupUi(this);
+    GUIUtil::PolishDialogButtonBox(ui->buttonBox);
 
     ui->passEdit1->setMinimumSize(ui->passEdit1->sizeHint());
     ui->passEdit2->setMinimumSize(ui->passEdit2->sizeHint());
@@ -101,16 +103,19 @@ void AskPassphraseDialog::accept()
             // Cannot encrypt with empty passphrase
             break;
         }
-        QMessageBox::StandardButton retval = QMessageBox::question(this, tr("Confirm wallet encryption"),
-                 tr("Warning: If you encrypt your wallet and lose your passphrase, you will <b>LOSE ALL OF YOUR NITOSHI</b>!") + "<br><br>" + tr("Are you sure you wish to encrypt your wallet?"),
+        QMessageBox box(QMessageBox::Question, tr("Confirm wallet encryption"),
+                 tr("Warning: If you encrypt your wallet and lose your passphrase, you will <b>LOSE ALL OF YOUR NITO</b>!") + "<br><br>" + tr("Are you sure you wish to encrypt your wallet?"),
                  QMessageBox::Yes|QMessageBox::Cancel,
-                 QMessageBox::Cancel);
+                 this);
+        box.setDefaultButton(QMessageBox::Cancel);
+        GUIUtil::PolishMessageBox(&box);
+        QMessageBox::StandardButton retval = static_cast<QMessageBox::StandardButton>(box.exec());
         if(retval == QMessageBox::Yes)
         {
             if(newpass1 == newpass2)
             {
                 QString encryption_reminder = tr("Remember that encrypting your wallet cannot fully protect "
-                "your nitos from being stolen by malware infecting your computer.");
+                "your NITO from being stolen by malware infecting your computer.");
                 if (m_passphrase_out) {
                     m_passphrase_out->assign(newpass1);
                     QMessageBox::warning(this, tr("Wallet to be encrypted"),
@@ -120,6 +125,9 @@ void AskPassphraseDialog::accept()
                 } else {
                     assert(model != nullptr);
                     if (model->setWalletEncrypted(newpass1)) {
+                        model->setWalletLocked(false, newpass1);
+                        model->updateStatus();
+                        model->forceBalanceUpdate();
                         QMessageBox::warning(this, tr("Wallet encrypted"),
                                              "<qt>" +
                                              tr("Your wallet is now encrypted. ") + encryption_reminder +
@@ -149,19 +157,24 @@ void AskPassphraseDialog::accept()
         } break;
     case Unlock:
         try {
-            if (!model->setWalletLocked(false, oldpass)) {
-                // Check if the passphrase has a null character (see #27067 for details)
-                if (oldpass.find('\0') == std::string::npos) {
-                    QMessageBox::critical(this, tr("Wallet unlock failed"),
-                                          tr("The passphrase entered for the wallet decryption was incorrect."));
+            bilingual_str unlock_error;
+            if (!model->setWalletLocked(false, oldpass, &unlock_error)) {
+                if (!unlock_error.empty()) {
+                    QMessageBox::critical(this, tr("Wallet unlock failed"), QString::fromStdString(unlock_error.translated));
                 } else {
-                    QMessageBox::critical(this, tr("Wallet unlock failed"),
-                                          tr("The passphrase entered for the wallet decryption is incorrect. "
-                                             "It contains a null character (ie - a zero byte). "
-                                             "If the passphrase was set with a version of this software prior to 25.0, "
-                                             "please try again with only the characters up to — but not including — "
-                                             "the first null character. If this is successful, please set a new "
-                                             "passphrase to avoid this issue in the future."));
+                    // Check if the passphrase has a null character (see #27067 for details)
+                    if (oldpass.find('\0') == std::string::npos) {
+                        QMessageBox::critical(this, tr("Wallet unlock failed"),
+                                              tr("The passphrase entered for the wallet decryption was incorrect."));
+                    } else {
+                        QMessageBox::critical(this, tr("Wallet unlock failed"),
+                                              tr("The passphrase entered for the wallet decryption is incorrect. "
+                                                 "It contains a null character (ie - a zero byte). "
+                                                 "If the passphrase was set with a version of this software prior to 25.0, "
+                                                 "please try again with only the characters up to — but not including — "
+                                                 "the first null character. If this is successful, please set a new "
+                                                 "passphrase to avoid this issue in the future."));
+                    }
                 }
             } else {
                 if (m_passphrase_out) {

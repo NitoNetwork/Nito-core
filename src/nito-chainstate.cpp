@@ -18,6 +18,7 @@
 #include <kernel/context.h>
 #include <kernel/validation_cache_sizes.h>
 
+#include <consensus/private_tx_verify.h>
 #include <consensus/validation.h>
 #include <core_io.h>
 #include <node/blockstorage.h>
@@ -68,6 +69,7 @@ int main(int argc, char* argv[])
     kernel::ValidationCacheSizes validation_cache_sizes{};
     Assert(InitSignatureCache(validation_cache_sizes.signature_cache_bytes));
     Assert(InitScriptExecutionCache(validation_cache_sizes.script_execution_cache_bytes));
+    Assert(InitPrivateOrchardProofCache(validation_cache_sizes.private_orchard_proof_cache_bytes));
 
 
     // SETUP: Scheduling and Background Signals
@@ -122,6 +124,7 @@ int main(int argc, char* argv[])
     };
     const node::BlockManager::Options blockman_opts{
         .chainparams = chainman_opts.chainparams,
+        .datadir = chainman_opts.datadir,
         .blocks_dir = abs_datadir / "blocks",
         .notifications = chainman_opts.notifications,
     };

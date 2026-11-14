@@ -32,15 +32,20 @@ from test_framework.crypto.siphash import siphash256
 from test_framework.util import assert_equal
 
 MAX_LOCATOR_SZ = 101
-MAX_BLOCK_WEIGHT = 4000000
+MAX_BLOCK_SERIALIZED_SIZE = 800000
+MAX_BLOCK_WEIGHT = 800000
 MAX_BLOOM_FILTER_SIZE = 36000
 MAX_BLOOM_HASH_FUNCS = 50
 
-COIN = 100000000  # 1 btc in satoshis
-MAX_MONEY = 21000000 * COIN
+COIN = 100000000  # 1 NITO in base units
+MAX_MONEY = 1284565890 * COIN
 
 MAX_BIP125_RBF_SEQUENCE = 0xfffffffd  # Sequence number that is rbf-opt-in (BIP 125) and csv-opt-out (BIP 68)
 SEQUENCE_FINAL = 0xffffffff  # Sequence number that disables nLockTime if set for every input of a tx
+
+TX_FLAG_WITNESS = 1 << 0
+TX_FLAG_PRIVATE = 1 << 1
+TX_FLAG_PRIVATE_AUTH = 1 << 2
 
 MAX_PROTOCOL_MESSAGE_LENGTH = 4000000  # Maximum length of incoming protocol messages
 MAX_HEADERS_RESULTS = 2000  # Number of headers sent in one getheaders result
@@ -52,6 +57,7 @@ NODE_WITNESS = (1 << 3)
 NODE_COMPACT_FILTERS = (1 << 6)
 NODE_NETWORK_LIMITED = (1 << 10)
 NODE_P2P_V2 = (1 << 11)
+NODE_NITO_PRIVATE = (1 << 24)
 
 MSG_TX = 1
 MSG_BLOCK = 2
@@ -239,7 +245,7 @@ def from_binary(cls, stream):
 class CAddress:
     __slots__ = ("net", "ip", "nServices", "port", "time")
 
-    # see https://github.com/nito/bips/blob/master/bip-0155.mediawiki
+    # see https://github.com/bitcoin/bips/blob/master/bip-0155.mediawiki
     NET_IPV4 = 1
     NET_IPV6 = 2
     NET_TORV3 = 4
@@ -558,9 +564,122 @@ class CTxWitness:
         return True
 
 
+class CPrivateActionEffects:
+    __slots__ = ("cmx", "cv", "enc_ciphertext", "ephemeral_key",
+                 "nullifier", "out_ciphertext", "rk", "version")
+
+    def __init__(self):
+        self.version = 1
+        self.cv = 0
+        self.nullifier = 0
+        self.rk = 0
+        self.cmx = 0
+        self.ephemeral_key = b""
+        self.enc_ciphertext = b""
+        self.out_ciphertext = b""
+
+    def deserialize(self, f):
+        self.version = int.from_bytes(f.read(1), "little")
+        self.cv = deser_uint256(f)
+        self.nullifier = deser_uint256(f)
+        self.rk = deser_uint256(f)
+        self.cmx = deser_uint256(f)
+        self.ephemeral_key = deser_string(f)
+        self.enc_ciphertext = deser_string(f)
+        self.out_ciphertext = deser_string(f)
+
+    def serialize(self):
+        r = b""
+        r += self.version.to_bytes(1, "little")
+        r += ser_uint256(self.cv)
+        r += ser_uint256(self.nullifier)
+        r += ser_uint256(self.rk)
+        r += ser_uint256(self.cmx)
+        r += ser_string(self.ephemeral_key)
+        r += ser_string(self.enc_ciphertext)
+        r += ser_string(self.out_ciphertext)
+        return r
+
+    def __repr__(self):
+        return "CPrivateActionEffects(version=%i nullifier=%064x cmx=%064x)" \
+            % (self.version, self.nullifier, self.cmx)
+
+
+class CPrivateActionAuth:
+    __slots__ = ("spend_auth_sig",)
+
+    def __init__(self):
+        self.spend_auth_sig = b""
+
+    def deserialize(self, f):
+        self.spend_auth_sig = deser_string(f)
+
+    def serialize(self):
+        return ser_string(self.spend_auth_sig)
+
+    def __repr__(self):
+        return "CPrivateActionAuth(spend_auth_sig_len=%i)" % len(self.spend_auth_sig)
+
+
+class CPrivateEffects:
+    __slots__ = ("actions", "anchor", "flags", "value_balance", "version")
+
+    def __init__(self):
+        self.version = 1
+        self.flags = 0
+        self.anchor = 0
+        self.value_balance = 0
+        self.actions = []
+
+    def deserialize(self, f):
+        self.version = int.from_bytes(f.read(4), "little", signed=True)
+        self.flags = int.from_bytes(f.read(1), "little")
+        self.anchor = deser_uint256(f)
+        self.value_balance = int.from_bytes(f.read(8), "little", signed=True)
+        self.actions = deser_vector(f, CPrivateActionEffects)
+
+    def serialize(self):
+        r = b""
+        r += self.version.to_bytes(4, "little", signed=True)
+        r += self.flags.to_bytes(1, "little")
+        r += ser_uint256(self.anchor)
+        r += self.value_balance.to_bytes(8, "little", signed=True)
+        r += ser_vector(self.actions)
+        return r
+
+    def __repr__(self):
+        return "CPrivateEffects(version=%i flags=%i value_balance=%i actions=%s)" \
+            % (self.version, self.flags, self.value_balance, repr(self.actions))
+
+
+class CPrivateAuth:
+    __slots__ = ("actions_auth", "binding_sig", "proof")
+
+    def __init__(self):
+        self.actions_auth = []
+        self.proof = b""
+        self.binding_sig = b""
+
+    def deserialize(self, f):
+        self.actions_auth = deser_vector(f, CPrivateActionAuth)
+        self.proof = deser_string(f)
+        self.binding_sig = deser_string(f)
+
+    def serialize(self):
+        r = b""
+        r += ser_vector(self.actions_auth)
+        r += ser_string(self.proof)
+        r += ser_string(self.binding_sig)
+        return r
+
+    def __repr__(self):
+        return "CPrivateAuth(actions_auth=%s proof_len=%i binding_sig_len=%i)" \
+            % (repr(self.actions_auth), len(self.proof), len(self.binding_sig))
+
+
 class CTransaction:
     __slots__ = ("hash", "nLockTime", "nVersion", "sha256", "vin", "vout",
-                 "wit")
+                 "wit", "private_auth", "private_effects")
 
     def __init__(self, tx=None):
         if tx is None:
@@ -568,6 +687,8 @@ class CTransaction:
             self.vin = []
             self.vout = []
             self.wit = CTxWitness()
+            self.private_effects = None
+            self.private_auth = None
             self.nLockTime = 0
             self.sha256 = None
             self.hash = None
@@ -579,10 +700,14 @@ class CTransaction:
             self.sha256 = tx.sha256
             self.hash = tx.hash
             self.wit = copy.deepcopy(tx.wit)
+            self.private_effects = copy.deepcopy(tx.private_effects)
+            self.private_auth = copy.deepcopy(tx.private_auth)
 
     def deserialize(self, f):
         self.nVersion = int.from_bytes(f.read(4), "little", signed=True)
         self.vin = deser_vector(f, CTxIn)
+        self.private_effects = None
+        self.private_auth = None
         flags = 0
         if len(self.vin) == 0:
             flags = int.from_bytes(f.read(1), "little")
@@ -591,47 +716,73 @@ class CTransaction:
             if (flags != 0):
                 self.vin = deser_vector(f, CTxIn)
                 self.vout = deser_vector(f, CTxOut)
+            else:
+                self.vout = []
         else:
             self.vout = deser_vector(f, CTxOut)
-        if flags != 0:
+
+        if flags & TX_FLAG_PRIVATE:
+            self.private_effects = CPrivateEffects()
+            self.private_effects.deserialize(f)
+            flags ^= TX_FLAG_PRIVATE
+
+        if flags & TX_FLAG_WITNESS:
             self.wit.vtxinwit = [CTxInWitness() for _ in range(len(self.vin))]
             self.wit.deserialize(f)
+            flags ^= TX_FLAG_WITNESS
         else:
             self.wit = CTxWitness()
+
+        if flags & TX_FLAG_PRIVATE_AUTH:
+            if self.private_effects is None:
+                raise ValueError("Private authorization without private effects")
+            self.private_auth = CPrivateAuth()
+            self.private_auth.deserialize(f)
+            flags ^= TX_FLAG_PRIVATE_AUTH
+
+        if flags:
+            raise ValueError("Unknown transaction optional data")
+
         self.nLockTime = int.from_bytes(f.read(4), "little")
         self.sha256 = None
         self.hash = None
 
-    def serialize_without_witness(self):
-        r = b""
-        r += self.nVersion.to_bytes(4, "little", signed=True)
-        r += ser_vector(self.vin)
-        r += ser_vector(self.vout)
-        r += self.nLockTime.to_bytes(4, "little")
-        return r
-
-    # Only serialize with witness when explicitly called for
-    def serialize_with_witness(self):
+    def _serialize(self, with_witness):
         flags = 0
-        if not self.wit.is_null():
-            flags |= 1
+        if with_witness and not self.wit.is_null():
+            flags |= TX_FLAG_WITNESS
+        if self.private_effects is not None:
+            flags |= TX_FLAG_PRIVATE
+            if with_witness and self.private_auth is not None:
+                flags |= TX_FLAG_PRIVATE_AUTH
+
         r = b""
         r += self.nVersion.to_bytes(4, "little", signed=True)
         if flags:
-            dummy = []
-            r += ser_vector(dummy)
+            r += ser_vector([])
             r += flags.to_bytes(1, "little")
         r += ser_vector(self.vin)
         r += ser_vector(self.vout)
-        if flags & 1:
+        if flags & TX_FLAG_PRIVATE:
+            r += self.private_effects.serialize()
+        if flags & TX_FLAG_WITNESS:
             if (len(self.wit.vtxinwit) != len(self.vin)):
                 # vtxinwit must have the same length as vin
                 self.wit.vtxinwit = self.wit.vtxinwit[:len(self.vin)]
                 for _ in range(len(self.wit.vtxinwit), len(self.vin)):
                     self.wit.vtxinwit.append(CTxInWitness())
             r += self.wit.serialize()
+        if flags & TX_FLAG_PRIVATE_AUTH:
+            r += self.private_auth.serialize()
         r += self.nLockTime.to_bytes(4, "little")
         return r
+
+    def serialize_without_witness(self):
+        return self._serialize(with_witness=False)
+
+    # Only serialize with witness when explicitly called for
+    def serialize_with_witness(self):
+        return self._serialize(with_witness=True)
 
     # Regular serialization is with witness -- must explicitly
     # call serialize_without_witness to exclude witness data.
@@ -661,7 +812,7 @@ class CTransaction:
     def is_valid(self):
         self.calc_sha256()
         for tout in self.vout:
-            if tout.nValue < 0 or tout.nValue > 21000000 * COIN:
+            if tout.nValue < 0 or tout.nValue > MAX_MONEY:
                 return False
         return True
 
@@ -676,8 +827,9 @@ class CTransaction:
         return math.ceil(self.get_weight() / WITNESS_SCALE_FACTOR)
 
     def __repr__(self):
-        return "CTransaction(nVersion=%i vin=%s vout=%s wit=%s nLockTime=%i)" \
-            % (self.nVersion, repr(self.vin), repr(self.vout), repr(self.wit), self.nLockTime)
+        return "CTransaction(nVersion=%i vin=%s vout=%s private_effects=%s wit=%s private_auth=%s nLockTime=%i)" \
+            % (self.nVersion, repr(self.vin), repr(self.vout), repr(self.private_effects),
+               repr(self.wit), repr(self.private_auth), self.nLockTime)
 
 
 class CBlockHeader:
@@ -1893,6 +2045,41 @@ class msg_sendtxrcncl:
             (self.version, self.salt)
 
 class TestFrameworkScript(unittest.TestCase):
+    def test_private_transaction_encode_decode(self):
+        tx = CTransaction()
+        tx.private_effects = CPrivateEffects()
+        tx.private_effects.flags = 3
+        tx.private_effects.anchor = 1
+        tx.private_effects.value_balance = -1234
+        action = CPrivateActionEffects()
+        action.cv = 2
+        action.nullifier = 3
+        action.rk = 4
+        action.cmx = 5
+        action.ephemeral_key = b"\x06" * 32
+        action.enc_ciphertext = b"\x07" * 3
+        action.out_ciphertext = b"\x08" * 2
+        tx.private_effects.actions = [action]
+        tx.private_auth = CPrivateAuth()
+        action_auth = CPrivateActionAuth()
+        action_auth.spend_auth_sig = b"\x09" * 64
+        tx.private_auth.actions_auth = [action_auth]
+        tx.private_auth.proof = b"\x0a" * 4
+        tx.private_auth.binding_sig = b"\x0b" * 64
+
+        with_auth = tx.serialize_with_witness()
+        without_auth = tx.serialize_without_witness()
+        self.assertNotEqual(with_auth, without_auth)
+
+        decoded = tx_from_hex(with_auth.hex())
+        self.assertEqual(decoded.serialize_with_witness(), with_auth)
+        self.assertEqual(decoded.serialize_without_witness(), without_auth)
+        self.assertIsNotNone(decoded.private_effects)
+        self.assertIsNotNone(decoded.private_auth)
+        self.assertEqual(decoded.private_effects.value_balance, -1234)
+        self.assertEqual(decoded.private_effects.actions[0].nullifier, 3)
+        self.assertEqual(decoded.private_auth.actions_auth[0].spend_auth_sig, b"\x09" * 64)
+
     def test_addrv2_encode_decode(self):
         def check_addrv2(ip, net):
             addr = CAddress()

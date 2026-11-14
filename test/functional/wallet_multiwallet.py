@@ -10,6 +10,7 @@ from decimal import Decimal
 from threading import Thread
 import os
 import platform
+import re
 import shutil
 import stat
 import time
@@ -25,6 +26,7 @@ from test_framework.util import (
 )
 
 got_loading_error = False
+INITIAL_SUBSIDY = Decimal("512")
 
 
 def test_load_unload(node, name):
@@ -82,12 +84,19 @@ class MultiWalletTest(NitoTestFramework):
         # create symlink to verify wallet directory path can be referenced
         # through symlink
         os.mkdir(wallet_dir('w7'))
-        os.symlink('w7', wallet_dir('w7_symlink'))
+        have_symlinks = True
+        try:
+            os.symlink('w7', wallet_dir('w7_symlink'), target_is_directory=True)
+        except OSError as error:
+            if os.name != 'nt' or error.winerror != 1314:
+                raise
+            have_symlinks = False
+            self.log.info("Symlink checks unavailable: Windows requires permission to create symbolic links")
 
-        os.symlink('..', wallet_dir('recursive_dir_symlink'))
-
-        os.mkdir(wallet_dir('self_walletdat_symlink'))
-        os.symlink('wallet.dat', wallet_dir('self_walletdat_symlink/wallet.dat'))
+        if have_symlinks:
+            os.symlink('..', wallet_dir('recursive_dir_symlink'), target_is_directory=True)
+            os.mkdir(wallet_dir('self_walletdat_symlink'))
+            os.symlink('wallet.dat', wallet_dir('self_walletdat_symlink/wallet.dat'))
 
         # rename wallet.dat to make sure plain wallet file paths (as opposed to
         # directory paths) can be loaded
@@ -114,9 +123,12 @@ class MultiWalletTest(NitoTestFramework):
         #   w7_symlink - to verify symlinked wallet path is initialized correctly
         #   w8         - to verify existing wallet file is loaded correctly. Not tested for SQLite wallets as this is a deprecated BDB behavior.
         #   ''         - to verify default wallet file is created correctly
-        to_create = ['w1', 'w2', 'w3', 'w', 'sub/w5', 'w7_symlink']
+        to_create = ['w1', 'w2', 'w3', 'w', 'sub/w5']
+        if have_symlinks:
+            to_create.append('w7_symlink')
         in_wallet_dir = [w.replace('/', os.path.sep) for w in to_create]  # Wallets in the wallet dir
-        in_wallet_dir.append('w7')  # w7 is not loaded or created, but will be listed by listwalletdir because w7_symlink
+        if have_symlinks:
+            in_wallet_dir.append('w7')  # The target of w7_symlink is also listed.
         to_create.append(os.path.join(self.options.tmpdir, 'extern/w6'))  # External, not in the wallet dir, so we need to avoid adding it to in_wallet_dir
         to_load = [self.default_wallet_name]
         if not self.options.descriptors:
@@ -132,7 +144,11 @@ class MultiWalletTest(NitoTestFramework):
         os.mkdir(wallet_dir('no_access'))
         os.chmod(wallet_dir('no_access'), 0)
         try:
-            with self.nodes[0].assert_debug_log(expected_msgs=['Error scanning']):
+            if not os.access(wallet_dir('no_access'), os.R_OK | os.X_OK):
+                with self.nodes[0].assert_debug_log(expected_msgs=['Error scanning']):
+                    walletlist = self.nodes[0].listwalletdir()['wallets']
+            else:
+                self.log.info("Directory permission check unavailable: chmod(0) does not deny access for this user/platform")
                 walletlist = self.nodes[0].listwalletdir()['wallets']
         finally:
             # Need to ensure access is restored for cleanup
@@ -166,8 +182,9 @@ class MultiWalletTest(NitoTestFramework):
             self.nodes[0].assert_start_raises_init_error(['-wallet=w8', '-wallet=w8_copy'], exp_stderr, match=ErrorMatch.PARTIAL_REGEX)
 
         # should not initialize if wallet file is a symlink
-        os.symlink('w8', wallet_dir('w8_symlink'))
-        self.nodes[0].assert_start_raises_init_error(['-wallet=w8_symlink'], r'Error: Invalid -wallet path \'w8_symlink\'\. .*', match=ErrorMatch.FULL_REGEX)
+        if have_symlinks:
+            os.symlink('w8', wallet_dir('w8_symlink'))
+            self.nodes[0].assert_start_raises_init_error(['-wallet=w8_symlink'], r'Error: Invalid -wallet path \'w8_symlink\'\. .*', match=ErrorMatch.FULL_REGEX)
 
         # should not initialize if the specified walletdir does not exist
         self.nodes[0].assert_start_raises_init_error(['-walletdir=bad'], 'Error: Specified -walletdir "bad" does not exist')
@@ -197,7 +214,7 @@ class MultiWalletTest(NitoTestFramework):
         assert_equal(set(node.listwallets()), {"w4", "w5"})
         w5 = wallet("w5")
         w5_info = w5.getwalletinfo()
-        assert_equal(w5_info['immature_balance'], 50)
+        assert_equal(w5_info['immature_balance'], INITIAL_SUBSIDY)
 
         competing_wallet_dir = os.path.join(self.options.tmpdir, 'competing_walletdir')
         os.mkdir(competing_wallet_dir)
@@ -206,7 +223,7 @@ class MultiWalletTest(NitoTestFramework):
         if self.options.descriptors:
             exp_stderr = f"Error: SQLiteDatabase: Unable to obtain an exclusive lock on the database, is it being used by another instance of {self.config['environment']['PACKAGE_NAME']}?"
         else:
-            exp_stderr = r"Error: Error initializing wallet database environment \"\S+competing_walletdir\S*\"!"
+            exp_stderr = 'Error: Error initializing wallet database environment "' + re.escape(competing_wallet_dir) + r'[/\\]?"!'
         self.nodes[1].assert_start_raises_init_error(['-walletdir=' + competing_wallet_dir], exp_stderr, match=ErrorMatch.PARTIAL_REGEX)
 
         self.restart_node(0)
@@ -222,7 +239,7 @@ class MultiWalletTest(NitoTestFramework):
         self.generatetoaddress(node, nblocks=1, address=wallets[0].getnewaddress(), sync_fun=self.no_op)
         for wallet_name, wallet in zip(wallet_names, wallets):
             info = wallet.getwalletinfo()
-            assert_equal(info['immature_balance'], 50 if wallet is wallets[0] else 0)
+            assert_equal(info['immature_balance'], INITIAL_SUBSIDY if wallet is wallets[0] else 0)
             assert_equal(info['walletname'], wallet_name)
 
         # accessing invalid wallet fails
@@ -233,7 +250,7 @@ class MultiWalletTest(NitoTestFramework):
 
         w1, w2, w3, w4, *_ = wallets
         self.generatetoaddress(node, nblocks=COINBASE_MATURITY + 1, address=w1.getnewaddress(), sync_fun=self.no_op)
-        assert_equal(w1.getbalance(), 100)
+        assert_equal(w1.getbalance(), 2 * INITIAL_SUBSIDY)
         assert_equal(w2.getbalance(), 0)
         assert_equal(w3.getbalance(), 0)
         assert_equal(w4.getbalance(), 0)
@@ -318,7 +335,8 @@ class MultiWalletTest(NitoTestFramework):
             assert_raises_rpc_error(-4, "BerkeleyDatabase: Can't open database w8_copy (duplicates fileid", self.nodes[0].loadwallet, 'w8_copy')
 
         # Fail to load if wallet file is a symlink
-        assert_raises_rpc_error(-4, "Wallet file verification failed. Invalid -wallet path 'w8_symlink'", self.nodes[0].loadwallet, 'w8_symlink')
+        if have_symlinks:
+            assert_raises_rpc_error(-4, "Wallet file verification failed. Invalid -wallet path 'w8_symlink'", self.nodes[0].loadwallet, 'w8_symlink')
 
         # Fail to load if a directory is specified that doesn't contain a wallet
         os.mkdir(wallet_dir('empty_wallet_dir'))

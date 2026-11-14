@@ -15,6 +15,35 @@
 namespace wallet {
 BOOST_FIXTURE_TEST_SUITE(scriptpubkeyman_tests, BasicTestingSetup)
 
+BOOST_AUTO_TEST_CASE(watch_only_change_reservation)
+{
+    // A pre-HD watch-only wallet must not be mistaken for a wallet that can
+    // generate random keys. Fresh change reservation must fail gracefully.
+    CWallet wallet(m_node.chain.get(), "", CreateMockableWalletDatabase());
+    LOCK(wallet.cs_wallet);
+    wallet.SetWalletFlag(WALLET_FLAG_DISABLE_PRIVATE_KEYS);
+    wallet.SetupLegacyScriptPubKeyMan();
+    auto& keyman = *wallet.GetLegacyScriptPubKeyMan();
+    BOOST_REQUIRE(!keyman.CanGenerateKeys());
+    BOOST_CHECK(!keyman.TopUp());
+    ReserveDestination change(&wallet, OutputType::BECH32);
+    BOOST_CHECK(!change.GetReservedDestination(/*internal=*/true));
+
+    // Public keys explicitly imported into a watch-only keypool remain usable.
+    wallet.SetMinVersion(FEATURE_LATEST);
+    const CPubKey pubkey = GenerateRandomKey().GetPubKey();
+    BOOST_REQUIRE(wallet.ImportPubKeys({pubkey.GetID()}, {{pubkey.GetID(), pubkey}},
+                                      /*key_origins=*/{}, /*add_keypool=*/true,
+                                      /*internal=*/true, /*timestamp=*/1));
+    BOOST_REQUIRE(!keyman.CanGenerateKeys());
+    auto destination = change.GetReservedDestination(/*internal=*/true);
+    BOOST_REQUIRE(destination);
+    BOOST_CHECK(*destination == GetDestinationForKey(pubkey, OutputType::BECH32));
+    change.KeepDestination();
+    BOOST_CHECK(!keyman.HavePrivateKeys());
+    BOOST_CHECK(!change.GetReservedDestination(/*internal=*/true));
+}
+
 // Test LegacyScriptPubKeyMan::CanProvide behavior, making sure it returns true
 // for recognized scripts even when keys may not be available for signing.
 BOOST_AUTO_TEST_CASE(CanProvide)

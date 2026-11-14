@@ -1,0 +1,19 @@
+--- a/event.c
++++ b/event.c
+@@ -1354,6 +1354,6 @@ event_signal_closure(struct event_base *base, struct event *ev)
+ {
+ #if defined(__clang__)
+-#elif defined(__GNUC__)
++#elif defined(__GNUC__) && __GNUC__ >= 12
+ #pragma GCC diagnostic push
+ /* NOTE: it is better to avoid such code all together, by using separate
+  * variable to break the loop in the event structure, but now this code is safe
+@@ -1388,7 +1388,7 @@ event_signal_closure(struct event_base *base, struct event *ev)
+     }
+ 
+ #if defined(__clang__)
+-#elif defined(__GNUC__)
++#elif defined(__GNUC__) && __GNUC__ >= 12
+ #pragma GCC diagnostic pop
+ #endif
+ }

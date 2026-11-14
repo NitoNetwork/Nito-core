@@ -174,7 +174,7 @@ struct KeyConverter {
         }
         if (last - first != 32) return {};
         XOnlyPubKey xonly_pubkey;
-        std::copy(first, last, xonly_pubkey.begin());
+        std::copy(first, first + 32, xonly_pubkey.begin());
         return xonly_pubkey.GetEvenCorrespondingCPubKey();
     }
 
@@ -495,6 +495,21 @@ void Test(const std::string& ms, const std::string& hexscript, const std::string
 } // namespace
 
 BOOST_FIXTURE_TEST_SUITE(miniscript_tests, BasicTestingSetup)
+
+// Tapscript FromPKBytes accepts exactly 32-byte keys and rejects neighbours.
+BOOST_AUTO_TEST_CASE(from_pk_bytes_size_bounds)
+{
+    KeyConverter converter{miniscript::MiniscriptContext::TAPSCRIPT};
+    const std::vector<unsigned char> short_key(31, 0x02);
+    const std::vector<unsigned char> ok_key(32, 0x02);
+    const std::vector<unsigned char> long_key(33, 0x02);
+
+    BOOST_CHECK(!converter.FromPKBytes(short_key.begin(), short_key.end()).has_value());
+    auto parsed = converter.FromPKBytes(ok_key.begin(), ok_key.end());
+    BOOST_CHECK(parsed.has_value());
+    BOOST_CHECK_EQUAL(parsed->size(), CPubKey::COMPRESSED_SIZE);
+    BOOST_CHECK(!converter.FromPKBytes(long_key.begin(), long_key.end()).has_value());
+}
 
 BOOST_AUTO_TEST_CASE(fixed_tests)
 {

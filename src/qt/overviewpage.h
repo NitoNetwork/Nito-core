@@ -8,6 +8,7 @@
 
 #include <interfaces/wallet.h>
 
+#include <QString>
 #include <QWidget>
 #include <memory>
 
@@ -59,6 +60,13 @@ private:
 
     TxViewDelegate *txdelegate;
     std::unique_ptr<TransactionFilterProxy> filter;
+    bool m_out_of_sync_warning{true};
+    bool m_wallet_scan_in_progress{false};
+    bool m_available_balance_sync_pending{false};
+    QString m_status_bar_warnings;
+
+    void updateStatusIcons();
+    void updateAlertLabel();
 
 private Q_SLOTS:
     void LimitTransactionRows();
@@ -67,6 +75,7 @@ private Q_SLOTS:
     void updateAlerts(const QString &warnings);
     void updateWatchOnlyLabels(bool showWatchOnly);
     void setMonospacedFont(const QFont&);
+    void setWalletScanProgress(const QString& title, int progress);
 };
 
 #endif // BITCOIN_QT_OVERVIEWPAGE_H

@@ -1,0 +1,153 @@
+--- a/icccm/icccm.c
++++ b/icccm/icccm.c
+@@ -335,6 +335,9 @@ uint8_t
+ xcb_icccm_get_wm_class_from_reply(xcb_icccm_get_wm_class_reply_t *prop,
+                                   xcb_get_property_reply_t *reply)
+ {
++  int len;
++  int name_len;
++
+   if(!reply || reply->type != XCB_ATOM_STRING || reply->format != 8)
+     return 0;
+ 
+@@ -341,7 +344,7 @@ xcb_icccm_get_wm_class_from_reply(xcb_icccm_get_wm_class_reply_t *prop,
+   prop->_reply = reply;
+   prop->instance_name = (char *) xcb_get_property_value(prop->_reply);
+ 
+-  int len = xcb_get_property_value_length(prop->_reply);
++  len = xcb_get_property_value_length(prop->_reply);
+   /* Ensure there's a C end-of-string at the end of the property.
+      Truncate the property if necessary (the spec says there's already
+      a 0 in the last position, so this only hurts invalid props). */
+@@ -350,7 +353,7 @@ xcb_icccm_get_wm_class_from_reply(xcb_icccm_get_wm_class_reply_t *prop,
+   else
+     prop->instance_name[len-1] = 0;
+ 
+-  int name_len = strlen(prop->instance_name);
++  name_len = strlen(prop->instance_name);
+   if(name_len == len)
+     name_len--;
+ 
+@@ -748,11 +751,14 @@ uint8_t
+ xcb_icccm_get_wm_hints_from_reply(xcb_icccm_wm_hints_t *hints,
+                                   xcb_get_property_reply_t *reply)
+ {
++  int length;
++  int num_elem;
++
+   if(!reply || reply->type != XCB_ATOM_WM_HINTS || reply->format != 32)
+     return 0;
+ 
+-  int length = xcb_get_property_value_length(reply);
+-  int num_elem = length / (reply->format / 8);
++  length = xcb_get_property_value_length(reply);
++  num_elem = length / (reply->format / 8);
+ 
+   if(num_elem < XCB_ICCCM_NUM_WM_HINTS_ELEMENTS - 1)
+     return 0;
+--- a/ewmh/ewmh.c.m4
++++ b/ewmh/ewmh.c.m4
+@@ -521,10 +521,13 @@ xcb_ewmh_init_atoms(xcb_connection_t *c,
+                     xcb_ewmh_connection_t *ewmh)
+ {
+   int screen_nbr, atom_nbr;
++  const xcb_setup_t *setup;
++  xcb_screen_iterator_t screen_iter;
++  xcb_intern_atom_cookie_t *ewmh_cookies;
+ 
+   ewmh->connection = c;
+ 
+-  const xcb_setup_t *setup = xcb_get_setup(c);
++  setup = xcb_get_setup(c);
+ 
+   ewmh->nb_screens = xcb_setup_roots_length(setup);
+   if(!ewmh->nb_screens)
+@@ -534,7 +537,7 @@ xcb_ewmh_init_atoms(xcb_connection_t *c,
+   ewmh->screens = malloc(sizeof(xcb_screen_t *) * ewmh->nb_screens);
+   ewmh->_NET_WM_CM_Sn = malloc(sizeof(xcb_atom_t) * ewmh->nb_screens);
+ 
+-  xcb_screen_iterator_t screen_iter = xcb_setup_roots_iterator(setup);
++  screen_iter = xcb_setup_roots_iterator(setup);
+   for(screen_iter = xcb_setup_roots_iterator(setup), screen_nbr = 0; screen_iter.rem;
+       xcb_screen_next(&screen_iter))
+     ewmh->screens[screen_nbr++] = screen_iter.data;
+@@ -542,8 +545,8 @@ xcb_ewmh_init_atoms(xcb_connection_t *c,
+   /* _NET_WM_CM_Sn atoms  will be treated differently,  by adding them
+      at the end  of this array, than other atoms as  it depends on the
+      number of screens */
+-  xcb_intern_atom_cookie_t *ewmh_cookies = malloc(sizeof(xcb_intern_atom_cookie_t) *
+-                                                  (NB_EWMH_ATOMS + ewmh->nb_screens));
++  ewmh_cookies = malloc(sizeof(xcb_intern_atom_cookie_t) *
++                        (NB_EWMH_ATOMS + ewmh->nb_screens));
+ 
+   /* First, send InternAtom request for all Atoms except _NET_WM_CM_Sn */
+   for(atom_nbr = 0; atom_nbr < NB_EWMH_ATOMS; atom_nbr++)
+@@ -675,11 +678,13 @@ uint8_t
+ xcb_ewmh_get_desktop_geometry_from_reply(uint32_t *width, uint32_t *height,
+                                          xcb_get_property_reply_t *r)
+ {
++  uint32_t *value;
++
+   if(!r || r->type != XCB_ATOM_CARDINAL || r->format != 32 ||
+      xcb_get_property_value_length(r) != (sizeof(uint32_t) * 2))
+     return 0;
+ 
+-  uint32_t *value = (uint32_t *) xcb_get_property_value(r);
++  value = (uint32_t *) xcb_get_property_value(r);
+ 
+   *width = value[0];
+   *height = value[1];
+@@ -1148,11 +1153,14 @@ uint8_t
+ xcb_ewmh_get_wm_icon_from_reply(xcb_ewmh_get_wm_icon_reply_t *wm_icon,
+                                 xcb_get_property_reply_t *r)
+ {
++  uint32_t r_value_len;
++  uint32_t *r_value;
++
+   if(!r || r->type != XCB_ATOM_CARDINAL || r->format != 32)
+     return 0;
+ 
+-  uint32_t r_value_len = xcb_get_property_value_length(r);
+-  uint32_t *r_value = (uint32_t *) xcb_get_property_value(r);
++  r_value_len = xcb_get_property_value_length(r);
++  r_value = (uint32_t *) xcb_get_property_value(r);
+ 
+   /* Find the number of icons in the reply. */
+   wm_icon->num_icons = 0;
+@@ -1228,6 +1236,9 @@ unsigned int xcb_ewmh_get_wm_icon_length(const xcb_ewmh_get_wm_icon_reply_t *wm_
+ 
+ void xcb_ewmh_get_wm_icon_next(xcb_ewmh_wm_icon_iterator_t *iterator)
+ {
++  uint64_t icon_len;
++  uint32_t *data;
++
+   if(iterator->rem <= 1)
+   {
+     iterator->index += iterator->rem;
+@@ -1239,8 +1250,8 @@ void xcb_ewmh_get_wm_icon_next(xcb_ewmh_wm_icon_iterator_t *iterator)
+     return;
+   }
+ 
+-  uint64_t icon_len = iterator->width * (uint64_t) iterator->height;
+-  uint32_t *data = iterator->data + icon_len;
++  icon_len = iterator->width * (uint64_t) iterator->height;
++  data = iterator->data + icon_len;
+ 
+   iterator->rem--;
+   iterator->index++;
+@@ -1365,12 +1376,14 @@ uint8_t
+ xcb_ewmh_get_wm_sync_request_counter_from_reply(uint64_t *counter,
+                                                 xcb_get_property_reply_t *r)
+ {
++  uint32_t *r_value;
++
+   /* 2 cardinals? */
+   if(!r || r->type != XCB_ATOM_CARDINAL || r->format != 32 ||
+      xcb_get_property_value_length(r) != sizeof(uint64_t))
+     return 0;
+ 
+-  uint32_t *r_value = (uint32_t *) xcb_get_property_value(r);
++  r_value = (uint32_t *) xcb_get_property_value(r);
+   *counter = (r_value[0] | ((uint64_t) r_value[1]) << 32);
+ 
+   return 1;

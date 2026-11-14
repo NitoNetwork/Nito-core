@@ -8,7 +8,8 @@ Verify that a nitod node can use an external signer command
 See also rpc_signer.py for tests without wallet context.
 """
 import os
-import platform
+import subprocess
+import sys
 
 from test_framework.test_framework import NitoTestFramework
 from test_framework.util import (
@@ -24,24 +25,15 @@ class WalletSignerTest(NitoTestFramework):
 
     def mock_signer_path(self):
         path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'mocks', 'signer.py')
-        if platform.system() == "Windows":
-            return "py -3 " + path
-        else:
-            return path
+        return subprocess.list2cmdline([sys.executable, path])
 
     def mock_invalid_signer_path(self):
         path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'mocks', 'invalid_signer.py')
-        if platform.system() == "Windows":
-            return "py -3 " + path
-        else:
-            return path
+        return subprocess.list2cmdline([sys.executable, path])
 
     def mock_multi_signers_path(self):
         path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'mocks', 'multi_signers.py')
-        if platform.system() == "Windows":
-            return "py -3 " + path
-        else:
-            return path
+        return subprocess.list2cmdline([sys.executable, path])
 
     def set_test_params(self):
         self.num_nodes = 2
@@ -102,7 +94,7 @@ class WalletSignerTest(NitoTestFramework):
         assert_equal(hww.getwalletinfo()["keypoolsize"], 40)
 
         address1 = hww.getnewaddress(address_type="bech32")
-        assert_equal(address1, "bcrt1qm90ugl4d48jv8n6e5t9ln6t9zlpm5th68x4f8g")
+        assert_equal(address1, "nrt1qm90ugl4d48jv8n6e5t9ln6t9zlpm5th68rr5k9")
         address_info = hww.getaddressinfo(address1)
         assert_equal(address_info['solvable'], True)
         assert_equal(address_info['ismine'], True)
@@ -123,7 +115,7 @@ class WalletSignerTest(NitoTestFramework):
         assert_equal(address_info['hdkeypath'], "m/44h/1h/0h/0/0")
 
         address4 = hww.getnewaddress(address_type="bech32m")
-        assert_equal(address4, "bcrt1phw4cgpt6cd30kz9k4wkpwm872cdvhss29jga2xpmftelhqll62ms4e9sqj")
+        assert_equal(address4, "nrt1phw4cgpt6cd30kz9k4wkpwm872cdvhss29jga2xpmftelhqll62ms7fhnm5")
         address_info = hww.getaddressinfo(address4)
         assert_equal(address_info['solvable'], True)
         assert_equal(address_info['ismine'], True)

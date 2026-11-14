@@ -5,11 +5,13 @@
 
 #include <qt/psbtoperationsdialog.h>
 
+#include <chainparams.h>
 #include <core_io.h>
 #include <interfaces/node.h>
 #include <key_io.h>
 #include <node/psbt.h>
 #include <policy/policy.h>
+#include <private/private_address.h>
 #include <qt/nitounits.h>
 #include <qt/forms/ui_psbtoperationsdialog.h>
 #include <qt/guiutil.h>
@@ -17,6 +19,8 @@
 #include <util/fs.h>
 #include <util/strencodings.h>
 
+#include <algorithm>
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -51,7 +55,46 @@ PSBTOperationsDialog::~PSBTOperationsDialog()
 
 void PSBTOperationsDialog::openWithPSBT(PartiallySignedTransaction psbtx)
 {
+    m_ui->signTransactionButton->setEnabled(false);
+    m_ui->broadcastTransactionButton->setEnabled(false);
+    m_ui->copyToClipboardButton->setEnabled(false);
+    m_ui->saveButton->setEnabled(false);
+    m_ui->transactionDescription->clear();
+    m_private_intent_hash.reset();
     m_transaction_data = psbtx;
+    const auto invalid = [&] {
+        showStatus(tr("Failed to load transaction: %1")
+                       .arg(QString::fromStdString(TransactionErrorString(TransactionError::INVALID_PSBT).translated)),
+                   StatusLevel::ERR);
+    };
+    if (!psbtx.tx || psbtx.inputs.size() != psbtx.tx->vin.size() || psbtx.outputs.size() != psbtx.tx->vout.size()) {
+        invalid();
+        return;
+    }
+    try {
+        CAmount total{0};
+        const auto add_amount = [&](CAmount amount) {
+            if (!MoneyRange(amount) || amount > MAX_MONEY - total) return false;
+            total += amount;
+            return true;
+        };
+        for (const auto& output : psbtx.tx->vout) {
+            if (!add_amount(output.nValue)) {
+                invalid();
+                return;
+            }
+        }
+        for (const auto& [index, output] : psbtx.GetNitoPrivateSigningData().outputs) {
+            if (!add_amount(output.value)) {
+                invalid();
+                return;
+            }
+        }
+        m_private_intent_hash = m_transaction_data.GetNitoPrivateIntentHash();
+    } catch (const std::ios_base::failure& e) {
+        showStatus(tr("Failed to load transaction: %1").arg(QString::fromStdString(e.what())), StatusLevel::ERR);
+        return;
+    }
 
     bool complete = FinalizePSBT(psbtx); // Make sure all existing signatures are fully combined before checking for completeness.
     if (m_wallet_model) {
@@ -63,12 +106,15 @@ void PSBTOperationsDialog::openWithPSBT(PartiallySignedTransaction psbtx)
                        StatusLevel::ERR);
             return;
         }
-        m_ui->signTransactionButton->setEnabled(!complete && !m_wallet_model->wallet().privateKeysDisabled() && n_could_sign > 0);
+        m_ui->signTransactionButton->setEnabled(!complete && !m_wallet_model->wallet().privateKeysDisabled() &&
+                                                (n_could_sign > 0 || m_private_intent_hash.has_value()));
     } else {
         m_ui->signTransactionButton->setEnabled(false);
     }
 
     m_ui->broadcastTransactionButton->setEnabled(complete);
+    m_ui->copyToClipboardButton->setEnabled(true);
+    m_ui->saveButton->setEnabled(true);
 
     updateTransactionDisplay();
 }
@@ -80,7 +126,7 @@ void PSBTOperationsDialog::signTransaction()
 
     WalletModel::UnlockContext ctx(m_wallet_model->requestUnlock());
 
-    TransactionError err = m_wallet_model->wallet().fillPSBT(SIGHASH_ALL, /*sign=*/true, /*bip32derivs=*/true, &n_signed, m_transaction_data, complete);
+    TransactionError err = m_wallet_model->wallet().fillPSBT(SIGHASH_ALL, /*sign=*/true, /*bip32derivs=*/true, &n_signed, m_transaction_data, complete, m_private_intent_hash);
 
     if (err != TransactionError::OK) {
         showStatus(tr("Failed to sign transaction: %1")
@@ -177,6 +223,11 @@ QString PSBTOperationsDialog::renderTransaction(const PartiallySignedTransaction
     QString tx_description;
     QLatin1String bullet_point(" * ");
     CAmount totalAmount = 0;
+    if (psbtx.HasNitoPrivateSigningMaterial()) {
+        tx_description.append("<p><b>")
+            .append(tr("Warning: This private PSBT contains sensitive transaction details. Copy or save it only to a trusted destination."))
+            .append("</b></p>");
+    }
     for (const CTxOut& out : psbtx.tx->vout) {
         CTxDestination address;
         ExtractDestination(out.scriptPubKey, address);
@@ -189,9 +240,26 @@ QString PSBTOperationsDialog::renderTransaction(const PartiallySignedTransaction
         tx_description.append("<br>");
     }
 
+    try {
+        const NitoPrivatePSBTSigningData signing_data = psbtx.GetNitoPrivateSigningData();
+        for (const auto& [index, output] : signing_data.outputs) {
+            if (output.recipient_raw.size() != NITO_ORCHARD_RAW_ADDRESS_SIZE) continue;
+            std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> raw{};
+            std::copy(output.recipient_raw.begin(), output.recipient_raw.end(), raw.begin());
+            totalAmount += output.value;
+            tx_description.append(bullet_point).append(tr("Sends %1 privately to %2")
+                .arg(NitoUnits::formatWithUnit(NitoUnit::BTC, output.value))
+                .arg(QString::fromStdString(wallet::EncodeNitoPrivateAddress(raw, Params()))));
+            if (output.ovk_internal) tx_description.append(" (" + tr("private change") + ")");
+            tx_description.append("<br>");
+        }
+    } catch (const std::ios_base::failure&) {
+        tx_description.append(bullet_point).append(tr("Private signing intent is malformed.")).append("<br>");
+    }
+
     PSBTAnalysis analysis = AnalyzePSBT(psbtx);
     tx_description.append(bullet_point);
-    if (!*analysis.fee) {
+    if (!analysis.fee) {
         // This happens if the transaction is missing input UTXO information.
         tx_description.append(tr("Unable to calculate transaction fee or total transaction amount."));
     } else {
@@ -253,7 +321,7 @@ size_t PSBTOperationsDialog::couldSignInputs(const PartiallySignedTransaction &p
     if (err != TransactionError::OK) {
         return 0;
     }
-    return n_signed;
+    return n_signed + (psbtx.HasNitoPrivateSigningMaterial() ? 1 : 0);
 }
 
 void PSBTOperationsDialog::showTransactionStatus(const PartiallySignedTransaction &psbtx) {

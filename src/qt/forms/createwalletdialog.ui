@@ -6,12 +6,12 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>371</width>
-    <height>298</height>
+    <width>411</width>
+    <height>570</height>
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Create Wallet</string>
+   <string>Create or Restore Wallet</string>
   </property>
   <property name="sizeGripEnabled">
    <bool>true</bool>
@@ -26,7 +26,7 @@
       </sizepolicy>
      </property>
      <property name="text">
-      <string>You are one step away from creating your new wallet!</string>
+      <string>Create a new wallet or restore an existing wallet.</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
@@ -39,7 +39,7 @@
    <item>
     <widget class="QLabel" name="label_subdescription">
      <property name="text">
-      <string>Please provide a name and, if desired, enable any advanced options</string>
+      <string>Provide a wallet name, then choose how to continue.</string>
      </property>
     </widget>
    </item>
@@ -83,6 +83,191 @@
      </item>
     </layout>
    </item>
+   <item>
+    <widget class="QCheckBox" name="restore_file_checkbox">
+     <property name="toolTip">
+      <string>Restore this wallet from an existing wallet.dat backup file. This keeps the wallet history stored in that file.</string>
+     </property>
+     <property name="text">
+      <string>Restore from wallet.dat file</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="restore_mnemonic_checkbox">
+     <property name="toolTip">
+       <string>Create this wallet from a BIP39 recovery phrase. Complete chain-derived transaction history and current spendable funds are restored automatically before the wallet opens.</string>
+     </property>
+     <property name="text">
+      <string>Restore from recovery phrase</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="recovery_phrase_widget" native="true">
+     <layout class="QVBoxLayout" name="verticalLayout_recovery_phrase">
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QLabel" name="recovery_phrase_label">
+        <property name="text">
+         <string>Recovery phrase</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPlainTextEdit" name="recovery_phrase_text_edit">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>74</height>
+         </size>
+        </property>
+        <property name="placeholderText">
+         <string>word1 word2 ... word12/24</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="recovery_phrase_help_label">
+        <property name="text">
+          <string>Enter 12 or 24 BIP39 English words separated by spaces. Complete chain-derived transaction history and current spendable funds are restored automatically before the wallet opens. Existing chains require the wallet history indexes and unpruned block data.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  <item>
+   <widget class="QCheckBox" name="bip39_passphrase_checkbox">
+    <property name="toolTip">
+     <string>Add a separate BIP39 passphrase to the recovery phrase. This is not the wallet.dat encryption password.</string>
+    </property>
+    <property name="text">
+     <string>Use an optional BIP39 passphrase</string>
+    </property>
+   </widget>
+  </item>
+  <item>
+   <widget class="QWidget" name="bip39_passphrase_widget" native="true">
+    <layout class="QVBoxLayout" name="verticalLayout_bip39_passphrase">
+     <property name="leftMargin">
+      <number>0</number>
+     </property>
+     <property name="topMargin">
+      <number>0</number>
+     </property>
+     <property name="rightMargin">
+      <number>0</number>
+     </property>
+     <property name="bottomMargin">
+      <number>0</number>
+     </property>
+     <item>
+      <widget class="QLabel" name="bip39_passphrase_description_label">
+       <property name="text">
+        <string>This passphrase is an additional secret associated with your recovery phrase.
+Enter it exactly: a different value opens a different wallet.</string>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <layout class="QGridLayout" name="gridLayout_bip39_passphrase">
+       <item row="0" column="0">
+        <widget class="QLabel" name="bip39_passphrase_label">
+         <property name="text">
+          <string>BIP39 passphrase</string>
+         </property>
+         <property name="buddy">
+          <cstring>bip39_passphrase_line_edit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QLineEdit" name="bip39_passphrase_line_edit">
+         <property name="echoMode">
+          <enum>QLineEdit::Password</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="bip39_passphrase_confirmation_label">
+         <property name="text">
+          <string>Confirm BIP39 passphrase</string>
+         </property>
+         <property name="buddy">
+          <cstring>bip39_passphrase_confirmation_line_edit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QLineEdit" name="bip39_passphrase_confirmation_line_edit">
+         <property name="echoMode">
+          <enum>QLineEdit::Password</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <widget class="QToolButton" name="show_bip39_passphrase_button">
+         <property name="text">
+          <string>Show</string>
+         </property>
+         <property name="checkable">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <widget class="QLabel" name="bip39_passphrase_distinction_label">
+       <property name="text">
+        <string>This is separate from the password that encrypts wallet.dat. Spaces, capitalization, and all characters are significant.</string>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="bip39_passphrase_backup_checkbox">
+       <property name="text">
+        <string>I have saved this BIP39 passphrase exactly and separately from the recovery phrase.</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="bip39_passphrase_error_label">
+       <property name="styleSheet">
+        <string notr="true">color:red;font-weight:bold;</string>
+       </property>
+       <property name="text">
+        <string/>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+  </item>
    <item>
     <widget class="QCheckBox" name="encrypt_wallet_checkbox">
      <property name="toolTip">
@@ -191,8 +376,16 @@
    </item>
   </layout>
  </widget>
- <tabstops>
+  <tabstops>
   <tabstop>wallet_name_line_edit</tabstop>
+  <tabstop>restore_file_checkbox</tabstop>
+  <tabstop>restore_mnemonic_checkbox</tabstop>
+  <tabstop>recovery_phrase_text_edit</tabstop>
+  <tabstop>bip39_passphrase_checkbox</tabstop>
+  <tabstop>bip39_passphrase_line_edit</tabstop>
+  <tabstop>bip39_passphrase_confirmation_line_edit</tabstop>
+  <tabstop>show_bip39_passphrase_button</tabstop>
+  <tabstop>bip39_passphrase_backup_checkbox</tabstop>
   <tabstop>encrypt_wallet_checkbox</tabstop>
   <tabstop>disable_privkeys_checkbox</tabstop>
   <tabstop>blank_wallet_checkbox</tabstop>

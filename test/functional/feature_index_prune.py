@@ -4,6 +4,9 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test indices in conjunction with prune."""
 import os
+import struct
+from test_framework.blocktools import MIN_BLOCKS_TO_KEEP
+from test_framework.messages import hash256
 from test_framework.test_framework import NitoTestFramework
 from test_framework.util import (
     assert_equal,
@@ -16,25 +19,20 @@ class FeatureIndexPruneTest(NitoTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
         self.extra_args = [
-            ["-fastprune", "-prune=1", "-blockfilterindex=1"],
-            ["-fastprune", "-prune=1", "-coinstatsindex=1"],
-            ["-fastprune", "-prune=1", "-blockfilterindex=1", "-coinstatsindex=1"],
-            []
+            ["-fastprune", "-prune=1", "-blockfilterindex=1", "-orchardindex=0"],
+            ["-fastprune", "-prune=1", "-blockfilterindex=0", "-coinstatsindex=1", "-orchardindex=0"],
+            ["-fastprune", "-prune=1", "-blockfilterindex=1", "-coinstatsindex=1", "-orchardindex=0"],
+            ["-blockfilterindex=0", "-orchardindex=0"],
         ]
 
     def sync_index(self, height):
-        expected_filter = {
-            'basic block filter index': {'synced': True, 'best_block_height': height},
-        }
-        self.wait_until(lambda: self.nodes[0].getindexinfo() == expected_filter)
+        expected_filter = {'synced': True, 'best_block_height': height}
+        expected_stats = {'synced': True, 'best_block_height': height}
 
-        expected_stats = {
-            'coinstatsindex': {'synced': True, 'best_block_height': height}
-        }
-        self.wait_until(lambda: self.nodes[1].getindexinfo() == expected_stats)
-
-        expected = {**expected_filter, **expected_stats}
-        self.wait_until(lambda: self.nodes[2].getindexinfo() == expected)
+        self.wait_until(lambda: self.nodes[0].getindexinfo().get('basic block filter index') == expected_filter)
+        self.wait_until(lambda: self.nodes[1].getindexinfo().get('coinstatsindex') == expected_stats)
+        self.wait_until(lambda: self.nodes[2].getindexinfo().get('basic block filter index') == expected_filter)
+        self.wait_until(lambda: self.nodes[2].getindexinfo().get('coinstatsindex') == expected_stats)
 
     def reconnect_nodes(self):
         self.connect_nodes(0,1)
@@ -50,8 +48,32 @@ class FeatureIndexPruneTest(NitoTestFramework):
 
     def restart_without_indices(self):
         for i in range(3):
-            self.restart_node(i, extra_args=["-fastprune", "-prune=1"])
+            self.restart_node(i, extra_args=["-fastprune", "-prune=1", "-blockfilterindex=0", "-orchardindex=0"])
         self.reconnect_nodes()
+
+    def expected_prune_boundary(self, node, requested_height):
+        """Read actual closed-file boundaries instead of assuming block sizes."""
+        limit = min(requested_height, node.getblockcount() - MIN_BLOCKS_TO_KEEP)
+        boundaries = []
+        files = sorted(node.blocks_path.glob('blk*.dat'))
+        for path in files[:-1]:
+            last_header = None
+            with path.open('rb') as stream:
+                while True:
+                    prefix = stream.read(8)
+                    if len(prefix) < 8 or prefix == bytes(8):
+                        break
+                    size = struct.unpack('<I', prefix[4:])[0]
+                    assert size >= 80
+                    last_header = stream.read(80)
+                    stream.seek(size - 80, 1)
+            if last_header:
+                block_hash = hash256(last_header)[::-1].hex()
+                height = node.getblockheader(block_hash)['height']
+                if height <= limit:
+                    boundaries.append(height)
+        assert boundaries, 'No complete block file is eligible for pruning'
+        return max(boundaries)
 
     def run_test(self):
         filter_nodes = [self.nodes[0], self.nodes[2]]
@@ -70,11 +92,13 @@ class FeatureIndexPruneTest(NitoTestFramework):
 
         self.log.info("prune some blocks")
         for node in self.nodes[:2]:
+            expected_boundary = self.expected_prune_boundary(node, 400)
             with node.assert_debug_log(['limited pruning to height 689']):
                 pruneheight_new = node.pruneblockchain(400)
-                # the prune heights used here and below are magic numbers that are determined by the
-                # thresholds at which block files wrap, so they depend on disk serialization and default block file size.
-                assert_equal(pruneheight_new, 248)
+                assert_equal(pruneheight_new, expected_boundary)
+                assert_raises_rpc_error(-1, 'Block not available (pruned data)',
+                                        node.getblock, node.getblockhash(pruneheight_new))
+                assert node.getblock(node.getblockhash(pruneheight_new + 1))
 
         self.log.info("check if we can access the tips blockfilter and coinstats when we have pruned some blocks")
         tip = self.nodes[0].getbestblockhash()
@@ -90,9 +114,13 @@ class FeatureIndexPruneTest(NitoTestFramework):
         for node in stats_nodes:
             assert node.gettxoutsetinfo(hash_type="muhash", hash_or_height=height_hash)['muhash']
 
-        # mine and sync index up to a height that will later be the pruneheight
-        self.generate(self.nodes[0], 51)
-        self.sync_index(height=751)
+        # Sync the indexes to the first block in the next physical file. Later
+        # pruning removes the preceding file while retaining this checkpoint.
+        previous_file = max(self.nodes[0].blocks_path.glob('blk*.dat'))
+        while max(self.nodes[0].blocks_path.glob('blk*.dat')) == previous_file:
+            self.generate(self.nodes[0], 1)
+        checkpoint = self.nodes[0].getblockcount()
+        self.sync_index(height=checkpoint)
 
         self.restart_without_indices()
 
@@ -104,12 +132,12 @@ class FeatureIndexPruneTest(NitoTestFramework):
             msg = "Querying specific block heights requires coinstatsindex"
             assert_raises_rpc_error(-8, msg, node.gettxoutsetinfo, "muhash", height_hash)
 
-        self.mine_batches(749)
+        self.mine_batches(1500 - checkpoint)
 
         self.log.info("prune exactly up to the indices best blocks while the indices are disabled")
         for i in range(3):
             pruneheight_2 = self.nodes[i].pruneblockchain(1000)
-            assert_equal(pruneheight_2, 750)
+            assert_equal(pruneheight_2, checkpoint - 1)
             # Restart the nodes again with the indices activated
             self.restart_node(i, extra_args=self.extra_args[i])
 
@@ -143,9 +171,10 @@ class FeatureIndexPruneTest(NitoTestFramework):
         self.sync_index(height=2500)
 
         for node in self.nodes[:2]:
+            expected_boundary = self.expected_prune_boundary(node, 2500)
             with node.assert_debug_log(['limited pruning to height 2489']):
                 pruneheight_new = node.pruneblockchain(2500)
-                assert_equal(pruneheight_new, 2005)
+                assert_equal(pruneheight_new, expected_boundary)
 
         self.log.info("ensure that prune locks don't prevent indices from failing in a reorg scenario")
         with self.nodes[0].assert_debug_log(['basic block filter index prune lock moved back to 2480']):

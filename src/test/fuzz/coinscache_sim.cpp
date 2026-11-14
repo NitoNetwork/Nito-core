@@ -173,7 +173,7 @@ public:
     std::unique_ptr<CCoinsViewCursor> Cursor() const final { return {}; }
     size_t EstimateSize() const final { return m_data.size(); }
 
-    bool BatchWrite(CCoinsMap& data, const uint256&, bool erase) final
+    bool BatchWrite(CCoinsMap& data, const uint256&, bool erase, CPrivateStateCache* private_cache = nullptr) final
     {
         for (auto it = data.begin(); it != data.end(); it = erase ? data.erase(it) : std::next(it)) {
             if (it->second.flags & CCoinsCacheEntry::DIRTY) {
@@ -196,6 +196,9 @@ public:
                     assert(it->second.coin.nHeight == it2->second.nHeight);
                 }
             }
+        }
+        if (erase && private_cache) {
+            private_cache->Clear();
         }
         return true;
     }

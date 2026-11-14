@@ -64,6 +64,14 @@ void ReadRegTestArgs(const ArgsManager& args, CChainParams::RegTestOptions& opti
         }
     }
 
+    if (const auto arg = args.GetArg("-privateactivationheight")) {
+        int32_t height;
+        if (!ParseInt32(*arg, &height) || height < 0 || height >= std::numeric_limits<int>::max()) {
+            throw std::runtime_error(strprintf("Invalid height value (%s) for -privateactivationheight.", *arg));
+        }
+        options.private_tx_activation_height = height;
+    }
+
     if (!args.IsArgSet("-vbparams")) return;
 
     for (const std::string& strDeployment : args.GetArgs("-vbparams")) {

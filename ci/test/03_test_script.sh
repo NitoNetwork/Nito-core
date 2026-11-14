@@ -35,7 +35,7 @@ export HOST=${HOST:-$("$BASE_ROOT_DIR/depends/config.guess")}
   # The statistic bytes_written is only used for logging, which is disabled in
   # CI, so as a temporary minimal fix to work around UB and CI failures, leave
   # bytes_written unmodified.
-  # See https://github.com/nito/nito/pull/28359#issuecomment-1698694748
+  # See https://github.com/bitcoin/bitcoin/pull/28359#issuecomment-1698694748
   # Tee patch to stdout to make it clear CI is testing modified code.
   tee >(patch -p1) <<'EOF'
 --- a/src/leveldb/db/db_impl.cc
@@ -56,7 +56,7 @@ EOF
 if [ "$RUN_FUZZ_TESTS" = "true" ]; then
   export DIR_FUZZ_IN=${DIR_QA_ASSETS}/fuzz_seed_corpus/
   if [ ! -d "$DIR_FUZZ_IN" ]; then
-    ${CI_RETRY_EXE} git clone --depth=1 https://github.com/nito-core/qa-assets "${DIR_QA_ASSETS}"
+    ${CI_RETRY_EXE} git clone --depth=1 https://github.com/bitcoin-core/qa-assets "${DIR_QA_ASSETS}"
   fi
   (
     cd "${DIR_QA_ASSETS}"
@@ -65,9 +65,11 @@ if [ "$RUN_FUZZ_TESTS" = "true" ]; then
   )
 elif [ "$RUN_UNIT_TESTS" = "true" ] || [ "$RUN_UNIT_TESTS_SEQUENTIAL" = "true" ]; then
   export DIR_UNIT_TEST_DATA=${DIR_QA_ASSETS}/unit_test_data/
-  if [ ! -d "$DIR_UNIT_TEST_DATA" ]; then
+  if [ ! -f "$DIR_UNIT_TEST_DATA/script_assets_test.json" ]; then
     mkdir -p "$DIR_UNIT_TEST_DATA"
-    ${CI_RETRY_EXE} curl --location --fail https://github.com/nito-core/qa-assets/raw/main/unit_test_data/script_assets_test.json -o "${DIR_UNIT_TEST_DATA}/script_assets_test.json"
+    ${CI_RETRY_EXE} curl --location --fail https://raw.githubusercontent.com/bitcoin-core/qa-assets/b7a26ef9033e612f51b52b66db147a20700c8142/unit_test_data/script_assets_test.json -o "${DIR_UNIT_TEST_DATA}/script_assets_test.json.tmp"
+    echo "cd789a58ec45916e1721cdd14e82ca4c93100959f1cef4e229b22e3bf539f095  ${DIR_UNIT_TEST_DATA}/script_assets_test.json.tmp" | shasum -a 256 --check
+    mv "${DIR_UNIT_TEST_DATA}/script_assets_test.json.tmp" "${DIR_UNIT_TEST_DATA}/script_assets_test.json"
   fi
 fi
 
@@ -97,6 +99,7 @@ if [ -z "$NO_DEPENDS" ]; then
 fi
 if [ "$DOWNLOAD_PREVIOUS_RELEASES" = "true" ]; then
   test/get_previous_releases.py -b -t "$PREVIOUS_RELEASES_DIR"
+  export NITO_V3_BINDIR="${PREVIOUS_RELEASES_DIR}/v3.0.1/bin"
 fi
 
 BITCOIN_CONFIG_ALL="--disable-dependency-tracking"

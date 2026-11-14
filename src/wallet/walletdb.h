@@ -8,7 +8,10 @@
 #define BITCOIN_WALLET_WALLETDB_H
 
 #include <script/sign.h>
+#include <wallet/bip39_seed.h>
 #include <wallet/db.h>
+#include <wallet/private_notes.h>
+#include <wallet/private_wallet.h>
 #include <wallet/walletutil.h>
 #include <key.h>
 
@@ -65,6 +68,7 @@ extern const std::string ACTIVEEXTERNALSPK;
 extern const std::string ACTIVEINTERNALSPK;
 extern const std::string BESTBLOCK;
 extern const std::string BESTBLOCK_NOMERKLE;
+extern const std::string BIP39_DERIVED_SEED;
 extern const std::string CRYPTED_KEY;
 extern const std::string CSCRIPT;
 extern const std::string DEFAULTKEY;
@@ -80,7 +84,12 @@ extern const std::string NAME;
 extern const std::string OLD_KEY;
 extern const std::string ORDERPOSNEXT;
 extern const std::string POOL;
+extern const std::string PRIVATE_CHAIN;
+extern const std::string PRIVATE_NOTE;
+extern const std::string CRYPTED_PRIVATE_NOTE;
+extern const std::string PRIVATE_SPENT_NULLIFIER;
 extern const std::string PURPOSE;
+extern const std::string SEED_HISTORY_STATE;
 extern const std::string SETTINGS;
 extern const std::string TX;
 extern const std::string VERSION;
@@ -266,6 +275,19 @@ public:
 
     bool WriteLockedUTXO(const COutPoint& output);
     bool EraseLockedUTXO(const COutPoint& output);
+
+    bool WritePrivateNote(const CPrivateWalletNote& note);
+    bool ErasePrivateNote(const uint256& cmx);
+    bool WriteCryptedPrivateNote(const uint256& cmx, const std::vector<unsigned char>& ciphertext);
+    bool EraseCryptedPrivateNote(const uint256& cmx);
+    bool WritePrivateSpentNullifier(const CPrivateSpentNullifier& spent);
+    bool ErasePrivateSpentNullifier(const uint256& nullifier);
+    bool WritePrivateChain(const CPrivateWalletChain& chain);
+    bool ReadBIP39DerivedSeed(CBIP39DerivedSeedRecord& record);
+    bool WriteBIP39DerivedSeed(const CBIP39DerivedSeedRecord& record);
+    bool EraseBIP39DerivedSeed();
+    bool ReadSeedHistoryState(SeedHistoryState& state);
+    bool WriteSeedHistoryState(const SeedHistoryState& state);
 
     bool WriteAddressPreviouslySpent(const CTxDestination& dest, bool previously_spent);
     bool WriteAddressReceiveRequest(const CTxDestination& dest, const std::string& id, const std::string& receive_request);

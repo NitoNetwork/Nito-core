@@ -18,6 +18,7 @@
 #include <common/url.h>
 #include <consensus/consensus.h>
 #include <consensus/params.h>
+#include <consensus/private_tx_verify.h>
 #include <consensus/validation.h>
 #include <crypto/sha256.h>
 #include <init.h>
@@ -149,6 +150,7 @@ BasicTestingSetup::BasicTestingSetup(const ChainType chainType, const std::vecto
     ApplyArgsManOptions(*m_node.args, validation_cache_sizes);
     Assert(InitSignatureCache(validation_cache_sizes.signature_cache_bytes));
     Assert(InitScriptExecutionCache(validation_cache_sizes.script_execution_cache_bytes));
+    Assert(InitPrivateOrchardProofCache(validation_cache_sizes.private_orchard_proof_cache_bytes));
 
     m_node.chain = interfaces::MakeChain(m_node);
     static bool noui_connected = false;
@@ -194,6 +196,7 @@ ChainTestingSetup::ChainTestingSetup(const ChainType chainType, const std::vecto
     };
     const BlockManager::Options blockman_opts{
         .chainparams = chainman_opts.chainparams,
+        .datadir = chainman_opts.datadir,
         .blocks_dir = m_args.GetBlocksDirPath(),
         .notifications = chainman_opts.notifications,
     };
@@ -287,7 +290,8 @@ TestChain100Setup::TestChain100Setup(
         const bool block_tree_db_in_memory)
     : TestingSetup{ChainType::REGTEST, extra_args, coins_db_in_memory, block_tree_db_in_memory}
 {
-    SetMockTime(1598887952);
+    const int64_t min_difficulty_time_delta{2 * Params().GetConsensus().nPowTargetSpacing + 1};
+    SetMockTime(Params().GenesisBlock().GetBlockTime() + min_difficulty_time_delta);
     constexpr std::array<unsigned char, 32> vchKey = {
         {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}};
     coinbaseKey.Set(vchKey.begin(), vchKey.end(), true);
@@ -299,7 +303,7 @@ TestChain100Setup::TestChain100Setup(
         LOCK(::cs_main);
         assert(
             m_node.chainman->ActiveChain().Tip()->GetBlockHash().ToString() ==
-            "571d80a9967ae599cec0448b0b0ba1cfb606f584d8069bd7166b86854ba7a191");
+            "505aa61ae13441b33326581dba269c10aeb5d6395dc0015e22e9b40af8d00352");
     }
 }
 
@@ -309,7 +313,7 @@ void TestChain100Setup::mineBlocks(int num_blocks)
     for (int i = 0; i < num_blocks; i++) {
         std::vector<CMutableTransaction> noTxns;
         CBlock b = CreateAndProcessBlock(noTxns, scriptPubKey);
-        SetMockTime(GetTime() + 1);
+        SetMockTime(GetTime() + 2 * Params().GetConsensus().nPowTargetSpacing + 1);
         m_coinbase_txns.push_back(b.vtx[0]);
     }
 }

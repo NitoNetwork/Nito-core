@@ -37,6 +37,7 @@ BOOST_AUTO_TEST_CASE(validation_chainstate_resize_caches)
     {
         LOCK(::cs_main);
         const auto outpoint = AddTestCoin(c1.CoinsTip());
+        const uint256 cleanup_best_block{Params().GenesisBlock().GetHash()};
 
         // Set a meaningless bestblock value in the coinsview cache - otherwise we won't
         // flush during ResizecoinsCaches() and will subsequently hit an assertion.
@@ -59,6 +60,11 @@ BOOST_AUTO_TEST_CASE(validation_chainstate_resize_caches)
 
         // The view cache should be empty since we had to destruct to downsize.
         BOOST_CHECK(!c1.CoinsTip().HaveCoinInCache(outpoint));
+
+        // Do not leave the deliberately fake coins-cache marker persisted
+        // beyond the cache-resize path exercised by this test.
+        c1.CoinsTip().SetBestBlock(cleanup_best_block);
+        BOOST_REQUIRE(c1.CoinsTip().Flush());
     }
 }
 
@@ -66,7 +72,7 @@ BOOST_AUTO_TEST_CASE(validation_chainstate_resize_caches)
 //!
 //! When run on the background chainstate, UpdateTip should do a subset
 //! of what it does for the active chainstate.
-BOOST_FIXTURE_TEST_CASE(chainstate_update_tip, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(chainstate_update_tip, PrePrivateTestChain100Setup)
 {
     ChainstateManager& chainman = *Assert(m_node.chainman);
     uint256 curr_tip = ::g_best_block;

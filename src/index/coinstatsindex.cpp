@@ -116,6 +116,11 @@ CoinStatsIndex::CoinStatsIndex(std::unique_ptr<interfaces::Chain> chain, size_t 
 bool CoinStatsIndex::CustomAppend(const interfaces::BlockInfo& block)
 {
     CBlockUndo block_undo;
+    const CAmount prevout_spent_before{m_total_prevout_spent_amount};
+    const CAmount new_outputs_before{m_total_new_outputs_ex_coinbase_amount};
+    const CAmount coinbase_before{m_total_coinbase_amount};
+    const CAmount unspendable_before{m_total_unspendable_amount};
+    CAmount private_value_balance{0};
     const CAmount block_subsidy{GetBlockSubsidy(block.height, Params().GetConsensus())};
     m_total_subsidy += block_subsidy;
 
@@ -148,6 +153,9 @@ bool CoinStatsIndex::CustomAppend(const interfaces::BlockInfo& block)
         assert(block.data);
         for (size_t i = 0; i < block.data->vtx.size(); ++i) {
             const auto& tx{block.data->vtx.at(i)};
+            if (tx->HasPrivateBundle()) {
+                private_value_balance += tx->m_private_bundle->GetValueBalance();
+            }
 
             // Skip duplicate txid coinbase transactions (BIP30).
             if (IsBIP30Unspendable(*pindex) && tx->IsCoinBase()) {
@@ -205,11 +213,14 @@ bool CoinStatsIndex::CustomAppend(const interfaces::BlockInfo& block)
         m_total_unspendables_genesis_block += block_subsidy;
     }
 
-    // If spent prevouts + block subsidy are still a higher amount than
-    // new outputs + coinbase + current unspendable amount this means
-    // the miner did not claim the full block reward. Unclaimed block
-    // rewards are also unspendable.
-    const CAmount unclaimed_rewards{(m_total_prevout_spent_amount + m_total_subsidy) - (m_total_new_outputs_ex_coinbase_amount + m_total_coinbase_amount + m_total_unspendable_amount)};
+    // A positive Orchard value balance releases value to the transparent side;
+    // shielding has the opposite sign. Only the remainder after both domains'
+    // transfers and this block's outputs is an unclaimed reward.
+    const CAmount unclaimed_rewards{
+        (m_total_prevout_spent_amount - prevout_spent_before) + block_subsidy + private_value_balance -
+        (m_total_new_outputs_ex_coinbase_amount - new_outputs_before) -
+        (m_total_coinbase_amount - coinbase_before) -
+        (m_total_unspendable_amount - unspendable_before)};
     m_total_unspendable_amount += unclaimed_rewards;
     m_total_unspendables_unclaimed_rewards += unclaimed_rewards;
 
@@ -477,7 +488,7 @@ bool CoinStatsIndex::ReverseBlock(const CBlock& block, const CBlockIndex* pindex
         }
     }
 
-    const CAmount unclaimed_rewards{(m_total_new_outputs_ex_coinbase_amount + m_total_coinbase_amount + m_total_unspendable_amount) - (m_total_prevout_spent_amount + m_total_subsidy)};
+    const CAmount unclaimed_rewards{m_total_unspendables_unclaimed_rewards - read_out.second.total_unspendables_unclaimed_rewards};
     m_total_unspendable_amount -= unclaimed_rewards;
     m_total_unspendables_unclaimed_rewards -= unclaimed_rewards;
 

@@ -9,6 +9,7 @@
 
 #include <attributes.h>
 #include <consensus/amount.h>
+#include <primitives/private_transaction.h>
 #include <script/script.h>
 #include <serialize.h>
 #include <uint256.h>
@@ -20,6 +21,7 @@
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -191,10 +193,17 @@ struct CMutableTransaction;
 
 struct TransactionSerParams {
     const bool allow_witness;
+    const bool allow_private;
+    const bool allow_private_auth;
     SER_PARAMS_OPFUNC
 };
-static constexpr TransactionSerParams TX_WITH_WITNESS{.allow_witness = true};
-static constexpr TransactionSerParams TX_NO_WITNESS{.allow_witness = false};
+static constexpr TransactionSerParams TX_WITH_WITNESS{.allow_witness = true, .allow_private = true, .allow_private_auth = true};
+static constexpr TransactionSerParams TX_NO_WITNESS{.allow_witness = false, .allow_private = true, .allow_private_auth = false};
+static constexpr TransactionSerParams TX_NO_OPTIONAL{.allow_witness = false, .allow_private = false, .allow_private_auth = false};
+
+static constexpr unsigned char TX_FLAG_WITNESS = 1 << 0;
+static constexpr unsigned char TX_FLAG_PRIVATE = 1 << 1;
+static constexpr unsigned char TX_FLAG_PRIVATE_AUTH = 1 << 2;
 
 /**
  * Basic transaction serialization format:
@@ -209,22 +218,29 @@ static constexpr TransactionSerParams TX_NO_WITNESS{.allow_witness = false};
  * - unsigned char flags (!= 0)
  * - std::vector<CTxIn> vin
  * - std::vector<CTxOut> vout
- * - if (flags & 1):
+ * - if (flags & TX_FLAG_PRIVATE):
+ *   - CPrivateEffects private effects; (part of txid)
+ * - if (flags & TX_FLAG_WITNESS):
  *   - CScriptWitness scriptWitness; (deserialized into CTxIn)
+ * - if (flags & TX_FLAG_PRIVATE_AUTH):
+ *   - CPrivateAuth private authorization; (witness-like, not part of txid)
  * - uint32_t nLockTime
  */
 template<typename Stream, typename TxType>
 void UnserializeTransaction(TxType& tx, Stream& s, const TransactionSerParams& params)
 {
     const bool fAllowWitness = params.allow_witness;
+    const bool fAllowPrivate = params.allow_private;
+    const bool fAllowPrivateAuth = params.allow_private_auth;
 
     s >> tx.nVersion;
     unsigned char flags = 0;
     tx.vin.clear();
     tx.vout.clear();
+    tx.m_private_bundle.reset();
     /* Try to read the vin. In case the dummy is there, this will be read as an empty vector. */
     s >> tx.vin;
-    if (tx.vin.size() == 0 && fAllowWitness) {
+    if (tx.vin.size() == 0 && (fAllowWitness || fAllowPrivate)) {
         /* We read a dummy or an empty vin. */
         s >> flags;
         if (flags != 0) {
@@ -235,9 +251,17 @@ void UnserializeTransaction(TxType& tx, Stream& s, const TransactionSerParams& p
         /* We read a non-empty vin. Assume a normal vout follows. */
         s >> tx.vout;
     }
-    if ((flags & 1) && fAllowWitness) {
+
+    if ((flags & TX_FLAG_PRIVATE) && fAllowPrivate) {
+        flags ^= TX_FLAG_PRIVATE;
+        CPrivateBundle bundle;
+        s >> bundle.effects;
+        tx.m_private_bundle = std::move(bundle);
+    }
+
+    if ((flags & TX_FLAG_WITNESS) && fAllowWitness) {
         /* The witness flag is present, and we support witnesses. */
-        flags ^= 1;
+        flags ^= TX_FLAG_WITNESS;
         for (size_t i = 0; i < tx.vin.size(); i++) {
             s >> tx.vin[i].scriptWitness.stack;
         }
@@ -246,6 +270,17 @@ void UnserializeTransaction(TxType& tx, Stream& s, const TransactionSerParams& p
             throw std::ios_base::failure("Superfluous witness record");
         }
     }
+
+    if ((flags & TX_FLAG_PRIVATE_AUTH) && fAllowPrivateAuth) {
+        flags ^= TX_FLAG_PRIVATE_AUTH;
+        if (!tx.m_private_bundle) {
+            throw std::ios_base::failure("Private authorization without private effects");
+        }
+        CPrivateAuth auth;
+        s >> auth;
+        tx.m_private_bundle->auth = std::move(auth);
+    }
+
     if (flags) {
         /* Unknown flag in the serialization */
         throw std::ios_base::failure("Unknown transaction optional data");
@@ -257,6 +292,8 @@ template<typename Stream, typename TxType>
 void SerializeTransaction(const TxType& tx, Stream& s, const TransactionSerParams& params)
 {
     const bool fAllowWitness = params.allow_witness;
+    const bool fAllowPrivate = params.allow_private;
+    const bool fAllowPrivateAuth = params.allow_private_auth;
 
     s << tx.nVersion;
     unsigned char flags = 0;
@@ -264,22 +301,38 @@ void SerializeTransaction(const TxType& tx, Stream& s, const TransactionSerParam
     if (fAllowWitness) {
         /* Check whether witnesses need to be serialized. */
         if (tx.HasWitness()) {
-            flags |= 1;
+            flags |= TX_FLAG_WITNESS;
+        }
+    }
+    if (fAllowPrivate && tx.HasPrivateBundle()) {
+        flags |= TX_FLAG_PRIVATE;
+        if (fAllowPrivateAuth && tx.HasPrivateAuth()) {
+            flags |= TX_FLAG_PRIVATE_AUTH;
         }
     }
     if (flags) {
-        /* Use extended format in case witnesses are to be serialized. */
+        /* Use extended format in case witnesses or private data are to be serialized. */
         std::vector<CTxIn> vinDummy;
         s << vinDummy;
         s << flags;
     }
     s << tx.vin;
     s << tx.vout;
-    if (flags & 1) {
+
+    if (flags & TX_FLAG_PRIVATE) {
+        s << tx.m_private_bundle->effects;
+    }
+
+    if (flags & TX_FLAG_WITNESS) {
         for (size_t i = 0; i < tx.vin.size(); i++) {
             s << tx.vin[i].scriptWitness.stack;
         }
     }
+
+    if (flags & TX_FLAG_PRIVATE_AUTH) {
+        s << *tx.m_private_bundle->auth;
+    }
+
     s << tx.nLockTime;
 }
 
@@ -308,6 +361,7 @@ public:
     const std::vector<CTxOut> vout;
     const int32_t nVersion;
     const uint32_t nLockTime;
+    const std::optional<CPrivateBundle> m_private_bundle;
 
 private:
     /** Memory only. */
@@ -338,7 +392,7 @@ public:
     CTransaction(deserialize_type, ParamsStream<TransactionSerParams,Stream>& s) : CTransaction(CMutableTransaction(deserialize, s)) {}
 
     bool IsNull() const {
-        return vin.empty() && vout.empty();
+        return vin.empty() && vout.empty() && !m_private_bundle;
     }
 
     const Txid& GetHash() const LIFETIMEBOUND { return hash; }
@@ -372,6 +426,9 @@ public:
     std::string ToString() const;
 
     bool HasWitness() const { return m_has_witness; }
+    bool HasPrivateBundle() const { return m_private_bundle.has_value(); }
+    bool HasPrivateAuth() const { return m_private_bundle && m_private_bundle->HasAuth(); }
+    bool HasWitnessLikeData() const { return HasWitness() || HasPrivateAuth(); }
 };
 
 /** A mutable version of CTransaction. */
@@ -381,6 +438,7 @@ struct CMutableTransaction
     std::vector<CTxOut> vout;
     int32_t nVersion;
     uint32_t nLockTime;
+    std::optional<CPrivateBundle> m_private_bundle;
 
     explicit CMutableTransaction();
     explicit CMutableTransaction(const CTransaction& tx);
@@ -419,6 +477,10 @@ struct CMutableTransaction
         }
         return false;
     }
+
+    bool HasPrivateBundle() const { return m_private_bundle.has_value(); }
+    bool HasPrivateAuth() const { return m_private_bundle && m_private_bundle->HasAuth(); }
+    bool HasWitnessLikeData() const { return HasWitness() || HasPrivateAuth(); }
 };
 
 typedef std::shared_ptr<const CTransaction> CTransactionRef;

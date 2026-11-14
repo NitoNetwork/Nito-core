@@ -52,12 +52,15 @@
 #include <memory>
 
 #include <QApplication>
+#include <QColor>
 #include <QDebug>
 #include <QLatin1String>
 #include <QLibraryInfo>
 #include <QLocale>
 #include <QMessageBox>
+#include <QPalette>
 #include <QSettings>
+#include <QString>
 #include <QThread>
 #include <QTimer>
 #include <QTranslator>
@@ -69,7 +72,7 @@
 Q_IMPORT_PLUGIN(QXcbIntegrationPlugin);
 #elif defined(QT_QPA_PLATFORM_WINDOWS)
 Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin);
-Q_IMPORT_PLUGIN(QWindowsVistaStylePlugin);
+Q_IMPORT_PLUGIN(QModernWindowsStylePlugin);
 #elif defined(QT_QPA_PLATFORM_COCOA)
 Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin);
 Q_IMPORT_PLUGIN(QMacStylePlugin);
@@ -98,8 +101,7 @@ static void RegisterMetaTypes()
     qRegisterMetaType<WalletModel*>();
     qRegisterMetaType<wallet::AddressPurpose>();
   #endif // ENABLE_WALLET
-    // Register typedefs (see https://doc.qt.io/qt-5/qmetatype.html#qRegisterMetaType)
-    // IMPORTANT: if CAmount is no longer a typedef use the normal variant above (see https://doc.qt.io/qt-5/qmetatype.html#qRegisterMetaType-1)
+    // Register typedefs used by queued GUI calls.
     qRegisterMetaType<CAmount>("CAmount");
     qRegisterMetaType<size_t>("size_t");
 
@@ -107,11 +109,52 @@ static void RegisterMetaTypes()
     qRegisterMetaType<QMessageBox::Icon>("QMessageBox::Icon");
     qRegisterMetaType<interfaces::BlockAndHeaderTipInfo>("interfaces::BlockAndHeaderTipInfo");
 
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
-    qRegisterMetaTypeStreamOperators<NitoUnit>("NitoUnit");
-#else
     qRegisterMetaType<NitoUnit>("NitoUnit");
-#endif
+}
+
+static void ApplyNitoAccentStyle(QApplication& app)
+{
+    QPalette palette{app.palette()};
+    palette.setColor(QPalette::Highlight, QColor("#0073cf"));
+    palette.setColor(QPalette::HighlightedText, QColor("#ffffff"));
+    palette.setColor(QPalette::Link, QColor("#006bbf"));
+    palette.setColor(QPalette::Window, QColor("#f3f8fd"));
+    palette.setColor(QPalette::Base, QColor("#ffffff"));
+    palette.setColor(QPalette::AlternateBase, QColor("#eaf4ff"));
+    palette.setColor(QPalette::Button, QColor("#f8fbff"));
+    palette.setColor(QPalette::ToolTipBase, QColor("#0b1d2e"));
+    palette.setColor(QPalette::ToolTipText, QColor("#ffffff"));
+    app.setPalette(palette);
+
+    app.setStyleSheet(QStringLiteral(
+        "QMainWindow, QDialog { background-color: #f3f8fd; }"
+        "QMenuBar { background-color: #f8fbff; border-bottom: 1px solid #c4ddf4; }"
+        "QMenuBar::item { padding: 5px 9px; background: transparent; }"
+        "QMenuBar::item:selected { color: #004f8d; background-color: #dff0ff; }"
+        "QMenu { background-color: #ffffff; border: 1px solid #b7d4ef; }"
+        "QMenu::item:selected { color: #ffffff; background-color: #0073cf; }"
+        "QToolBar { background-color: #edf6ff; border: 0; border-bottom: 1px solid #c4ddf4; spacing: 3px; }"
+        "QToolButton { border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; }"
+        "QToolButton:hover { border-color: #71b4ea; background-color: #dff0ff; }"
+        "QToolButton:pressed, QToolButton:checked { background-color: #0073cf; color: #ffffff; border-color: #005fa8; }"
+        "QGroupBox { border: 1px solid #b7d4ef; border-radius: 6px; margin-top: 8px; padding-top: 10px; background-color: #fbfdff; }"
+        "QGroupBox::title { color: #005fa8; subcontrol-origin: margin; left: 8px; padding: 0 3px; }"
+        "QFrame[frameShape=\"4\"], QFrame[frameShape=\"6\"] { border-color: #c4ddf4; }"
+        "QPushButton { border: 1px solid #adcce8; border-radius: 4px; padding: 4px 9px; background-color: #ffffff; }"
+        "QPushButton:hover { border-color: #0073cf; background-color: #e8f4ff; }"
+        "QPushButton:pressed, QPushButton:checked { background-color: #0073cf; color: #ffffff; border-color: #005fa8; }"
+        "QPushButton:default { border-color: #0073cf; }"
+        "QPushButton:disabled { color: #7f8fa0; background-color: #edf3f9; border-color: #cfdfed; }"
+        "QTabBar::tab { padding: 5px 10px; }"
+        "QTabBar::tab:selected { color: #004f8d; background-color: #e3f2ff; border-bottom: 2px solid #0073cf; }"
+        "QHeaderView::section { background-color: #e6f3ff; color: #103a5c; border: 0; border-right: 1px solid #c4ddf4; border-bottom: 1px solid #c4ddf4; padding: 4px; }"
+        "QTableView, QTreeView, QListView { alternate-background-color: #eef7ff; selection-background-color: #0073cf; selection-color: #ffffff; }"
+        "QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border: 1px solid #0073cf; background-color: #ffffff; }"
+        "QCheckBox, QRadioButton { spacing: 6px; }"
+        "QProgressBar { border: 1px solid #adcce8; border-radius: 3px; background-color: #e7f1fb; text-align: center; }"
+        "QProgressBar::chunk { background-color: #0073cf; }"
+        "QStatusBar { background-color: #f8fbff; border-top: 1px solid #c4ddf4; }"
+    ));
 }
 
 static QString GetLangTerritory()
@@ -150,18 +193,14 @@ static void initTranslations(QTranslator &qtTranslatorBase, QTranslator &qtTrans
     // - First load the translator for the base language, without territory
     // - Then load the more specific locale translator
 
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
-    const QString translation_path{QLibraryInfo::location(QLibraryInfo::TranslationsPath)};
-#else
     const QString translation_path{QLibraryInfo::path(QLibraryInfo::TranslationsPath)};
-#endif
-    // Load e.g. qt_de.qm
-    if (qtTranslatorBase.load("qt_" + lang, translation_path)) {
+    // Load e.g. qtbase_de.qm
+    if (qtTranslatorBase.load("qtbase_" + lang, translation_path)) {
         QApplication::installTranslator(&qtTranslatorBase);
     }
 
-    // Load e.g. qt_de_DE.qm
-    if (qtTranslator.load("qt_" + lang_territory, translation_path)) {
+    // Load e.g. qtbase_de_DE.qm
+    if (qtTranslator.load("qtbase_" + lang_territory, translation_path)) {
         QApplication::installTranslator(&qtTranslator);
     }
 
@@ -334,6 +373,8 @@ void NitoApplication::parameterSetup()
     // Default printtoconsole to false for the GUI. GUI programs should not
     // print to the console unnecessarily.
     gArgs.SoftSetBoolArg("-printtoconsole", false);
+    // Qt keeps wallets closed on startup; users choose one explicitly from the GUI.
+    gArgs.SoftSetBoolArg("-qtkeepwalletsclosed", true);
 
     InitLogging(gArgs);
     InitParameterInteraction(gArgs);
@@ -524,12 +565,6 @@ int GuiMain(int argc, char* argv[])
     Q_INIT_RESOURCE(nito);
     Q_INIT_RESOURCE(nito_locale);
 
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
-    // Generate high-dpi pixmaps
-    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
-    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
-#endif
-
 #if defined(QT_QPA_PLATFORM_ANDROID)
     QApplication::setAttribute(Qt::AA_DontUseNativeMenuBar);
     QApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
@@ -583,6 +618,7 @@ int GuiMain(int argc, char* argv[])
 
     // Now that the QApplication is setup and we have parsed our parameters, we can set the platform style
     app.setupPlatformStyle();
+    ApplyNitoAccentStyle(app);
 
     /// 3. Application identification
     // must be set before OptionsModel is initialized or translations are loaded,

@@ -29,6 +29,12 @@ CAmount CachedTxGetCredit(const CWallet& wallet, const CWalletTx& wtx, const ism
     EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 //! filter decides which addresses will count towards the debit
 CAmount CachedTxGetDebit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter);
+CAmount CachedTxGetPrivateCredit(const CWallet& wallet, const CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+CAmount CachedTxGetPrivateExternalCredit(const CWallet& wallet, const CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+CAmount CachedTxGetPrivateInternalCredit(const CWallet& wallet, const CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+CAmount CachedTxGetPrivateDebit(const CWallet& wallet, const CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+CAmount CachedTxGetPrivateValueBalance(const CWalletTx& wtx);
+CAmount CachedTxGetFee(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 CAmount CachedTxGetChange(const CWallet& wallet, const CWalletTx& wtx);
 CAmount CachedTxGetImmatureCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter)
     EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);

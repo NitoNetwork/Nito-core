@@ -35,8 +35,8 @@ class AssumeutxoTest(NitoTestFramework):
         self.num_nodes = 2
         self.rpc_timeout = 120
         self.extra_args = [
-            [],
-            [],
+            ["-privateactivationheight=1000"],
+            ["-privateactivationheight=1000"],
         ]
 
     def setup_network(self):
@@ -99,7 +99,7 @@ class AssumeutxoTest(NitoTestFramework):
 
         assert_equal(
             dump_output['txoutset_hash'],
-            "a4bf3407ccb2cc0145c49ebba8fa91199f8a3903daf0883875941497d2493c27")
+            "ed6ece9e5829b3cf6d553d1ad66a8fa6185e5cfa7c4e6cd40f129253ac18c87b")
         assert_equal(dump_output["nchaintx"], 334)
         assert_equal(n0.getblockchaininfo()["blocks"], SNAPSHOT_BASE_HEIGHT)
 

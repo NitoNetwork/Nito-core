@@ -13,6 +13,7 @@ from test_framework.blocktools import (
     add_witness_commitment,
     create_block,
     create_coinbase,
+    NORMAL_GBT_REQUEST_PARAMS,
 )
 from test_framework.messages import (
     MAX_BIP125_RBF_SEQUENCE,
@@ -31,6 +32,7 @@ from test_framework.messages import (
     MSG_WITNESS_TX,
     MSG_WTX,
     NODE_NETWORK,
+    NODE_NITO_PRIVATE,
     NODE_WITNESS,
     msg_no_witness_block,
     msg_getdata,
@@ -224,10 +226,13 @@ class SegWitTest(NitoTestFramework):
 
     def build_next_block(self):
         """Build a block on top of node0's tip."""
-        tip = self.nodes[0].getbestblockhash()
-        height = self.nodes[0].getblockcount() + 1
-        block_time = self.nodes[0].getblockheader(tip)["mediantime"] + 1
-        block = create_block(int(tip, 16), create_coinbase(height), block_time)
+        tmpl = self.nodes[0].getblocktemplate(NORMAL_GBT_REQUEST_PARAMS)
+        block = create_block(
+            int(tmpl["previousblockhash"], 16),
+            create_coinbase(tmpl["height"]),
+            tmpl["curtime"],
+            tmpl=tmpl,
+        )
         block.rehash()
         return block
 
@@ -239,10 +244,10 @@ class SegWitTest(NitoTestFramework):
 
     def run_test(self):
         # Setup the p2p connections
-        # self.test_node sets P2P_SERVICES, i.e. NODE_WITNESS | NODE_NETWORK
+        # self.test_node sets P2P_SERVICES, i.e. NODE_WITNESS | NODE_NETWORK | NODE_NITO_PRIVATE
         self.test_node = self.nodes[0].add_p2p_connection(TestP2PConn(), services=P2P_SERVICES)
-        # self.old_node sets only NODE_NETWORK
-        self.old_node = self.nodes[0].add_p2p_connection(TestP2PConn(), services=NODE_NETWORK)
+        # self.old_node is a non-witness peer, but still advertises Nito private support after activation.
+        self.old_node = self.nodes[0].add_p2p_connection(TestP2PConn(), services=NODE_NETWORK | NODE_NITO_PRIVATE)
         # self.std_node is for testing node1 (requires standard txs)
         self.std_node = self.nodes[1].add_p2p_connection(TestP2PConn(), services=P2P_SERVICES)
         # self.std_wtx_node is for testing node1 with wtxid relay
@@ -880,7 +885,7 @@ class SegWitTest(NitoTestFramework):
         # This should give us plenty of room to tweak the spending tx's
         # virtual size.
         NUM_DROPS = 200  # 201 max ops per script!
-        NUM_OUTPUTS = 50
+        NUM_OUTPUTS = 10
 
         witness_script = CScript([OP_2DROP] * NUM_DROPS + [OP_TRUE])
         script_pubkey = script_to_p2wsh_script(witness_script)
@@ -920,9 +925,11 @@ class SegWitTest(NitoTestFramework):
         add_witness_commitment(block)
         block.solve()
         assert_equal(block.get_weight(), MAX_BLOCK_WEIGHT + 1)
-        # Make sure that our test case would exceed the old max-network-message
-        # limit
-        assert len(block.serialize()) > 2 * 1024 * 1024
+        # Bitcoin's original 4M weight case exceeds the old max-network-message
+        # limit. Nito's consensus block weight is smaller, so that specific
+        # serialization-size assertion is not applicable here.
+        if MAX_BLOCK_WEIGHT >= 4_000_000:
+            assert len(block.serialize()) > 2 * 1024 * 1024
 
         test_witness_block(self.nodes[0], self.test_node, block, accepted=False, reason='bad-blk-weight')
 
@@ -1971,9 +1978,11 @@ class SegWitTest(NitoTestFramework):
 
     @subtest
     def test_superfluous_witness(self):
-        # Serialization of tx that puts witness flag to 3 always
+        # Serialization of tx that always includes witness plus an unknown
+        # optional flag. In Nito, flag 2 is private effects, so 3 is no longer
+        # an unknown witness flag combination.
         def serialize_with_bogus_witness(tx):
-            flags = 3
+            flags = 9
             r = b""
             r += struct.pack("<i", tx.nVersion)
             if flags:

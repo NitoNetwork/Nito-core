@@ -73,7 +73,7 @@ static void UpdateRwSetting(interfaces::Node& node, OptionsModel::OptionID optio
         // because Nito 22.x releases try to read these specific settings as
         // strings in addOverriddenOption() calls at startup, triggering
         // uncaught exceptions in UniValue::get_str(). These errors were fixed
-        // in later releases by https://github.com/nito/nito/pull/24498.
+        // in later releases by https://github.com/bitcoin/bitcoin/pull/24498.
         // If new numeric settings are added, they can be written as numbers
         // instead of strings, because nito 22.x will not try to read these.
         node.updateRwSetting(SettingName(option) + suffix, value.getValStr());
@@ -215,6 +215,16 @@ bool OptionsModel::Init(bilingual_str& error)
         settings.setValue("enable_psbt_controls", false);
     }
     m_enable_psbt_controls = settings.value("enable_psbt_controls", false).toBool();
+
+    if (!settings.contains("enable_legacy_receive_address_types")) {
+        settings.setValue("enable_legacy_receive_address_types", false);
+    }
+    m_enable_legacy_receive_address_types = settings.value("enable_legacy_receive_address_types", false).toBool();
+
+    if (!settings.contains("enable_bech32x_orchard_receive_addresses")) {
+        settings.setValue("enable_bech32x_orchard_receive_addresses", false);
+    }
+    m_enable_bech32x_orchard_receive_addresses = settings.value("enable_bech32x_orchard_receive_addresses", false).toBool();
 
     // These are shared with the core or have a command-line parameter
     // and we want command-line parameters to overwrite the GUI settings.
@@ -471,6 +481,10 @@ QVariant OptionsModel::getOption(OptionID option, const std::string& suffix) con
         return fCoinControlFeatures;
     case EnablePSBTControls:
         return settings.value("enable_psbt_controls");
+    case EnableLegacyReceiveAddressTypes:
+        return m_enable_legacy_receive_address_types;
+    case EnableBech32xOrchardReceiveAddresses:
+        return m_enable_bech32x_orchard_receive_addresses;
     case Prune:
         return PruneEnabled(setting());
     case PruneSize:
@@ -509,9 +523,9 @@ QFont OptionsModel::getFontForMoney() const
     return getFontForChoice(m_font_money);
 }
 
-bool OptionsModel::setOption(OptionID option, const QVariant& value, const std::string& suffix)
+bool OptionsModel::setOption(OptionID option, const QVariant& value, const std::string& suffix, bool force_write)
 {
-    auto changed = [&] { return value.isValid() && value != getOption(option, suffix); };
+    auto changed = [&] { return force_write || (value.isValid() && value != getOption(option, suffix)); };
     auto update = [&](const common::SettingsValue& value) { return UpdateRwSetting(node(), option, suffix, value); };
 
     bool successful = true; /* set to false on parse error */
@@ -550,7 +564,7 @@ bool OptionsModel::setOption(OptionID option, const QVariant& value, const std::
     // default proxy
     case ProxyUse:
         if (changed()) {
-            if (suffix.empty() && !value.toBool()) setOption(option, true, "-prev");
+            if (suffix.empty() && !value.toBool()) setOption(option, true, "-prev", force_write);
             update(ProxyString(value.toBool(), getOption(ProxyIP).toString(), getOption(ProxyPort).toString()));
             if (suffix.empty() && value.toBool()) UpdateRwSetting(node(), option, "-prev", {});
             if (suffix.empty()) setRestartRequired(true);
@@ -559,7 +573,7 @@ bool OptionsModel::setOption(OptionID option, const QVariant& value, const std::
     case ProxyIP:
         if (changed()) {
             if (suffix.empty() && !getOption(ProxyUse).toBool()) {
-                setOption(option, value, "-prev");
+                setOption(option, value, "-prev", force_write);
             } else {
                 update(ProxyString(true, value.toString(), getOption(ProxyPort).toString()));
             }
@@ -569,7 +583,7 @@ bool OptionsModel::setOption(OptionID option, const QVariant& value, const std::
     case ProxyPort:
         if (changed()) {
             if (suffix.empty() && !getOption(ProxyUse).toBool()) {
-                setOption(option, value, "-prev");
+                setOption(option, value, "-prev", force_write);
             } else {
                 update(ProxyString(true, getOption(ProxyIP).toString(), value.toString()));
             }
@@ -580,7 +594,7 @@ bool OptionsModel::setOption(OptionID option, const QVariant& value, const std::
     // separate Tor proxy
     case ProxyUseTor:
         if (changed()) {
-            if (suffix.empty() && !value.toBool()) setOption(option, true, "-prev");
+            if (suffix.empty() && !value.toBool()) setOption(option, true, "-prev", force_write);
             update(ProxyString(value.toBool(), getOption(ProxyIPTor).toString(), getOption(ProxyPortTor).toString()));
             if (suffix.empty() && value.toBool()) UpdateRwSetting(node(), option, "-prev", {});
             if (suffix.empty()) setRestartRequired(true);
@@ -589,7 +603,7 @@ bool OptionsModel::setOption(OptionID option, const QVariant& value, const std::
     case ProxyIPTor:
         if (changed()) {
             if (suffix.empty() && !getOption(ProxyUseTor).toBool()) {
-                setOption(option, value, "-prev");
+                setOption(option, value, "-prev", force_write);
             } else {
                 update(ProxyString(true, value.toString(), getOption(ProxyPortTor).toString()));
             }
@@ -599,7 +613,7 @@ bool OptionsModel::setOption(OptionID option, const QVariant& value, const std::
     case ProxyPortTor:
         if (changed()) {
             if (suffix.empty() && !getOption(ProxyUseTor).toBool()) {
-                setOption(option, value, "-prev");
+                setOption(option, value, "-prev", force_write);
             } else {
                 update(ProxyString(true, getOption(ProxyIPTor).toString(), value.toString()));
             }
@@ -659,9 +673,19 @@ bool OptionsModel::setOption(OptionID option, const QVariant& value, const std::
         m_enable_psbt_controls = value.toBool();
         settings.setValue("enable_psbt_controls", m_enable_psbt_controls);
         break;
+    case EnableLegacyReceiveAddressTypes:
+        m_enable_legacy_receive_address_types = value.toBool();
+        settings.setValue("enable_legacy_receive_address_types", m_enable_legacy_receive_address_types);
+        Q_EMIT legacyReceiveAddressTypesChanged(m_enable_legacy_receive_address_types);
+        break;
+    case EnableBech32xOrchardReceiveAddresses:
+        m_enable_bech32x_orchard_receive_addresses = value.toBool();
+        settings.setValue("enable_bech32x_orchard_receive_addresses", m_enable_bech32x_orchard_receive_addresses);
+        Q_EMIT bech32xOrchardReceiveAddressesChanged(m_enable_bech32x_orchard_receive_addresses);
+        break;
     case Prune:
         if (changed()) {
-            if (suffix.empty() && !value.toBool()) setOption(option, true, "-prev");
+            if (suffix.empty() && !value.toBool()) setOption(option, true, "-prev", force_write);
             update(PruneSetting(value.toBool(), getOption(PruneSize).toInt()));
             if (suffix.empty() && value.toBool()) UpdateRwSetting(node(), option, "-prev", {});
             if (suffix.empty()) setRestartRequired(true);
@@ -670,7 +694,7 @@ bool OptionsModel::setOption(OptionID option, const QVariant& value, const std::
     case PruneSize:
         if (changed()) {
             if (suffix.empty() && !getOption(Prune).toBool()) {
-                setOption(option, value, "-prev");
+                setOption(option, value, "-prev", force_write);
             } else {
                 update(PruneSetting(true, ParsePruneSizeGB(value)));
             }
@@ -743,7 +767,7 @@ void OptionsModel::checkAndMigrate()
     if (settingsVersion < CLIENT_VERSION)
     {
         // -dbcache was bumped from 100 to 300 in 0.13
-        // see https://github.com/nito/nito/pull/8273
+        // see https://github.com/bitcoin/bitcoin/pull/8273
         // force people to upgrade to the new value if they are using 100MB
         if (settingsVersion < 130000 && settings.contains("nDatabaseCache") && settings.value("nDatabaseCache").toLongLong() == 100)
             settings.setValue("nDatabaseCache", (qint64)nDefaultDbCache);
@@ -770,14 +794,14 @@ void OptionsModel::checkAndMigrate()
         if (node().getPersistentSetting(SettingName(option)).isNull()) {
             if (option == ProxyIP) {
                 ProxySetting parsed = ParseProxyString(value.toString());
-                setOption(ProxyIP, parsed.ip);
-                setOption(ProxyPort, parsed.port);
+                setOption(ProxyIP, parsed.ip, "", /*force_write=*/true);
+                setOption(ProxyPort, parsed.port, "", /*force_write=*/true);
             } else if (option == ProxyIPTor) {
                 ProxySetting parsed = ParseProxyString(value.toString());
-                setOption(ProxyIPTor, parsed.ip);
-                setOption(ProxyPortTor, parsed.port);
+                setOption(ProxyIPTor, parsed.ip, "", /*force_write=*/true);
+                setOption(ProxyPortTor, parsed.port, "", /*force_write=*/true);
             } else {
-                setOption(option, value);
+                setOption(option, value, "", /*force_write=*/true);
             }
         }
         settings.remove(qt_name);

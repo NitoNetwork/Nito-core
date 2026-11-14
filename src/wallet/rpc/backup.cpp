@@ -22,13 +22,19 @@
 #include <uint256.h>
 #include <util/bip32.h>
 #include <util/fs.h>
+#include <util/strencodings.h>
+#include <util/string.h>
 #include <util/time.h>
 #include <util/translation.h>
+#include <wallet/bip39.h>
 #include <wallet/rpc/util.h>
 #include <wallet/wallet.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
+#include <limits>
+#include <optional>
 #include <tuple>
 #include <string>
 
@@ -694,7 +700,8 @@ RPCHelpMan dumpwallet()
                 "Imported scripts are included in the dumpfile, but corresponding BIP173 addresses, etc. may not be added automatically by importwallet.\n"
                 "Note that if your wallet contains keys which are not derived from your HD seed (e.g. imported keys), these are not covered by\n"
                 "only backing up the seed itself, and must be backed up too (e.g. ensure you back up the whole dumpfile).\n"
-                "Note: This command is only compatible with legacy wallets.\n",
+                "Note: This command is only compatible with legacy wallets. Use backupwallet to back up a descriptor wallet, or dumpmnemonic\n"
+                "together with the separate BIP39 passphrase when the wallet reports that one is required. dumpwallet never exports a BIP39 passphrase or Orchard authority.\n",
                 {
                     {"filename", RPCArg::Type::STR, RPCArg::Optional::NO, "The filename with path (absolute path recommended)"},
                 },
@@ -729,7 +736,7 @@ RPCHelpMan dumpwallet()
 
     /* Prevent arbitrary files from being overwritten. There have been reports
      * that users have overwritten wallet files this way:
-     * https://github.com/nito/nito/issues/9934
+     * https://github.com/bitcoin/bitcoin/issues/9934
      * It may also avoid other security issues.
      */
     if (fs::exists(filepath)) {
@@ -1448,6 +1455,12 @@ RPCHelpMan importmulti()
     };
 }
 
+static bool IsOrchardDescriptorString(const std::string& descriptor)
+{
+    const std::string payload = descriptor.substr(0, descriptor.find('#'));
+    return payload.rfind("or(", 0) == 0;
+}
+
 static UniValue ProcessDescriptorImport(CWallet& wallet, const UniValue& data, const int64_t timestamp) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
     UniValue warnings(UniValue::VARR);
@@ -1459,6 +1472,9 @@ static UniValue ProcessDescriptorImport(CWallet& wallet, const UniValue& data, c
         }
 
         const std::string& descriptor = data["desc"].get_str();
+        if (IsOrchardDescriptorString(descriptor)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Orchard or(...) descriptors are not supported by the generic descriptor import RPCs; use backupwallet and the scoped Orchard recovery phrase instead");
+        }
         const bool active = data.exists("active") ? data["active"].get_bool() : false;
         const bool internal = data.exists("internal") ? data["internal"].get_bool() : false;
         const std::string label{LabelFromValue(data["label"])};
@@ -1749,7 +1765,8 @@ RPCHelpMan listdescriptors()
 {
     return RPCHelpMan{
         "listdescriptors",
-        "\nList descriptors imported into a descriptor-enabled wallet.\n",
+        "\nList transparent descriptors imported into a descriptor-enabled wallet.\n"
+        "Use getprivatekeymaninfo true to export Orchard private descriptors.\n",
         {
             {"private", RPCArg::Type::BOOL, RPCArg::Default{false}, "Show private descriptors."}
         },
@@ -1780,16 +1797,21 @@ RPCHelpMan listdescriptors()
     const std::shared_ptr<const CWallet> wallet = GetWalletForJSONRPCRequest(request);
     if (!wallet) return UniValue::VNULL;
 
-    if (!wallet->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+    const bool priv = !request.params[0].isNull() && request.params[0].get_bool();
+    wallet->BlockUntilSyncedToCurrentChain();
+    if (!wallet->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS) && !priv) {
         throw JSONRPCError(RPC_WALLET_ERROR, "listdescriptors is not available for non-descriptor wallets");
     }
 
-    const bool priv = !request.params[0].isNull() && request.params[0].get_bool();
     if (priv) {
         EnsureWalletIsUnlocked(*wallet);
     }
 
     LOCK(wallet->cs_wallet);
+    const bool private_tx_active = IsPrivateTxActiveForWallet(*wallet);
+    if (priv && !wallet->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS) && !private_tx_active) {
+        throw JSONRPCError(RPC_WALLET_ERROR, PrivateTxActivationErrorMessage(*wallet));
+    }
 
     const auto active_spk_mans = wallet->GetActiveScriptPubKeyMans();
 
@@ -1803,26 +1825,28 @@ RPCHelpMan listdescriptors()
     };
 
     std::vector<WalletDescInfo> wallet_descriptors;
-    for (const auto& spk_man : wallet->GetAllScriptPubKeyMans()) {
-        const auto desc_spk_man = dynamic_cast<DescriptorScriptPubKeyMan*>(spk_man);
-        if (!desc_spk_man) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Unexpected ScriptPubKey manager type.");
+    if (wallet->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+        for (const auto& spk_man : wallet->GetAllScriptPubKeyMans()) {
+            const auto desc_spk_man = dynamic_cast<DescriptorScriptPubKeyMan*>(spk_man);
+            if (!desc_spk_man) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Unexpected ScriptPubKey manager type.");
+            }
+            LOCK(desc_spk_man->cs_desc_man);
+            const auto& wallet_descriptor = desc_spk_man->GetWalletDescriptor();
+            std::string descriptor;
+            if (!desc_spk_man->GetDescriptorString(descriptor, priv)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Can't get descriptor string.");
+            }
+            const bool is_range = wallet_descriptor.descriptor->IsRange();
+            wallet_descriptors.push_back({
+                descriptor,
+                wallet_descriptor.creation_time,
+                active_spk_mans.count(desc_spk_man) != 0,
+                wallet->IsInternalScriptPubKeyMan(desc_spk_man),
+                is_range ? std::optional(std::make_pair(wallet_descriptor.range_start, wallet_descriptor.range_end)) : std::nullopt,
+                wallet_descriptor.next_index
+            });
         }
-        LOCK(desc_spk_man->cs_desc_man);
-        const auto& wallet_descriptor = desc_spk_man->GetWalletDescriptor();
-        std::string descriptor;
-        if (!desc_spk_man->GetDescriptorString(descriptor, priv)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Can't get descriptor string.");
-        }
-        const bool is_range = wallet_descriptor.descriptor->IsRange();
-        wallet_descriptors.push_back({
-            descriptor,
-            wallet_descriptor.creation_time,
-            active_spk_mans.count(desc_spk_man) != 0,
-            wallet->IsInternalScriptPubKeyMan(desc_spk_man),
-            is_range ? std::optional(std::make_pair(wallet_descriptor.range_start, wallet_descriptor.range_end)) : std::nullopt,
-            wallet_descriptor.next_index
-        });
     }
 
     std::sort(wallet_descriptors.begin(), wallet_descriptors.end(), [](const auto& a, const auto& b) {

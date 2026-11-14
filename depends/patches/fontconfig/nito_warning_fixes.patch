@@ -1,0 +1,114 @@
+--- a/src/fcfreetype.c
++++ b/src/fcfreetype.c
+@@ -1719,8 +1719,8 @@
+      */
+     if (file[0] != ':')
+ 	canon_file = FcStrCanonFilename (file);
+-    else
+-	canon_file = file;
++    else if (!(canon_file = FcStrCopy (file)))
++	goto bail1;
+     if (canon_file && *canon_file && !FcPatternObjectAddString (pat, FC_FILE_OBJECT, canon_file))
+ 	goto bail1;
+ 
+--- a/src/fclang.c
++++ b/src/fclang.c
+@@ -174,7 +174,7 @@
+ FcLangNormalize (const FcChar8 *lang)
+ {
+     FcChar8 *result = NULL, *s, *orig;
+-    char    *territory, *encoding, *modifier;
++    char    *territory, *encoding, *modifier, *modifier_separator = NULL;
+     size_t   llen, tlen = 0, mlen = 0;
+ 
+     if (!lang || !*lang)
+@@ -221,8 +221,9 @@
+      */
+     modifier = strchr ((char *)s, '@');
+     if (modifier) {
+-	*modifier = 0;
+-	modifier++;
++	modifier_separator = modifier;
++	*modifier_separator = 0;
++	modifier = modifier_separator + 1;
+ 	mlen = strlen (modifier);
+     }
+     encoding = strchr ((char *)s, '.');
+@@ -232,6 +233,7 @@
+ 	if (modifier) {
+ 	    memmove (encoding, modifier, mlen + 1);
+ 	    modifier = encoding;
++	    modifier_separator = encoding - 1;
+ 	}
+     }
+     territory = strchr ((char *)s, '_');
+@@ -256,8 +258,8 @@
+     }
+     if (territory)
+ 	territory[-1] = '-';
+-    if (modifier)
+-	modifier[-1] = '@';
++    if (modifier_separator)
++	*modifier_separator = '@';
+     orig = FcStrDowncase (s);
+     if (!orig)
+ 	goto bail0;
+@@ -266,8 +268,10 @@
+ 	    printf ("Checking the existence of %s.orth\n", s);
+ 	if (FcLangSetIndex (s) < 0) {
+ 	    memmove (territory - 1, territory + tlen, (mlen > 0 ? mlen + 1 : 0) + 1);
+-	    if (modifier)
++	    if (modifier) {
+ 		modifier = territory;
++		modifier_separator = territory - 1;
++	    }
+ 	} else {
+ 	    result = s;
+ 	    /* we'll miss the opportunity to reduce the correct size
+@@ -280,8 +284,8 @@
+     if (modifier) {
+ 	if (FcDebug() & FC_DBG_LANGSET)
+ 	    printf ("Checking the existence of %s.orth\n", s);
+-	if (FcLangSetIndex (s) < 0)
+-	    modifier[-1] = 0;
++	if (FcLangSetIndex (s) < 0 && modifier_separator)
++	    *modifier_separator = 0;
+ 	else {
+ 	    result = s;
+ 	    /* we'll miss the opportunity to reduce the correct size
+--- a/src/fcxml.c
++++ b/src/fcxml.c
+@@ -3331,7 +3331,16 @@
+ 	    char ebuf[BUFSIZ + 1];
+ 
+ #if HAVE_STRERROR_R
+-	    strerror_r (errno_, ebuf, BUFSIZ);
++#if defined(__GLIBC__) && defined(_GNU_SOURCE)
++	    {
++		char *tmp = strerror_r (errno_, ebuf, BUFSIZ);
++		if (tmp != ebuf)
++		    snprintf (ebuf, BUFSIZ, "%s", tmp);
++	    }
++#else
++	    if (strerror_r (errno_, ebuf, BUFSIZ) != 0)
++		snprintf (ebuf, BUFSIZ, "errno %d", errno_);
++#endif
+ #elif HAVE_STRERROR
+ 	    char  *tmp = strerror (errno_);
+ 	    size_t len = strlen (tmp);
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -51,7 +51,12 @@
+ 
+ 
+ 
+-fcobjshash_h = cc.preprocess('fcobjshash.gperf.h', include_directories: incbase)
++fcobjshash_preprocessor_input = configure_file(
++  input: 'fcobjshash.gperf.h',
++  output: 'fcobjshash.gperf.c',
++  copy: true,
++)
++fcobjshash_h = cc.preprocess(fcobjshash_preprocessor_input, include_directories: incbase)
+ fcobjshash_gperf = custom_target(
+   input: fcobjshash_h,
+   output: 'fcobjshash.gperf',

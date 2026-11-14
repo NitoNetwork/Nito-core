@@ -85,7 +85,7 @@ bool BaseIndex::Init()
     m_interrupt.reset();
 
     // m_chainstate member gives indexing code access to node internals. It is
-    // removed in followup https://github.com/nito/nito/pull/24230
+    // removed in followup https://github.com/bitcoin/bitcoin/pull/24230
     m_chainstate = WITH_LOCK(::cs_main,
         return &m_chain->context()->chainman->GetChainstateForIndexing());
     // Register to validation interface before setting the 'm_synced' flag, so that
@@ -96,6 +96,7 @@ bool BaseIndex::Init()
     if (!GetDB().ReadBestBlock(locator)) {
         locator.SetNull();
     }
+    m_recovered_from_locator = false;
 
     LOCK(cs_main);
     CChain& index_chain = m_chainstate->m_chain;
@@ -107,7 +108,13 @@ bool BaseIndex::Init()
         // best chain, we will rewind to the fork point during index sync
         const CBlockIndex* locator_index{m_chainstate->m_blockman.LookupBlockIndex(locator.vHave.at(0))};
         if (!locator_index) {
-            return InitError(strprintf(Untranslated("%s: best block of the index not found. Please rebuild the index."), GetName()));
+            locator_index = m_chainstate->FindForkInGlobalIndex(locator);
+            if (!locator_index) {
+                return InitError(strprintf(Untranslated("%s: no durable block from the index locator was found. Please rebuild the index."), GetName()));
+            }
+            m_recovered_from_locator = true;
+            LogPrintf("%s: newest locator block was not durable; recovering from ancestor %s at height %d\n",
+                      GetName(), locator_index->GetBlockHash().ToString(), locator_index->nHeight);
         }
         SetBestBlockIndex(locator_index);
     }
@@ -117,6 +124,7 @@ bool BaseIndex::Init()
     if (!CustomInit(start_block ? std::make_optional(interfaces::BlockKey{start_block->GetBlockHash(), start_block->nHeight}) : std::nullopt)) {
         return false;
     }
+    start_block = m_best_block_index.load();
 
     // Note: this will latch to true immediately if the user starts up with an empty
     // datadir and an index enabled. If this is the case, indexation will happen solely
@@ -146,8 +154,9 @@ void BaseIndex::ThreadSync()
 {
     const CBlockIndex* pindex = m_best_block_index.load();
     if (!m_synced) {
-        std::chrono::steady_clock::time_point last_log_time{0s};
-        std::chrono::steady_clock::time_point last_locator_write_time{0s};
+        const auto now{std::chrono::steady_clock::now()};
+        std::chrono::steady_clock::time_point last_log_time{now};
+        std::chrono::steady_clock::time_point last_locator_write_time{now};
         while (true) {
             if (m_interrupt) {
                 LogPrintf("%s: m_interrupt set; exiting ThreadSync\n", GetName());
@@ -164,10 +173,12 @@ void BaseIndex::ThreadSync()
                 LOCK(cs_main);
                 const CBlockIndex* pindex_next = NextSyncBlock(pindex, m_chainstate->m_chain);
                 if (!pindex_next) {
+                    if (!Commit(pindex)) {
+                        FatalErrorf("%s: Failed to commit synchronized index %s", __func__, GetName());
+                        return;
+                    }
                     SetBestBlockIndex(pindex);
                     m_synced = true;
-                    // No need to handle errors in Commit. See rationale above.
-                    Commit();
                     break;
                 }
                 if (pindex_next->pprev != pindex && !Rewind(pindex, pindex_next->pprev)) {
@@ -206,6 +217,14 @@ void BaseIndex::ThreadSync()
                            __func__, pindex->GetBlockHash().ToString());
                 return;
             }
+            if (CommitOnAppend()) {
+                if (!Commit(pindex)) {
+                    FatalErrorf("%s: Failed to atomically commit block %s to index %s",
+                               __func__, pindex->GetBlockHash().ToString(), GetName());
+                    return;
+                }
+                SetBestBlockIndex(pindex);
+            }
         }
     }
 
@@ -218,14 +237,19 @@ void BaseIndex::ThreadSync()
 
 bool BaseIndex::Commit()
 {
+    return Commit(m_best_block_index.load());
+}
+
+bool BaseIndex::Commit(const CBlockIndex* block)
+{
     // Don't commit anything if we haven't indexed any block yet
     // (this could happen if init is interrupted).
-    bool ok = m_best_block_index != nullptr;
+    bool ok = block != nullptr;
     if (ok) {
         CDBBatch batch(GetDB());
         ok = CustomCommit(batch);
         if (ok) {
-            GetDB().WriteBestBlock(batch, GetLocator(*m_chain, m_best_block_index.load()->GetBlockHash()));
+            GetDB().WriteBestBlock(batch, GetLocator(*m_chain, block->GetBlockHash()));
             ok = GetDB().WriteBatch(batch);
         }
     }
@@ -249,12 +273,10 @@ bool BaseIndex::Rewind(const CBlockIndex* current_tip, const CBlockIndex* new_ti
     // out of sync may be possible but a users fault.
     // In case we reorg beyond the pruned depth, ReadBlockFromDisk would
     // throw and lead to a graceful shutdown
-    SetBestBlockIndex(new_tip);
-    if (!Commit()) {
-        // If commit fails, revert the best block index to avoid corruption.
-        SetBestBlockIndex(current_tip);
+    if (!Commit(new_tip)) {
         return false;
     }
+    SetBestBlockIndex(new_tip);
 
     return true;
 }
@@ -304,6 +326,11 @@ void BaseIndex::BlockConnected(ChainstateRole role, const std::shared_ptr<const 
     }
     interfaces::BlockInfo block_info = kernel::MakeBlockInfo(pindex, block.get());
     if (CustomAppend(block_info)) {
+        if (CommitOnAppend() && !Commit(pindex)) {
+            FatalErrorf("%s: Failed to atomically commit block %s to index %s",
+                       __func__, pindex->GetBlockHash().ToString(), GetName());
+            return;
+        }
         // Setting the best block index is intentionally the last step of this
         // function, so BlockUntilSyncedToCurrentChain callers waiting for the
         // best block index to be updated can rely on the block being fully
@@ -313,6 +340,30 @@ void BaseIndex::BlockConnected(ChainstateRole role, const std::shared_ptr<const 
         FatalErrorf("%s: Failed to write block %s to index",
                    __func__, pindex->GetBlockHash().ToString());
         return;
+    }
+}
+
+void BaseIndex::BlockDisconnected(const std::shared_ptr<const CBlock>& block, const CBlockIndex* pindex)
+{
+    (void)block;
+
+    if (!m_synced) {
+        return;
+    }
+
+    const CBlockIndex* best_block_index = m_best_block_index.load();
+    if (best_block_index != pindex) {
+        return;
+    }
+
+    if (!pindex->pprev) {
+        SetBestBlockIndex(nullptr);
+        return;
+    }
+
+    if (!Rewind(pindex, pindex->pprev)) {
+        FatalErrorf("%s: Failed to rewind index %s after disconnecting block %s",
+                   __func__, GetName(), pindex->GetBlockHash().ToString());
     }
 }
 

@@ -7,6 +7,7 @@
 #define BITCOIN_KERNEL_MEMPOOL_ENTRY_H
 
 #include <consensus/amount.h>
+#include <consensus/private_tx_verify.h>
 #include <consensus/validation.h>
 #include <core_memusage.h>
 #include <policy/policy.h>
@@ -140,7 +141,10 @@ public:
     const CAmount& GetFee() const { return nFee; }
     int32_t GetTxSize() const
     {
-        return GetVirtualTransactionSize(nTxWeight, sigOpCost, ::nBytesPerSigOp);
+        const int64_t private_cost{tx->HasPrivateBundle()
+            ? GetPrivateOrchardVerificationCost(tx->m_private_bundle->effects.actions.size())
+            : 0};
+        return GetVirtualTransactionSize(nTxWeight, sigOpCost, ::nBytesPerSigOp, private_cost);
     }
     int32_t GetTxWeight() const { return nTxWeight; }
     std::chrono::seconds GetTime() const { return std::chrono::seconds{nTime}; }

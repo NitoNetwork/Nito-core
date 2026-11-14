@@ -7,6 +7,7 @@
 #include <consensus/tx_check.h>
 #include <consensus/validation.h>
 #include <hash.h>
+#include <primitives/private_transaction.h>
 #include <script/interpreter.h>
 #include <script/script.h>
 #include <serialize.h>
@@ -17,7 +18,9 @@
 #include <test/util/setup_common.h>
 #include <util/strencodings.h>
 
+#include <array>
 #include <iostream>
+#include <vector>
 
 #include <boost/test/unit_test.hpp>
 
@@ -116,6 +119,223 @@ void static RandomTransaction(CMutableTransaction& tx, bool fSingle)
 }
 
 BOOST_FIXTURE_TEST_SUITE(sighash_tests, BasicTestingSetup)
+
+namespace {
+
+CPrivateBundle MakePrivateSighashBundle()
+{
+    CPrivateActionEffects action;
+    action.cv = uint256S("01");
+    action.nullifier = uint256S("02");
+    action.rk = uint256S("03");
+    action.cmx = uint256S("04");
+    action.ephemeral_key.assign(PRIVATE_ORCHARD_EPHEMERAL_KEY_SIZE, 0x05);
+    action.enc_ciphertext.assign(PRIVATE_ORCHARD_ENC_CIPHERTEXT_SIZE, 0x06);
+    action.out_ciphertext.assign(PRIVATE_ORCHARD_OUT_CIPHERTEXT_SIZE, 0x07);
+
+    CPrivateBundle bundle;
+    bundle.effects.anchor = uint256S("08");
+    bundle.effects.value_balance = 9;
+    bundle.effects.actions.push_back(std::move(action));
+    return bundle;
+}
+
+std::vector<CPrivateBundle> MakePrivateSighashMutations(const CPrivateBundle& original)
+{
+    std::vector<CPrivateBundle> mutations;
+    auto add = [&](auto&& mutate) {
+        CPrivateBundle changed{original};
+        mutate(changed.effects);
+        BOOST_REQUIRE(changed.GetEffectsHash() != original.GetEffectsHash());
+        mutations.push_back(std::move(changed));
+    };
+
+    add([](CPrivateEffects& effects) { ++effects.version; });
+    add([](CPrivateEffects& effects) { effects.flags ^= PRIVATE_ORCHARD_OUTPUTS_ENABLED; });
+    add([](CPrivateEffects& effects) { effects.anchor = uint256S("09"); });
+    add([](CPrivateEffects& effects) { ++effects.value_balance; });
+    add([](CPrivateEffects& effects) { ++effects.actions[0].version; });
+    add([](CPrivateEffects& effects) { effects.actions[0].cv = uint256S("0a"); });
+    add([](CPrivateEffects& effects) { effects.actions[0].nullifier = uint256S("0b"); });
+    add([](CPrivateEffects& effects) { effects.actions[0].rk = uint256S("0c"); });
+    add([](CPrivateEffects& effects) { effects.actions[0].cmx = uint256S("0d"); });
+    add([](CPrivateEffects& effects) { effects.actions[0].ephemeral_key[0] ^= 1; });
+    add([](CPrivateEffects& effects) { effects.actions[0].enc_ciphertext[0] ^= 1; });
+    add([](CPrivateEffects& effects) { effects.actions[0].out_ciphertext[0] ^= 1; });
+    return mutations;
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(private_effects_are_bound_by_all_transparent_sighashes)
+{
+    CMutableTransaction tx;
+    tx.nVersion = 2;
+    tx.nLockTime = 10;
+    tx.vin.emplace_back(COutPoint{Txid::FromUint256(uint256S("11")), 0}, CScript{}, 12);
+    tx.vout.emplace_back(13, CScript{} << OP_TRUE);
+    tx.m_private_bundle = MakePrivateSighashBundle();
+
+    const CTxOut spent_output{14, CScript{} << OP_1 << std::vector<unsigned char>(32, 0x15)};
+    PrecomputedTransactionData txdata;
+    txdata.Init(tx, std::vector<CTxOut>{spent_output}, /*force=*/true);
+
+    CMutableTransaction auth_changed{tx};
+    auth_changed.m_private_bundle->auth.emplace();
+    auth_changed.m_private_bundle->auth->actions_auth.resize(1);
+    auth_changed.m_private_bundle->auth->actions_auth[0].spend_auth_sig.assign(PRIVATE_ORCHARD_RED_PALLAS_SIG_SIZE, 0x16);
+    auth_changed.m_private_bundle->auth->proof.assign(PrivateOrchardExpectedProofSize(1), 0x17);
+    auth_changed.m_private_bundle->auth->binding_sig.assign(PRIVATE_ORCHARD_RED_PALLAS_SIG_SIZE, 0x18);
+
+    const std::array<int, 6> ecdsa_hash_types{
+        SIGHASH_ALL,
+        SIGHASH_NONE,
+        SIGHASH_SINGLE,
+        SIGHASH_ALL | SIGHASH_ANYONECANPAY,
+        SIGHASH_NONE | SIGHASH_ANYONECANPAY,
+        SIGHASH_SINGLE | SIGHASH_ANYONECANPAY,
+    };
+    const std::array<uint8_t, 7> taproot_hash_types{
+        SIGHASH_DEFAULT,
+        SIGHASH_ALL,
+        SIGHASH_NONE,
+        SIGHASH_SINGLE,
+        SIGHASH_ALL | SIGHASH_ANYONECANPAY,
+        SIGHASH_NONE | SIGHASH_ANYONECANPAY,
+        SIGHASH_SINGLE | SIGHASH_ANYONECANPAY,
+    };
+    const CScript script_code{CScript{} << OP_DUP << OP_TRUE};
+    const auto mutations{MakePrivateSighashMutations(*tx.m_private_bundle)};
+
+    for (const SigVersion sig_version : {SigVersion::BASE, SigVersion::WITNESS_V0}) {
+        for (const int hash_type : ecdsa_hash_types) {
+            const uint256 original{SignatureHash(script_code, tx, 0, hash_type, spent_output.nValue, sig_version, &txdata)};
+            const uint256 auth_only{SignatureHash(script_code, auth_changed, 0, hash_type, spent_output.nValue, sig_version)};
+            BOOST_CHECK_EQUAL(original, auth_only);
+
+            SigHashCache cache;
+            BOOST_CHECK_EQUAL(original, SignatureHash(script_code, tx, 0, hash_type, spent_output.nValue, sig_version, &txdata, &cache));
+            BOOST_CHECK_EQUAL(original, SignatureHash(script_code, tx, 0, hash_type, spent_output.nValue, sig_version, &txdata, &cache));
+
+            for (const CPrivateBundle& mutation : mutations) {
+                CMutableTransaction changed{tx};
+                changed.m_private_bundle = mutation;
+                BOOST_CHECK_NE(original, SignatureHash(script_code, changed, 0, hash_type, spent_output.nValue, sig_version));
+            }
+        }
+    }
+
+    for (const uint8_t hash_type : taproot_hash_types) {
+        ScriptExecutionData original_exec;
+        original_exec.m_annex_init = true;
+        original_exec.m_annex_present = false;
+        uint256 original;
+        BOOST_REQUIRE(SignatureHashSchnorr(original, original_exec, tx, 0, hash_type, SigVersion::TAPROOT, txdata, MissingDataBehavior::FAIL));
+
+        PrecomputedTransactionData auth_data;
+        auth_data.Init(auth_changed, std::vector<CTxOut>{spent_output}, /*force=*/true);
+        ScriptExecutionData auth_exec;
+        auth_exec.m_annex_init = true;
+        auth_exec.m_annex_present = false;
+        uint256 auth_only;
+        BOOST_REQUIRE(SignatureHashSchnorr(auth_only, auth_exec, auth_changed, 0, hash_type, SigVersion::TAPROOT, auth_data, MissingDataBehavior::FAIL));
+        BOOST_CHECK_EQUAL(original, auth_only);
+
+        for (const CPrivateBundle& mutation : mutations) {
+            CMutableTransaction changed{tx};
+            changed.m_private_bundle = mutation;
+            PrecomputedTransactionData changed_data;
+            changed_data.Init(changed, std::vector<CTxOut>{spent_output}, /*force=*/true);
+            ScriptExecutionData changed_exec;
+            changed_exec.m_annex_init = true;
+            changed_exec.m_annex_present = false;
+            uint256 changed_hash;
+            BOOST_REQUIRE(SignatureHashSchnorr(changed_hash, changed_exec, changed, 0, hash_type, SigVersion::TAPROOT, changed_data, MissingDataBehavior::FAIL));
+            BOOST_CHECK_NE(original, changed_hash);
+        }
+    }
+
+    CMutableTransaction single_without_output{tx};
+    single_without_output.vout.clear();
+    const uint256 single_original{SignatureHash(script_code, single_without_output, 0, SIGHASH_SINGLE, spent_output.nValue, SigVersion::BASE)};
+    BOOST_CHECK_NE(single_original, uint256::ONE);
+    for (const CPrivateBundle& mutation : mutations) {
+        CMutableTransaction changed{single_without_output};
+        changed.m_private_bundle = mutation;
+        BOOST_CHECK_NE(single_original, SignatureHash(script_code, changed, 0, SIGHASH_SINGLE, spent_output.nValue, SigVersion::BASE));
+    }
+}
+
+BOOST_AUTO_TEST_CASE(sighash_midstate_cache_matches_uncached)
+{
+    CMutableTransaction tx;
+    tx.vin.emplace_back(COutPoint{Txid::FromUint256(uint256::ONE), 0});
+    tx.vout.emplace_back(42, CScript{} << OP_TRUE);
+    const CScript script_a{CScript{} << OP_DUP << OP_TRUE};
+    const CScript script_b{CScript{} << OP_DROP << OP_TRUE};
+    const std::array<int, 10> hash_types{
+        SIGHASH_ALL,
+        SIGHASH_NONE,
+        SIGHASH_SINGLE,
+        SIGHASH_ALL | SIGHASH_ANYONECANPAY,
+        SIGHASH_NONE | SIGHASH_ANYONECANPAY,
+        SIGHASH_SINGLE | SIGHASH_ANYONECANPAY,
+        0x21,
+        0x42,
+        0x63,
+        0x83,
+    };
+
+    for (const SigVersion sig_version : {SigVersion::BASE, SigVersion::WITNESS_V0}) {
+        SigHashCache cache;
+        for (const int hash_type : hash_types) {
+            for (const CScript* script : {&script_a, &script_b}) {
+                const uint256 expected{SignatureHash(*script, tx, 0, hash_type, 42, sig_version)};
+                BOOST_CHECK(SignatureHash(*script, tx, 0, hash_type, 42, sig_version, nullptr, &cache) == expected);
+                // Exercise the cache-hit path as well as the initial store.
+                BOOST_CHECK(SignatureHash(*script, tx, 0, hash_type, 42, sig_version, nullptr, &cache) == expected);
+            }
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(witness_paths_do_not_mix_base_and_witness_sighash_cache)
+{
+    struct TrackingSignatureChecker final : BaseSignatureChecker {
+        mutable int base_checks{0};
+        mutable int witness_checks{0};
+
+        bool CheckECDSASignature(const std::vector<unsigned char>&,
+                                 const std::vector<unsigned char>&,
+                                 const CScript&,
+                                 SigVersion sigversion) const override
+        {
+            if (sigversion == SigVersion::BASE) ++base_checks;
+            if (sigversion == SigVersion::WITNESS_V0) ++witness_checks;
+            return true;
+        }
+    };
+
+    std::vector<unsigned char> pubkey(33, 0x11);
+    pubkey.front() = 0x02;
+    const std::vector<unsigned char> signature{0x01};
+    const CScript witness_program{CScript{} << OP_0 << ToByteVector(Hash160(pubkey))};
+    const CScript p2sh_program{CScript{} << OP_HASH160 << ToByteVector(Hash160(witness_program)) << OP_EQUAL};
+    CScriptWitness witness;
+    witness.stack = {signature, pubkey};
+    constexpr unsigned int flags{SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS};
+
+    for (const auto& [script_sig, script_pubkey] : std::array<std::pair<CScript, CScript>, 2>{
+             std::pair{CScript{}, witness_program},
+             std::pair{CScript{} << ToByteVector(witness_program), p2sh_program},
+         }) {
+        TrackingSignatureChecker checker;
+        ScriptError error;
+        BOOST_REQUIRE(VerifyScript(script_sig, script_pubkey, &witness, flags, checker, &error));
+        BOOST_CHECK_EQUAL(checker.base_checks, 0);
+        BOOST_CHECK_EQUAL(checker.witness_checks, 1);
+    }
+}
 
 BOOST_AUTO_TEST_CASE(sighash_test)
 {

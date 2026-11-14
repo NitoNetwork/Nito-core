@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 
@@ -30,6 +31,12 @@ void ApplyArgsManOptions(const ArgsManager& argsman, ValidationCacheSizes& cache
             .signature_cache_bytes = clamped_size_each,
             .script_execution_cache_bytes = clamped_size_each,
         };
+    }
+    if (auto max_size = argsman.GetIntArg("-maxorchardproofcachesize")) {
+        const uint64_t clamped_mib{static_cast<uint64_t>(std::max<int64_t>(*max_size, 0))};
+        cache_sizes.private_orchard_proof_cache_bytes = clamped_mib > (std::numeric_limits<size_t>::max() >> 20)
+            ? std::numeric_limits<size_t>::max()
+            : static_cast<size_t>(clamped_mib) << 20;
     }
 }
 } // namespace node

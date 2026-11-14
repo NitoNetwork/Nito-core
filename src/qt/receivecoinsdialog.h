@@ -27,7 +27,7 @@ QT_BEGIN_NAMESPACE
 class QModelIndex;
 QT_END_NAMESPACE
 
-/** Dialog for requesting payment of nitos */
+/** Dialog for requesting payment of NITO */
 class ReceiveCoinsDialog : public QDialog
 {
     Q_OBJECT
@@ -61,6 +61,7 @@ private:
 
     QModelIndex selectedRow();
     void copyColumnToClipboard(int column);
+    void updateAddressTypes();
 
 private Q_SLOTS:
     void on_receiveButton_clicked();

@@ -7,11 +7,14 @@
 #define BITCOIN_QT_WALLETMODELTRANSACTION_H
 
 #include <primitives/transaction.h>
+#include <psbt.h>
 #include <qt/sendcoinsrecipient.h>
 
 #include <consensus/amount.h>
 
 #include <QObject>
+
+#include <vector>
 
 class SendCoinsRecipient;
 
@@ -38,11 +41,17 @@ public:
     CAmount getTotalTransactionAmount() const;
 
     void reassignAmounts(int nChangePosRet); // needed for the subtract-fee-from-amount feature
+    bool isPrivatePSBTDraft() const;
+    void setPrivatePSBTDraft(bool value);
+    const std::vector<PSBTProprietary>& getPrivatePSBTRecords() const;
+    void setPrivatePSBTRecords(std::vector<PSBTProprietary> records);
 
 private:
     QList<SendCoinsRecipient> recipients;
     CTransactionRef wtx;
     CAmount fee{0};
+    bool private_psbt_draft{false};
+    std::vector<PSBTProprietary> private_psbt_records;
 };
 
 #endif // BITCOIN_QT_WALLETMODELTRANSACTION_H

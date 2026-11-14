@@ -13,11 +13,13 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 #include <QMessageBox>
 #include <QMutex>
+#include <QPointer>
 #include <QProgressDialog>
 #include <QThread>
 #include <QTimer>
@@ -58,7 +60,8 @@ public:
     WalletController(ClientModel& client_model, const PlatformStyle* platform_style, QObject* parent);
     ~WalletController();
 
-    WalletModel* getOrCreateWallet(std::unique_ptr<interfaces::Wallet> wallet);
+    WalletModel* getOrCreateWallet(std::unique_ptr<interfaces::Wallet> wallet, bool publish = true);
+    void publishWallet(WalletModel* wallet_model);
 
     //! Returns all wallet names in the wallet dir mapped to whether the wallet
     //! is loaded.
@@ -84,6 +87,7 @@ private:
     OptionsModel* const m_options_model;
     mutable QMutex m_mutex;
     std::vector<WalletModel*> m_wallets;
+    std::set<WalletModel*> m_published_wallets;
     std::unique_ptr<interfaces::Handler> m_handler_load_wallet;
 
     friend class WalletControllerActivity;
@@ -106,12 +110,16 @@ protected:
     QObject* worker() const { return m_wallet_controller->m_activity_worker; }
 
     void showProgressDialog(const QString& title_text, const QString& label_text, bool show_minimized=false);
+    void updateProgressDialog(const QString& status_text, int progress);
+    void removeWalletModel(WalletModel* wallet_model);
 
     WalletController* const m_wallet_controller;
     QWidget* const m_parent_widget;
     WalletModel* m_wallet_model{nullptr};
     bilingual_str m_error_message;
     std::vector<bilingual_str> m_warning_message;
+    QPointer<QProgressDialog> m_progress_dialog;
+    QString m_progress_label_text;
 };
 
 
@@ -133,7 +141,11 @@ private:
     void createWallet();
     void finish();
 
-    SecureString m_passphrase;
+    SecureString m_wallet_passphrase;
+    SecureString m_mnemonic;
+    SecureString m_bip39_passphrase;
+    bool m_restoring{false};
+    bool m_restore_from_mnemonic{false};
     CreateWalletDialog* m_create_wallet_dialog{nullptr};
     AskPassphraseDialog* m_passphrase_dialog{nullptr};
 };

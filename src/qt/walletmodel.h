@@ -13,6 +13,9 @@
 #include <interfaces/wallet.h>
 #include <support/allocators/secure.h>
 
+#include <memory>
+#include <optional>
+#include <functional>
 #include <vector>
 
 #include <QObject>
@@ -60,7 +63,6 @@ public:
         InvalidAddress,
         AmountExceedsBalance,
         AmountWithFeeExceedsBalance,
-        DuplicateAddress,
         TransactionCreationFailed, // Error returned when wallet is still locked
         AbsurdFee
     };
@@ -79,9 +81,16 @@ public:
     RecentRequestsTableModel* getRecentRequestsTableModel() const;
 
     EncryptionStatus getEncryptionStatus() const;
+    bool isDisplayAuthorized() const { return m_display_authorized; }
+    void setDisplayAuthorized(bool authorized);
+    util::Result<std::string> getNewPrivateAddress(bool internal);
 
     // Check address for validity
     bool validateAddress(const QString& address) const;
+    bool isPrivateAddress(const QString& address) const;
+    bool privateTxActive() const;
+    bool privateTxUiEnabled() const;
+    int privateTxActivationHeight() const;
 
     // Return status record for SendCoins, contains error id + information
     struct SendCoinsReturn
@@ -99,19 +108,22 @@ public:
     SendCoinsReturn prepareTransaction(WalletModelTransaction &transaction, const wallet::CCoinControl& coinControl);
 
     // Send coins to a list of recipients
-    void sendCoins(WalletModelTransaction& transaction);
+    bool sendCoins(WalletModelTransaction& transaction);
 
     // Wallet encryption
     bool setWalletEncrypted(const SecureString& passphrase);
     // Passphrase only needed when unlocking
-    bool setWalletLocked(bool locked, const SecureString &passPhrase=SecureString());
+    bool setWalletLocked(bool locked, const SecureString& passphrase = SecureString(), bilingual_str* error = nullptr);
+    bool setWalletLockedForDisplay();
     bool changePassphrase(const SecureString &oldPass, const SecureString &newPass);
+    bool getHDSeedMnemonic(QString& mnemonic, QString& error) const;
+    bool isBIP39PassphraseEnabled() const;
 
     // RAII object for unlocking wallet, returned by requestUnlock()
     class UnlockContext
     {
     public:
-        UnlockContext(WalletModel *wallet, bool valid, bool relock);
+        UnlockContext(std::shared_ptr<interfaces::Wallet> wallet, bool valid, bool relock, bool relock_for_display);
         ~UnlockContext();
 
         bool isValid() const { return valid; }
@@ -123,12 +135,35 @@ public:
         UnlockContext& operator=(UnlockContext&&) = delete;
 
     private:
-        WalletModel *wallet;
+        std::shared_ptr<interfaces::Wallet> wallet;
         const bool valid;
         const bool relock;
+        const bool relock_for_display;
     };
 
     UnlockContext requestUnlock();
+    std::unique_ptr<UnlockContext> requestUnlockContext();
+
+    /** A private transaction preparation that may run outside the GUI thread.
+     * The task itself never calls Qt. Its result must be consumed on the GUI
+     * thread with finishPrepareTransaction().
+     */
+    class PrepareTransactionTask;
+    struct AsyncPrepareTransaction {
+        SendCoinsReturn status;
+        std::shared_ptr<PrepareTransactionTask> task;
+    };
+    AsyncPrepareTransaction prepareTransactionAsync(WalletModelTransaction& transaction,
+                                                     const wallet::CCoinControl& coin_control,
+                                                     std::shared_ptr<UnlockContext> unlock_context);
+    std::optional<SendCoinsReturn> finishPrepareTransaction(const std::shared_ptr<PrepareTransactionTask>& task,
+                                                             WalletModelTransaction& transaction);
+    void cancelPrepareTransaction(const std::shared_ptr<PrepareTransactionTask>& task);
+    void cancelAndJoinPrepareTransaction(const std::shared_ptr<PrepareTransactionTask>& task);
+    bool isPrepareTransactionFinished(const std::shared_ptr<PrepareTransactionTask>& task) const;
+
+    // Test seam used to hold an async preparation without invoking Qt off-thread.
+    void setPrepareTransactionTestHook(std::function<void()> hook);
 
     bool bumpFee(uint256 hash, uint256& new_hash);
     bool displayAddress(std::string sAddress) const;
@@ -155,9 +190,12 @@ public:
     // If coin control has selected outputs, searches the total amount inside the wallet.
     // Otherwise, uses the wallet's cached available balance.
     CAmount getAvailableBalance(const wallet::CCoinControl* control);
+    CAmount getMaximumSingleTransactionAmount(const QList<SendCoinsRecipient>& recipients, int recipient_index, const wallet::CCoinControl& coin_control, CAmount upper_bound);
 
 private:
-    std::unique_ptr<interfaces::Wallet> m_wallet;
+    std::shared_ptr<interfaces::Wallet> m_wallet;
+    std::vector<std::shared_ptr<PrepareTransactionTask>> m_prepare_tasks;
+    std::function<void()> m_prepare_transaction_test_hook;
     std::unique_ptr<interfaces::Handler> m_handler_unload;
     std::unique_ptr<interfaces::Handler> m_handler_status_changed;
     std::unique_ptr<interfaces::Handler> m_handler_address_book_changed;
@@ -170,6 +208,8 @@ private:
 
     bool fHaveWatchOnly;
     bool fForceCheckBalanceChanged{false};
+    bool m_cached_private_tx_active{false};
+    bool m_display_authorized{false};
 
     // Wallet has an options model for wallet-specific options
     // (transaction fee, for example)
@@ -190,10 +230,13 @@ private:
     void subscribeToCoreSignals();
     void unsubscribeFromCoreSignals();
     void checkBalanceChanged(const interfaces::WalletBalances& new_balances);
+    void checkPrivateTxActivationChanged();
+    bool privateWalletIndexAvailable() const;
 
 Q_SIGNALS:
     // Signal that balance in wallet changed
     void balanceChanged(const interfaces::WalletBalances& balances);
+    void privateTxActivationChanged(bool active);
 
     // Encryption status of wallet changed
     void encryptionStatusChanged();
@@ -237,6 +280,8 @@ public Q_SLOTS:
     void updateWatchOnlyFlag(bool fHaveWatchonly);
     /* Current, immature or unconfirmed balance might have changed - emit 'balanceChanged' if so */
     void pollBalanceChanged();
+    /* Force a direct balance refresh after wallet state is updated without a tx signal */
+    void forceBalanceUpdate();
 };
 
 #endif // BITCOIN_QT_WALLETMODEL_H

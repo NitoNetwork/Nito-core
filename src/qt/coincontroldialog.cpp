@@ -29,6 +29,9 @@
 #include <QSettings>
 #include <QTreeWidget>
 
+#include <algorithm>
+#include <map>
+
 using wallet::CCoinControl;
 
 QList<CAmount> CoinControlDialog::payAmounts;
@@ -121,6 +124,10 @@ CoinControlDialog::CoinControlDialog(CCoinControl& coin_control, WalletModel* _m
 
     if(_model->getOptionsModel() && _model->getAddressTableModel())
     {
+        if (!_model->privateTxUiEnabled() && m_coin_control.m_private_tx_source == CCoinControl::PrivateTxSource::PRIVATE_NOTES) {
+            m_coin_control.UnSelectAll();
+            m_coin_control.m_private_tx_source = CCoinControl::PrivateTxSource::AUTO;
+        }
         updateView();
         updateLabelLocked();
         CoinControlDialog::updateLabels(m_coin_control, _model, this);
@@ -175,7 +182,12 @@ void CoinControlDialog::showMenu(const QPoint &point)
         contextMenuItem = item;
 
         // disable some items (like Copy Transaction ID, lock, unlock) for tree roots in context menu
-        if (item->data(COLUMN_ADDRESS, TxHashRole).toString().length() == 64) // transaction hash is 64 characters (this means it is a child node, so it is not a parent node in tree mode)
+        if (item->data(COLUMN_ADDRESS, PrivateNoteRole).toString().length() == 64) {
+            m_copy_transaction_outpoint_action->setEnabled(false);
+            lockAction->setEnabled(false);
+            unlockAction->setEnabled(false);
+        }
+        else if (item->data(COLUMN_ADDRESS, TxHashRole).toString().length() == 64) // transaction hash is 64 characters (this means it is a child node, so it is not a parent node in tree mode)
         {
             m_copy_transaction_outpoint_action->setEnabled(true);
             if (model->wallet().isLockedCoin(COutPoint(TxidFromString(item->data(COLUMN_ADDRESS, TxHashRole).toString().toStdString()), item->data(COLUMN_ADDRESS, VOutRole).toUInt())))
@@ -219,6 +231,14 @@ void CoinControlDialog::copyLabel()
 // context menu action: copy address
 void CoinControlDialog::copyAddress()
 {
+    if (contextMenuItem->data(COLUMN_ADDRESS, PrivateNoteRole).toString().length() == 64) {
+        if (ui->radioTreeMode->isChecked() && contextMenuItem->text(COLUMN_ADDRESS).isEmpty() && contextMenuItem->parent()) {
+            GUIUtil::setClipboard(contextMenuItem->parent()->text(COLUMN_ADDRESS));
+        } else {
+            GUIUtil::setClipboard(contextMenuItem->text(COLUMN_ADDRESS));
+        }
+        return;
+    }
     if (ui->radioTreeMode->isChecked() && contextMenuItem->text(COLUMN_ADDRESS).length() == 0 && contextMenuItem->parent())
         GUIUtil::setClipboard(contextMenuItem->parent()->text(COLUMN_ADDRESS));
     else
@@ -341,7 +361,26 @@ void CoinControlDialog::radioListMode(bool checked)
 // checkbox clicked by user
 void CoinControlDialog::viewItemChanged(QTreeWidgetItem* item, int column)
 {
-    if (column == COLUMN_CHECKBOX && item->data(COLUMN_ADDRESS, TxHashRole).toString().length() == 64) // transaction hash is 64 characters (this means it is a child node, so it is not a parent node in tree mode)
+    if (column != COLUMN_CHECKBOX) return;
+
+    const QString private_note = item->data(COLUMN_ADDRESS, PrivateNoteRole).toString();
+    if (private_note.length() == 64)
+    {
+        uint256 cmx;
+        cmx.SetHex(private_note.toStdString());
+        if (item->checkState(COLUMN_CHECKBOX) == Qt::Unchecked) {
+            m_coin_control.UnSelectPrivateNote(cmx);
+        } else {
+            m_coin_control.SelectPrivateNote(cmx);
+        }
+
+        if (ui->treeWidget->isEnabled()) {
+            CoinControlDialog::updateLabels(m_coin_control, model, this);
+        }
+        return;
+    }
+
+    if (item->data(COLUMN_ADDRESS, TxHashRole).toString().length() == 64) // transaction hash is 64 characters (this means it is a child node, so it is not a parent node in tree mode)
     {
         COutPoint outpt(TxidFromString(item->data(COLUMN_ADDRESS, TxHashRole).toString().toStdString()), item->data(COLUMN_ADDRESS, VOutRole).toUInt());
 
@@ -390,110 +429,131 @@ void CoinControlDialog::updateLabels(CCoinControl& m_coin_control, WalletModel *
     unsigned int nBytesInputs   = 0;
     unsigned int nQuantity      = 0;
     bool fWitness               = false;
+    bool fInsufficientFunds     = false;
 
-    auto vCoinControl{m_coin_control.ListSelected()};
-
-    size_t i = 0;
-    for (const auto& out : model->wallet().getCoins(vCoinControl)) {
-        if (out.depth_in_main_chain < 0) continue;
-
-        // unselect already spent, very unlikely scenario, this could happen
-        // when selected are spent elsewhere, like rpc or another computer
-        const COutPoint& outpt = vCoinControl[i++];
-        if (out.is_spent)
-        {
-            m_coin_control.UnSelect(outpt);
-            continue;
-        }
-
-        // Quantity
-        nQuantity++;
-
-        // Amount
-        nAmount += out.txout.nValue;
-
-        // Bytes
-        CTxDestination address;
-        int witnessversion = 0;
-        std::vector<unsigned char> witnessprogram;
-        if (out.txout.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram))
-        {
-            // add input skeleton bytes (outpoint, scriptSig size, nSequence)
-            nBytesInputs += (32 + 4 + 1 + 4);
-
-            if (witnessversion == 0) { // P2WPKH
-                // 1 WU (witness item count) + 72 WU (ECDSA signature with len byte) + 34 WU (pubkey with len byte)
-                nBytesInputs += 107 / WITNESS_SCALE_FACTOR;
-            } else if (witnessversion == 1) { // P2TR key-path spend
-                // 1 WU (witness item count) + 65 WU (Schnorr signature with len byte)
-                nBytesInputs += 66 / WITNESS_SCALE_FACTOR;
-            } else {
-                // not supported, should be unreachable
-                throw std::runtime_error("Trying to spend future segwit version script");
-            }
-            fWitness = true;
-        }
-        else if(ExtractDestination(out.txout.scriptPubKey, address))
-        {
-            CPubKey pubkey;
-            PKHash* pkhash = std::get_if<PKHash>(&address);
-            if (pkhash && model->wallet().getPubKey(out.txout.scriptPubKey, ToKeyID(*pkhash), pubkey))
-            {
-                nBytesInputs += (pubkey.IsCompressed() ? 148 : 180);
-            }
-            else
-                nBytesInputs += 148; // in all error cases, simply assume 148 here
-        }
-        else nBytesInputs += 148;
+    if (!model->privateTxUiEnabled() && m_coin_control.m_private_tx_source == CCoinControl::PrivateTxSource::PRIVATE_NOTES) {
+        m_coin_control.UnSelectAll();
+        m_coin_control.m_private_tx_source = CCoinControl::PrivateTxSource::AUTO;
     }
 
-    // calculation
-    if (nQuantity > 0)
-    {
-        // Bytes
-        nBytes = nBytesInputs + ((CoinControlDialog::payAmounts.size() > 0 ? CoinControlDialog::payAmounts.size() + 1 : 2) * 34) + 10; // always assume +1 output for change here
-        if (fWitness)
-        {
-            // there is some fudging in these numbers related to the actual virtual transaction size calculation that will keep this estimate from being exact.
-            // usually, the result will be an overestimate within a couple of satoshis so that the confirmation dialog ends up displaying a slightly smaller fee.
-            // also, the witness stack size value is a variable sized integer. usually, the number of stack items will be well under the single byte var int limit.
-            nBytes += 2; // account for the serialized marker and flag bytes
-            nBytes += nQuantity; // account for the witness byte that holds the number of stack items for each input.
+    if (m_coin_control.m_private_tx_source == CCoinControl::PrivateTxSource::PRIVATE_NOTES) {
+        const std::vector<uint256> selected_private_notes = m_coin_control.ListSelectedPrivateNotes();
+        for (const auto& note : model->wallet().listPrivateCoins()) {
+            if (!note.spendable) continue;
+            if (std::find(selected_private_notes.begin(), selected_private_notes.end(), note.cmx) == selected_private_notes.end()) continue;
+            ++nQuantity;
+            nAmount += note.amount;
         }
+        nAfterFee = nAmount;
+        if (nQuantity > 0 && nPayAmount > 0) {
+            nChange = std::max<CAmount>(nAmount - nPayAmount, 0);
+            fInsufficientFunds = nAmount < nPayAmount;
+        }
+    } else {
+        auto vCoinControl{m_coin_control.ListSelected()};
 
-        // in the subtract fee from amount case, we can tell if zero change already and subtract the bytes, so that fee calculation afterwards is accurate
-        if (CoinControlDialog::fSubtractFeeFromAmount)
-            if (nAmount - nPayAmount == 0)
-                nBytes -= 34;
+        size_t i = 0;
+        for (const auto& out : model->wallet().getCoins(vCoinControl)) {
+            if (out.depth_in_main_chain < 0) continue;
 
-        // Fee
-        nPayFee = model->wallet().getMinimumFee(nBytes, m_coin_control, /*returned_target=*/nullptr, /*reason=*/nullptr);
-
-        if (nPayAmount > 0)
-        {
-            nChange = nAmount - nPayAmount;
-            if (!CoinControlDialog::fSubtractFeeFromAmount)
-                nChange -= nPayFee;
-
-            if (nChange > 0) {
-                // Assumes a p2pkh script size
-                CTxOut txout(nChange, CScript() << std::vector<unsigned char>(24, 0));
-                // Never create dust outputs; if we would, just add the dust to the fee.
-                if (IsDust(txout, model->node().getDustRelayFee()))
-                {
-                    nPayFee += nChange;
-                    nChange = 0;
-                    if (CoinControlDialog::fSubtractFeeFromAmount)
-                        nBytes -= 34; // we didn't detect lack of change above
-                }
+            // unselect already spent, very unlikely scenario, this could happen
+            // when selected are spent elsewhere, like rpc or another computer
+            const COutPoint& outpt = vCoinControl[i++];
+            if (out.is_spent)
+            {
+                m_coin_control.UnSelect(outpt);
+                continue;
             }
 
-            if (nChange == 0 && !CoinControlDialog::fSubtractFeeFromAmount)
-                nBytes -= 34;
+            // Quantity
+            nQuantity++;
+
+            // Amount
+            nAmount += out.txout.nValue;
+
+            // Bytes
+            CTxDestination address;
+            int witnessversion = 0;
+            std::vector<unsigned char> witnessprogram;
+            if (out.txout.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram))
+            {
+                // add input skeleton bytes (outpoint, scriptSig size, nSequence)
+                nBytesInputs += (32 + 4 + 1 + 4);
+
+                if (witnessversion == 0) { // P2WPKH
+                    // 1 WU (witness item count) + 72 WU (ECDSA signature with len byte) + 34 WU (pubkey with len byte)
+                    nBytesInputs += 107 / WITNESS_SCALE_FACTOR;
+                } else if (witnessversion == 1) { // P2TR key-path spend
+                    // 1 WU (witness item count) + 65 WU (Schnorr signature with len byte)
+                    nBytesInputs += 66 / WITNESS_SCALE_FACTOR;
+                } else {
+                    // not supported, should be unreachable
+                    throw std::runtime_error("Trying to spend future segwit version script");
+                }
+                fWitness = true;
+            }
+            else if(ExtractDestination(out.txout.scriptPubKey, address))
+            {
+                CPubKey pubkey;
+                PKHash* pkhash = std::get_if<PKHash>(&address);
+                if (pkhash && model->wallet().getPubKey(out.txout.scriptPubKey, ToKeyID(*pkhash), pubkey))
+                {
+                    nBytesInputs += (pubkey.IsCompressed() ? 148 : 180);
+                }
+                else
+                    nBytesInputs += 148; // in all error cases, simply assume 148 here
+            }
+            else nBytesInputs += 148;
         }
 
-        // after fee
-        nAfterFee = std::max<CAmount>(nAmount - nPayFee, 0);
+        // calculation
+        if (nQuantity > 0)
+        {
+            // Bytes
+            nBytes = nBytesInputs + ((CoinControlDialog::payAmounts.size() > 0 ? CoinControlDialog::payAmounts.size() + 1 : 2) * 34) + 10; // always assume +1 output for change here
+            if (fWitness)
+            {
+                // there is some fudging in these numbers related to the actual virtual transaction size calculation that will keep this estimate from being exact.
+                // usually, the result will be an overestimate within a couple of satoshis so that the confirmation dialog ends up displaying a slightly smaller fee.
+                // also, the witness stack size value is a variable sized integer. usually, the number of stack items will be well under the single byte var int limit.
+                nBytes += 2; // account for the serialized marker and flag bytes
+                nBytes += nQuantity; // account for the witness byte that holds the number of stack items for each input.
+            }
+
+            // in the subtract fee from amount case, we can tell if zero change already and subtract the bytes, so that fee calculation afterwards is accurate
+            if (CoinControlDialog::fSubtractFeeFromAmount)
+                if (nAmount - nPayAmount == 0)
+                    nBytes -= 34;
+
+            // Fee
+            nPayFee = model->wallet().getMinimumFee(nBytes, m_coin_control, /*returned_target=*/nullptr, /*reason=*/nullptr);
+
+            if (nPayAmount > 0)
+            {
+                nChange = nAmount - nPayAmount;
+                if (!CoinControlDialog::fSubtractFeeFromAmount)
+                    nChange -= nPayFee;
+
+                if (nChange > 0) {
+                    // Assumes a p2pkh script size
+                    CTxOut txout(nChange, CScript() << std::vector<unsigned char>(24, 0));
+                    // Never create dust outputs; if we would, just add the dust to the fee.
+                    if (IsDust(txout, model->node().getDustRelayFee()))
+                    {
+                        nPayFee += nChange;
+                        nChange = 0;
+                        if (CoinControlDialog::fSubtractFeeFromAmount)
+                            nBytes -= 34; // we didn't detect lack of change above
+                    }
+                }
+
+                if (nChange == 0 && !CoinControlDialog::fSubtractFeeFromAmount)
+                    nBytes -= 34;
+            }
+
+            // after fee
+            nAfterFee = std::max<CAmount>(nAmount - nPayFee, 0);
+        }
     }
 
     // actually update labels
@@ -543,7 +603,7 @@ void CoinControlDialog::updateLabels(CCoinControl& m_coin_control, WalletModel *
     // Insufficient funds
     QLabel *label = dialog->findChild<QLabel *>("labelCoinControlInsuffFunds");
     if (label)
-        label->setVisible(nChange < 0);
+        label->setVisible(fInsufficientFunds || nChange < 0);
 }
 
 void CoinControlDialog::changeEvent(QEvent* e)
@@ -569,6 +629,81 @@ void CoinControlDialog::updateView()
     QFlags<Qt::ItemFlag> flgTristate = Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate;
 
     NitoUnit nDisplayUnit = model->getOptionsModel()->getDisplayUnit();
+
+    if (!model->privateTxUiEnabled() && m_coin_control.m_private_tx_source == CCoinControl::PrivateTxSource::PRIVATE_NOTES) {
+        m_coin_control.UnSelectAll();
+        m_coin_control.m_private_tx_source = CCoinControl::PrivateTxSource::AUTO;
+    }
+
+    if (m_coin_control.m_private_tx_source == CCoinControl::PrivateTxSource::PRIVATE_NOTES) {
+        struct PrivateAddressGroup {
+            CCoinControlWidgetItem* item{nullptr};
+            CAmount amount{0};
+            int children{0};
+        };
+
+        std::map<QString, PrivateAddressGroup> groups;
+
+        for (const auto& note : model->wallet().listPrivateCoins()) {
+            if (!note.spendable) continue;
+
+            QString address = QString::fromStdString(note.address);
+            if (address.isEmpty()) {
+                address = QString("m/96'/0'/%1'/%2/%3")
+                    .arg(note.account)
+                    .arg(note.internal ? 1 : 0)
+                    .arg(note.diversifier_index);
+            }
+
+            CCoinControlWidgetItem* itemWalletAddress{nullptr};
+            if (treeMode) {
+                auto& group = groups[address];
+                if (!group.item) {
+                    group.item = new CCoinControlWidgetItem(ui->treeWidget);
+                    group.item->setFlags(flgTristate);
+                    group.item->setCheckState(COLUMN_CHECKBOX, Qt::Unchecked);
+                    group.item->setText(COLUMN_LABEL, tr("bech32x"));
+                    group.item->setText(COLUMN_ADDRESS, address);
+                }
+                group.amount += note.amount;
+                ++group.children;
+                itemWalletAddress = group.item;
+            }
+
+            CCoinControlWidgetItem* itemOutput = treeMode ? new CCoinControlWidgetItem(itemWalletAddress) : new CCoinControlWidgetItem(ui->treeWidget);
+            itemOutput->setFlags(flgCheckbox);
+            itemOutput->setCheckState(COLUMN_CHECKBOX, Qt::Unchecked);
+            itemOutput->setText(COLUMN_LABEL, tr("bech32x"));
+            if (!treeMode) {
+                itemOutput->setText(COLUMN_ADDRESS, address);
+            }
+            itemOutput->setText(COLUMN_AMOUNT, NitoUnits::format(nDisplayUnit, note.amount));
+            itemOutput->setData(COLUMN_AMOUNT, Qt::UserRole, QVariant((qlonglong)note.amount));
+            itemOutput->setText(COLUMN_DATE, GUIUtil::dateTimeStr(note.time));
+            itemOutput->setData(COLUMN_DATE, Qt::UserRole, QVariant((qlonglong)note.time));
+            itemOutput->setText(COLUMN_CONFIRMATIONS, QString::number(note.depth_in_main_chain));
+            itemOutput->setData(COLUMN_CONFIRMATIONS, Qt::UserRole, QVariant((qlonglong)note.depth_in_main_chain));
+            itemOutput->setData(COLUMN_ADDRESS, TxHashRole, QString::fromStdString(note.txid.GetHex()));
+            itemOutput->setData(COLUMN_ADDRESS, PrivateNoteRole, QString::fromStdString(note.cmx.GetHex()));
+
+            if (m_coin_control.IsPrivateNoteSelected(note.cmx)) {
+                itemOutput->setCheckState(COLUMN_CHECKBOX, Qt::Checked);
+            }
+        }
+
+        if (treeMode) {
+            for (auto& entry : groups) {
+                CCoinControlWidgetItem* item = entry.second.item;
+                item->setText(COLUMN_CHECKBOX, "(" + QString::number(entry.second.children) + ")");
+                item->setText(COLUMN_AMOUNT, NitoUnits::format(nDisplayUnit, entry.second.amount));
+                item->setData(COLUMN_AMOUNT, Qt::UserRole, QVariant((qlonglong)entry.second.amount));
+            }
+        }
+
+        sortView(sortColumn, sortOrder);
+        ui->treeWidget->setEnabled(true);
+        return;
+    }
 
     for (const auto& coins : model->wallet().listCoins()) {
         CCoinControlWidgetItem* itemWalletAddress{nullptr};

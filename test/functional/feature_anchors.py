@@ -8,7 +8,7 @@ import os
 
 from test_framework.p2p import P2PInterface, P2P_SERVICES
 from test_framework.socks5 import Socks5Configuration, Socks5Server
-from test_framework.messages import CAddress, hash256
+from test_framework.messages import CAddress, hash256, ser_compact_size
 from test_framework.test_framework import NitoTestFramework
 from test_framework.util import check_node_connections, assert_equal, p2p_port
 
@@ -112,7 +112,7 @@ class AnchorsTest(NitoTestFramework):
         caddr.net = CAddress.NET_TORV3
         caddr.ip, port_str = ONION_ADDR.split(":")
         caddr.port = int(port_str)
-        # TorV3 addrv2 serialization:
+        # TorV3 addrv2 serialization with services == NONE in anchors.dat:
         # time(4) | services(1) | networkID(1) | address length(1) | address(32)
         expected_pubkey = caddr.serialize_v2()[7:39].hex()
 
@@ -131,7 +131,7 @@ class AnchorsTest(NitoTestFramework):
             # This is necessary because on restart we will not attempt an anchor connection
             # to a host without our required services, even if its address is in the anchors.dat file
             new_data = bytearray(data)[:-32]
-            new_data[services_index] = P2P_SERVICES
+            new_data[services_index:services_index + 1] = ser_compact_size(P2P_SERVICES)
             new_data_hash = hash256(new_data)
             file_handler.write(new_data + new_data_hash)
 

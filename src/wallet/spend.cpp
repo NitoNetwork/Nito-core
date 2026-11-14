@@ -4,35 +4,60 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <algorithm>
+#include <chainparams.h>
 #include <common/args.h>
 #include <common/system.h>
 #include <consensus/amount.h>
+#include <consensus/params.h>
+#include <consensus/private_tx_verify.h>
 #include <consensus/validation.h>
+#include <hash.h>
 #include <interfaces/chain.h>
 #include <numeric>
 #include <policy/policy.h>
+#include <private/orchard_verifier.h>
+#include <private/private_state.h>
+#include <primitives/private_transaction.h>
 #include <primitives/transaction.h>
 #include <script/script.h>
 #include <script/signingprovider.h>
 #include <script/solver.h>
+#include <support/cleanse.h>
 #include <util/check.h>
 #include <util/fees.h>
 #include <util/moneystr.h>
 #include <util/rbf.h>
+#include <util/time.h>
 #include <util/trace.h>
 #include <util/translation.h>
 #include <wallet/coincontrol.h>
 #include <wallet/fees.h>
+#include <wallet/private_wallet.h>
 #include <wallet/receive.h>
+#include <wallet/scriptpubkeyman.h>
 #include <wallet/spend.h>
 #include <wallet/transaction.h>
 #include <wallet/wallet.h>
 
+#include <array>
 #include <cmath>
+#include <cstring>
+#include <iterator>
+#include <limits>
+#include <map>
+#include <memory>
+#include <vector>
 
 using interfaces::FoundBlock;
 
 namespace wallet {
+static const bilingual_str& WalletSyncPendingMessage()
+{
+    static const bilingual_str WALLET_SYNC_PENDING_MESSAGE{
+        _("The displayed information may be out of date. Your wallet automatically synchronizes with the Nito network after a connection is established, but this process has not completed yet.")};
+    return WALLET_SYNC_PENDING_MESSAGE;
+}
+
 static constexpr size_t OUTPUT_GROUP_MAX_ENTRIES{100};
 
 /** Whether the descriptor represents, directly or not, a witness program. */
@@ -922,8 +947,8 @@ static bool IsCurrentForAntiFeeSniping(interfaces::Chain& chain, const uint256& 
 static void DiscourageFeeSniping(CMutableTransaction& tx, FastRandomContext& rng_fast,
                                  interfaces::Chain& chain, const uint256& block_hash, int block_height)
 {
-    // All inputs must be added by now
-    assert(!tx.vin.empty());
+    // Transparent inputs, if any, must be added by now. Nito.network private-only
+    // transactions can validly spend Orchard notes without any transparent vin.
     // Discourage fee sniping.
     //
     // For a large miner the value of the transactions in the best block and
@@ -975,6 +1000,1308 @@ static void DiscourageFeeSniping(CMutableTransaction& tx, FastRandomContext& rng
     }
 }
 
+namespace {
+static constexpr size_t PRIVATE_WALLET_MAX_ACTIONS{MAX_PRIVATE_ORCHARD_ACTIONS};
+
+size_t EstimatePrivateBundleActions(size_t spend_count, size_t output_count)
+{
+    if (spend_count == 0 && output_count == 0) return 0;
+    return std::max<size_t>(2, std::max(spend_count, output_count));
+}
+
+CPrivateBundle MakePrivateBundleWeightProbe(size_t action_count, const uint256& anchor = uint256{}, CAmount value_balance = 0)
+{
+    CPrivateBundle bundle;
+    bundle.effects.flags = PRIVATE_ORCHARD_FLAGS_MASK;
+    bundle.effects.anchor = anchor;
+    bundle.effects.value_balance = value_balance;
+    bundle.effects.actions.resize(action_count);
+    bundle.auth.emplace();
+    bundle.auth->actions_auth.resize(action_count);
+    bundle.auth->proof.resize(PrivateOrchardExpectedProofSize(action_count));
+    bundle.auth->binding_sig.resize(PRIVATE_ORCHARD_RED_PALLAS_SIG_SIZE);
+
+    for (size_t i = 0; i < action_count; ++i) {
+        CPrivateActionEffects& action = bundle.effects.actions[i];
+        action.ephemeral_key.resize(PRIVATE_ORCHARD_EPHEMERAL_KEY_SIZE);
+        action.enc_ciphertext.resize(PRIVATE_ORCHARD_ENC_CIPHERTEXT_SIZE);
+        action.out_ciphertext.resize(PRIVATE_ORCHARD_OUT_CIPHERTEXT_SIZE);
+        bundle.auth->actions_auth[i].spend_auth_sig.resize(PRIVATE_ORCHARD_RED_PALLAS_SIG_SIZE);
+    }
+
+    return bundle;
+}
+
+int64_t EstimatePrivateBundleWeightDelta(const CMutableTransaction& tx_without_private, size_t action_count, const uint256& anchor, CAmount value_balance)
+{
+    CMutableTransaction tx_with_private{tx_without_private};
+    tx_with_private.m_private_bundle = MakePrivateBundleWeightProbe(action_count, anchor, value_balance);
+    return static_cast<int64_t>(GetTransactionWeight(CTransaction(tx_with_private))) -
+           static_cast<int64_t>(GetTransactionWeight(CTransaction(tx_without_private)));
+}
+
+TxSize EstimatePrivateTransactionSize(const CMutableTransaction& tx_without_private, size_t action_count, const uint256& anchor, CAmount value_balance)
+{
+    CMutableTransaction tx_with_private{tx_without_private};
+    tx_with_private.m_private_bundle = MakePrivateBundleWeightProbe(action_count, anchor, value_balance);
+    const int64_t weight{static_cast<int64_t>(GetTransactionWeight(CTransaction(tx_with_private)))};
+    return TxSize{GetVirtualTransactionSize(
+        weight,
+        /*nSigOpCost=*/0,
+        /*bytes_per_sigop=*/0,
+        GetPrivateOrchardVerificationCost(action_count)), weight};
+}
+
+util::Result<TxSize> EstimateSignedTransparentPrivateTransactionSize(
+    const CMutableTransaction& tx_without_private,
+    CWallet& wallet,
+    const CCoinControl& coin_control,
+    size_t action_count,
+    const uint256& anchor,
+    CAmount value_balance,
+    int64_t& private_weight_delta_out) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    const TxSize transparent_size{CalculateMaximumSignedTxSize(CTransaction(tx_without_private), &wallet, &coin_control)};
+    if (transparent_size.vsize == -1 || transparent_size.weight == -1) {
+        return util::Error{_("Missing solving data for estimating transaction size")};
+    }
+
+    private_weight_delta_out = EstimatePrivateBundleWeightDelta(tx_without_private, action_count, anchor, value_balance);
+    const int64_t weight{transparent_size.weight + private_weight_delta_out};
+    return TxSize{GetVirtualTransactionSize(
+        weight,
+        /*nSigOpCost=*/0,
+        /*bytes_per_sigop=*/0,
+        GetPrivateOrchardVerificationCost(action_count)), weight};
+}
+
+bool CheckPrivateWeightEstimate(const CMutableTransaction& tx_without_private, const CPrivateBundle& bundle, size_t estimated_actions, int64_t estimated_private_delta, std::string& error)
+{
+    const size_t actual_actions{bundle.effects.actions.size()};
+    if (actual_actions != estimated_actions) {
+        error = strprintf("private Orchard action estimate mismatch: estimated=%u actual=%u",
+            static_cast<unsigned>(estimated_actions),
+            static_cast<unsigned>(actual_actions));
+        return false;
+    }
+
+    CMutableTransaction tx_with_private{tx_without_private};
+    CPrivateBundle weight_bundle{bundle};
+    if (!weight_bundle.auth) {
+        CPrivateBundle auth_probe = MakePrivateBundleWeightProbe(actual_actions);
+        weight_bundle.auth = std::move(auth_probe.auth);
+    }
+    tx_with_private.m_private_bundle = std::move(weight_bundle);
+    const int64_t actual_private_delta =
+        static_cast<int64_t>(GetTransactionWeight(CTransaction(tx_with_private))) -
+        static_cast<int64_t>(GetTransactionWeight(CTransaction(tx_without_private)));
+    if (actual_private_delta != estimated_private_delta) {
+        error = strprintf("private Orchard weight estimate mismatch: estimated_delta=%d actual_delta=%d",
+            estimated_private_delta,
+            actual_private_delta);
+        return false;
+    }
+    return true;
+}
+
+struct TransparentChangeSource {
+    CTxDestination destination;
+    CAmount total{0};
+    CAmount largest_input{0};
+    COutPoint smallest_largest_outpoint;
+    bool has_input{false};
+};
+
+struct PrivateChangeSource {
+    std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> recipient_raw{};
+    CAmount total{0};
+    CAmount largest_input{0};
+    uint64_t smallest_largest_commitment_index{std::numeric_limits<uint64_t>::max()};
+    uint256 smallest_largest_cmx;
+    bool has_input{false};
+};
+
+bool CanUseSourceChange(CWallet& wallet, const CCoinControl& coin_control, OutputType change_type)
+{
+    if (coin_control.m_change_type || wallet.m_default_change_type) return false;
+    const auto* manager = wallet.GetScriptPubKeyMan(change_type, /*internal=*/true);
+    return !manager || !manager->IsHDEnabled() || wallet.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS);
+}
+
+CScript BuildTransparentChangeSizingScript()
+{
+    return CScript() << OP_1 << std::vector<unsigned char>(32, 0);
+}
+
+void SetTransparentChangeSizing(
+    CWallet& wallet,
+    CoinSelectionParams& coin_selection_params,
+    const CScript& script_change)
+{
+    CTxOut change_prototype_txout(0, script_change);
+    coin_selection_params.change_output_size = GetSerializeSize(change_prototype_txout);
+
+    int change_spend_size = CalculateMaximumSignedInputSize(change_prototype_txout, &wallet, /*coin_control=*/nullptr);
+    if (change_spend_size == -1) {
+        coin_selection_params.change_spend_size = DUMMY_NESTED_P2WPKH_INPUT_SIZE;
+    } else {
+        coin_selection_params.change_spend_size = static_cast<size_t>(change_spend_size);
+    }
+
+    coin_selection_params.m_change_fee = coin_selection_params.m_effective_feerate.GetFee(coin_selection_params.change_output_size);
+    coin_selection_params.m_cost_of_change = coin_selection_params.m_discard_feerate.GetFee(coin_selection_params.change_spend_size) + coin_selection_params.m_change_fee;
+
+    const auto dust = GetDustThreshold(change_prototype_txout, coin_selection_params.m_discard_feerate);
+    const auto change_spend_fee = coin_selection_params.m_discard_feerate.GetFee(coin_selection_params.change_spend_size);
+    coin_selection_params.min_viable_change = std::max(change_spend_fee + 1, dust);
+}
+
+util::Result<CTxDestination> GetDominantTransparentChangeDestination(
+    const CWallet& wallet,
+    const SelectionResult& result) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+
+    std::map<CTxDestination, TransparentChangeSource> sources;
+    for (const auto& coin : result.GetInputSet()) {
+        CTxDestination destination;
+        const CTxOut& source_txout = wallet.GetWalletTx(coin->outpoint.hash) ?
+            FindNonChangeParentOutput(wallet, coin->outpoint) :
+            coin->txout;
+        if (!ExtractDestination(source_txout.scriptPubKey, destination)) {
+            if (auto pk_dest = std::get_if<PubKeyDestination>(&destination)) {
+                destination = PKHash(pk_dest->GetPubKey());
+            } else {
+                return util::Error{_("Unable to determine a source address for transparent change.")};
+            }
+        }
+        if (!IsValidDestination(destination)) {
+            return util::Error{_("Unable to determine a valid source address for transparent change.")};
+        }
+
+        auto& source = sources[destination];
+        source.destination = destination;
+        if (!MoneyAddSigned(source.total, coin->txout.nValue, source.total)) {
+            return util::Error{_("Transparent change source amount is out of range.")};
+        }
+        if (!source.has_input ||
+            coin->txout.nValue > source.largest_input ||
+            (coin->txout.nValue == source.largest_input && coin->outpoint < source.smallest_largest_outpoint)) {
+            source.largest_input = coin->txout.nValue;
+            source.smallest_largest_outpoint = coin->outpoint;
+            source.has_input = true;
+        }
+    }
+
+    if (sources.empty()) {
+        return util::Error{_("Unable to determine a source address for transparent change.")};
+    }
+
+    auto best = sources.begin();
+    for (auto it = std::next(sources.begin()); it != sources.end(); ++it) {
+        const auto& current = it->second;
+        const auto& selected = best->second;
+        if (current.total > selected.total ||
+            (current.total == selected.total && current.largest_input > selected.largest_input) ||
+            (current.total == selected.total && current.largest_input == selected.largest_input && current.smallest_largest_outpoint < selected.smallest_largest_outpoint)) {
+            best = it;
+        }
+    }
+    return best->second.destination;
+}
+
+util::Result<std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE>> GetDominantPrivateChangeRecipient(
+    const std::vector<const CPrivateWalletNote*>& selected)
+{
+    std::map<std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE>, PrivateChangeSource> sources;
+    for (const CPrivateWalletNote* note : selected) {
+        if (note == nullptr || note->recipient_raw.size() != NITO_ORCHARD_RAW_ADDRESS_SIZE) {
+            return util::Error{_("Unable to determine a source address for private change.")};
+        }
+
+        std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> recipient_raw{};
+        std::copy(note->recipient_raw.begin(), note->recipient_raw.end(), recipient_raw.begin());
+
+        auto& source = sources[recipient_raw];
+        source.recipient_raw = recipient_raw;
+        if (!MoneyAddSigned(source.total, note->value, source.total)) {
+            return util::Error{_("Private change source amount is out of range.")};
+        }
+        if (!source.has_input ||
+            note->value > source.largest_input ||
+            (note->value == source.largest_input &&
+                (note->commitment_index < source.smallest_largest_commitment_index ||
+                 (note->commitment_index == source.smallest_largest_commitment_index && note->cmx < source.smallest_largest_cmx)))) {
+            source.largest_input = note->value;
+            source.smallest_largest_commitment_index = note->commitment_index;
+            source.smallest_largest_cmx = note->cmx;
+            source.has_input = true;
+        }
+    }
+
+    if (sources.empty()) {
+        return util::Error{_("Unable to determine a source address for private change.")};
+    }
+
+    auto best = sources.begin();
+    for (auto it = std::next(sources.begin()); it != sources.end(); ++it) {
+        const auto& current = it->second;
+        const auto& selected_source = best->second;
+        if (current.total > selected_source.total ||
+            (current.total == selected_source.total && current.largest_input > selected_source.largest_input) ||
+            (current.total == selected_source.total && current.largest_input == selected_source.largest_input &&
+                (current.smallest_largest_commitment_index < selected_source.smallest_largest_commitment_index ||
+                 (current.smallest_largest_commitment_index == selected_source.smallest_largest_commitment_index &&
+                     current.smallest_largest_cmx < selected_source.smallest_largest_cmx)))) {
+            best = it;
+        }
+    }
+    return best->second.recipient_raw;
+}
+
+struct PreparedPrivateSpend {
+    const CPrivateWalletNote* note{nullptr};
+    std::array<unsigned char, NITO_PRIVATE_ORCHARD_SPENDING_KEY_SIZE> spending_key{};
+    std::array<unsigned char, NITO_ORCHARD_MERKLE_PATH_SIZE> merkle_path{};
+};
+
+bool GetPrivateWalletSeed(CWallet& wallet, BIP39Seed& seed, bilingual_str& error) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    return wallet.GetBIP39DerivedSeed(seed, error);
+}
+
+static int GetPrivateNoteDepthForSpend(const CWallet& wallet, const CPrivateWalletNote& note) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    const auto it = wallet.mapWallet.find(note.txid);
+    if (it != wallet.mapWallet.end()) {
+        const CWalletTx& wtx = it->second;
+        const auto* confirmed = wtx.state<TxStateConfirmed>();
+        if (confirmed == nullptr) return 0;
+        if (confirmed->confirmed_block_hash != note.block_hash || confirmed->confirmed_block_height != note.block_height) return 0;
+    }
+
+    if (!note.IsConfirmed()) return 0;
+    if (!wallet.HaveChain()) return 0;
+
+    bool active{false};
+    int height{-1};
+    if (!wallet.chain().findBlock(note.block_hash, FoundBlock().inActiveChain(active).height(height)) ||
+            !active || height != note.block_height) {
+        return 0;
+    }
+
+    const int depth = wallet.GetLastBlockHeight() - note.block_height + 1;
+    return std::max(depth, 0);
+}
+
+} // namespace
+
+bool SelectPrivateNotes(
+    const CWallet& wallet,
+    CAmount target,
+    const CCoinControl& coin_control,
+    std::vector<const CPrivateWalletNote*>& selected,
+    CAmount& selected_value) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    selected.clear();
+    selected_value = 0;
+
+    const std::vector<uint256> selected_private_notes = coin_control.ListSelectedPrivateNotes();
+    const bool has_preselected_private_notes = !selected_private_notes.empty();
+    if (has_preselected_private_notes && selected_private_notes.size() > PRIVATE_WALLET_MAX_ACTIONS) {
+        return false;
+    }
+
+    std::vector<const CPrivateWalletNote*> candidates;
+    candidates.reserve(has_preselected_private_notes ? selected_private_notes.size() : wallet.mapPrivateNotes.size());
+    auto consider = [&](const CPrivateWalletNote& note, bool is_preselected) {
+        const bool spendable = note.IsSpendable() ||
+            (coin_control.m_allow_spent_private_note_replacement && is_preselected &&
+                note.HasNullifier() && note.HasWitnessPosition() && note.HasSpendSecrets() && note.value > 0);
+        if (spendable && GetPrivateNoteDepthForSpend(wallet, note) > 0) {
+            candidates.push_back(&note);
+        }
+    };
+    if (has_preselected_private_notes) {
+        for (const auto& cmx : selected_private_notes) {
+            const auto found = wallet.mapPrivateNotes.find(cmx);
+            if (found == wallet.mapPrivateNotes.end()) return false;
+            consider(found->second, true);
+        }
+    } else {
+        for (const auto& [_, note] : wallet.mapPrivateNotes) consider(note, false);
+    }
+    if (has_preselected_private_notes && candidates.size() != selected_private_notes.size()) {
+        return false;
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const CPrivateWalletNote* a, const CPrivateWalletNote* b) {
+        // Minimize the number of actions. In particular, never exhaust the
+        // action budget on small notes while a larger usable note is available.
+        if (a->value != b->value) return a->value > b->value;
+        if (a->commitment_index != b->commitment_index) return a->commitment_index < b->commitment_index;
+        return a->cmx < b->cmx;
+    });
+
+    for (const CPrivateWalletNote* note : candidates) {
+        if (selected.size() >= PRIVATE_WALLET_MAX_ACTIONS) break;
+        if (!MoneyAddSigned(selected_value, note->value, selected_value)) return false;
+        selected.push_back(note);
+        if (!has_preselected_private_notes && selected_value >= target) return true;
+    }
+    return selected_value >= target;
+}
+
+namespace {
+struct PrivateSpendAvailability
+{
+    size_t spendable_notes{0};
+    size_t unconfirmed_notes{0};
+    CAmount spendable_value{0};
+    CAmount unconfirmed_value{0};
+};
+
+PrivateSpendAvailability GetPrivateSpendAvailability(const CWallet& wallet, const CCoinControl& coin_control)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+
+    PrivateSpendAvailability availability;
+    const std::vector<uint256> selected_private_notes = coin_control.ListSelectedPrivateNotes();
+    const bool has_preselected_private_notes = !selected_private_notes.empty();
+    std::set<uint256> pending_spent_nullifiers;
+    for (const auto& [txid, wtx] : wallet.mapWallet) {
+        if (!wtx.tx || !wtx.tx->HasPrivateBundle() || !wtx.state<TxStateInMempool>()) continue;
+        for (const auto& action : wtx.tx->m_private_bundle->effects.actions) {
+            if (!action.nullifier.IsNull()) {
+                pending_spent_nullifiers.insert(action.nullifier);
+            }
+        }
+    }
+
+    for (const auto& [cmx, note] : wallet.mapPrivateNotes) {
+        const bool is_preselected = has_preselected_private_notes &&
+            std::find(selected_private_notes.begin(), selected_private_notes.end(), cmx) != selected_private_notes.end();
+        if (has_preselected_private_notes && !is_preselected) continue;
+        const bool pending_spent = note.spent && note.HasNullifier() && pending_spent_nullifiers.count(note.nullifier) != 0;
+        const bool has_private_spend_material = (!note.spent || pending_spent) && note.HasNullifier() && note.HasSpendSecrets() && note.value > 0;
+        if (!has_private_spend_material) continue;
+
+        const int depth = GetPrivateNoteDepthForSpend(wallet, note);
+        if (!pending_spent && depth > 0 && note.HasWitnessPosition()) {
+            ++availability.spendable_notes;
+            if (!MoneyAddSigned(availability.spendable_value, note.value, availability.spendable_value)) {
+                availability.spendable_value = MAX_MONEY;
+            }
+        } else {
+            ++availability.unconfirmed_notes;
+            if (!MoneyAddSigned(availability.unconfirmed_value, note.value, availability.unconfirmed_value)) {
+                availability.unconfirmed_value = MAX_MONEY;
+            }
+        }
+    }
+    return availability;
+}
+
+bool PreparePrivateSpends(
+    const std::vector<const CPrivateWalletNote*>& selected,
+    const BIP39Seed& seed,
+    interfaces::Chain& chain,
+    const uint256& expected_anchor,
+    std::vector<PreparedPrivateSpend>& prepared,
+    std::string& error)
+{
+    error.clear();
+    for (auto& spend : prepared) {
+        memory_cleanse(spend.spending_key.data(), spend.spending_key.size());
+        memory_cleanse(spend.merkle_path.data(), spend.merkle_path.size());
+    }
+    prepared.clear();
+    prepared.resize(selected.size());
+    if (selected.empty()) return true;
+
+    std::vector<uint64_t> commitment_indices;
+    commitment_indices.reserve(selected.size());
+    for (size_t i = 0; i < selected.size(); ++i) {
+        const CPrivateWalletNote& note = *selected[i];
+        if (note.commitment_index > std::numeric_limits<uint32_t>::max()) {
+            error = "private note position exceeds private wallet builder limit";
+            return false;
+        }
+        commitment_indices.push_back(note.commitment_index);
+    }
+
+    std::vector<std::vector<uint256>> auth_paths;
+    uint256 auth_root;
+    if (!chain.getPrivateAuthPaths(commitment_indices, auth_paths, auth_root)) {
+        error = "unable to read synced private wallet index authorization paths; start with -orchardindex=1 and wait for getindexinfo orchardindex to report synced=true";
+        return false;
+    }
+    if (auth_root != expected_anchor) {
+        error = "private note auth path root does not match current private anchor";
+        return false;
+    }
+    if (auth_paths.size() != selected.size()) {
+        error = "private note auth path count mismatch";
+        return false;
+    }
+
+    for (size_t i = 0; i < selected.size(); ++i) {
+        const CPrivateWalletNote& note = *selected[i];
+        const std::vector<uint256>& auth_path = auth_paths[i];
+        if (auth_path.size() != NITO_ORCHARD_MERKLE_PATH_SIZE / 32) {
+            error = "private note auth path has unexpected depth";
+            return false;
+        }
+
+        PreparedPrivateSpend& spend = prepared[i];
+        spend.note = &note;
+        for (size_t path_idx = 0; path_idx < auth_path.size(); ++path_idx) {
+            std::memcpy(spend.merkle_path.data() + path_idx * 32, auth_path[path_idx].begin(), 32);
+        }
+
+        PrivateOrchardKeyPath path{note.account, note.internal, note.diversifier_index, note.derivation_version};
+        auto key_result = DeriveNitoPrivateOrchardSpendingKey(seed, path, spend.spending_key, error);
+        if (key_result != PrivateOrchardBuildResult::OK) {
+            if (error.empty()) error = "failed to derive private note spending key";
+            return false;
+        }
+    }
+    return true;
+}
+
+void CleansePreparedPrivateSpends(std::vector<PreparedPrivateSpend>& prepared)
+{
+    for (auto& spend : prepared) {
+        memory_cleanse(spend.spending_key.data(), spend.spending_key.size());
+        memory_cleanse(spend.merkle_path.data(), spend.merkle_path.size());
+    }
+}
+
+util::Result<CreatedTransactionResult> CreatePrivateTransactionInternal(
+        CWallet& wallet,
+        const std::vector<CRecipient>& vecSend,
+        std::optional<unsigned int> change_pos,
+        const CCoinControl& coin_control,
+        bool sign) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+
+    auto count_private_recipients = [&vecSend]() {
+        return std::count_if(vecSend.begin(), vecSend.end(), [](const CRecipient& recipient) {
+            return recipient.IsPrivate();
+        });
+    };
+    auto calculate_recipient_values = [&vecSend](CAmount fee) -> util::Result<std::vector<CAmount>> {
+        std::vector<CAmount> recipient_values;
+        recipient_values.reserve(vecSend.size());
+        const size_t subtract_count = std::count_if(vecSend.begin(), vecSend.end(), [](const CRecipient& recipient) {
+            return recipient.fSubtractFeeFromAmount;
+        });
+        if (subtract_count == 0) {
+            for (const CRecipient& recipient : vecSend) {
+                recipient_values.push_back(recipient.nAmount);
+            }
+            return recipient_values;
+        }
+
+        size_t subtract_seen{0};
+        for (const CRecipient& recipient : vecSend) {
+            CAmount value = recipient.nAmount;
+            if (recipient.fSubtractFeeFromAmount) {
+                value -= fee / static_cast<CAmount>(subtract_count);
+                if (subtract_seen == 0) {
+                    value -= fee % static_cast<CAmount>(subtract_count);
+                }
+                ++subtract_seen;
+            }
+            if (value <= 0 || !MoneyRange(value)) {
+                return util::Error{_("The private transaction amount is too small to pay the fee.")};
+            }
+            recipient_values.push_back(value);
+        }
+        return recipient_values;
+    };
+    auto sum_recipient_values = [&vecSend](Span<const CAmount> recipient_values, bool private_outputs) -> util::Result<CAmount> {
+        CAmount total{0};
+        for (size_t i = 0; i < vecSend.size(); ++i) {
+            if (vecSend[i].IsPrivate() != private_outputs) continue;
+            if (!MoneyAddSigned(total, recipient_values[i], total)) {
+                return util::Error{private_outputs ? _("Private output total amount out of range.") : _("Transparent output total amount out of range.")};
+            }
+        }
+        return total;
+    };
+    auto load_private_root = [&wallet](uint256& private_root, uint64_t& private_commitment_count) -> util::Result<void> {
+        if (wallet.chain().getPrivateChainState(private_root, private_commitment_count)) {
+            return {};
+        }
+        std::string empty_error;
+        if (!GetPrivateEmptyRoot(private_root, empty_error)) {
+            return util::Error{Untranslated(empty_error.empty() ? "unable to initialize the Nito.network private empty root" : empty_error)};
+        }
+        private_commitment_count = 0;
+        return {};
+    };
+    auto add_transparent_outputs = [&wallet, &vecSend](CMutableTransaction& txNew, Span<const CAmount> recipient_values) -> util::Result<CAmount> {
+        CAmount transparent_output_sum{0};
+        for (size_t i = 0; i < vecSend.size(); ++i) {
+            const CRecipient& recipient = vecSend[i];
+            if (recipient.IsPrivate()) continue;
+            if (!IsValidDestination(recipient.dest)) {
+                return util::Error{_("Private-note spending to data outputs or invalid transparent destinations is not supported.")};
+            }
+            CTxOut txout(recipient_values[i], GetScriptForDestination(recipient.dest));
+            if (IsDust(txout, wallet.chain().relayDustFee())) {
+                return util::Error{_("Transaction amount too small")};
+            }
+            if (!MoneyAddSigned(transparent_output_sum, txout.nValue, transparent_output_sum)) {
+                return util::Error{_("Transparent output total amount out of range.")};
+            }
+            txNew.vout.push_back(std::move(txout));
+        }
+        return transparent_output_sum;
+    };
+
+    const size_t private_recipient_count = count_private_recipients();
+    const bool has_private_recipient = private_recipient_count > 0;
+    const bool subtract_fee_from_outputs = std::any_of(vecSend.begin(), vecSend.end(), [](const CRecipient& recipient) {
+        return recipient.fSubtractFeeFromAmount;
+    });
+
+    if (change_pos) {
+        return util::Error{_("Nito.network private-bundle transaction creation does not support a custom change position.")};
+    }
+    if (vecSend.empty()) {
+        return util::Error{_("Nito.network private transaction requires at least one recipient.")};
+    }
+    const int current_block_height = wallet.GetLastBlockHeight();
+    const int private_activation_height = Params().GetConsensus().privateTxActivationHeight;
+    if (!Consensus::PrivateTxActive(Params().GetConsensus(), current_block_height)) {
+        return private_activation_height < 0
+            ? util::Error{_("Nito.network private transactions are not active on this network.")}
+            : util::Error{Untranslated("Nito.network private transactions activate at block " +
+                  std::to_string(private_activation_height) + ". Current block: " +
+                  std::to_string(current_block_height) + ".")};
+    }
+
+    CAmount recipients_sum{0};
+    for (const CRecipient& recipient : vecSend) {
+        if (recipient.nAmount <= 0 || !MoneyRange(recipient.nAmount)) {
+            return util::Error{_("Invalid private transaction recipient amount.")};
+        }
+        if (!MoneyAddSigned(recipients_sum, recipient.nAmount, recipients_sum)) {
+            return util::Error{_("Private transaction recipient total amount out of range.")};
+        }
+    }
+
+    FeeCalculation feeCalc;
+    CFeeRate fee_rate = GetMinimumFeeRate(wallet, coin_control, &feeCalc);
+    if (coin_control.m_feerate && fee_rate > *coin_control.m_feerate) {
+        return util::Error{strprintf(_("Fee rate (%s) is lower than the minimum fee rate setting (%s)"), coin_control.m_feerate->ToString(FeeEstimateMode::SAT_VB), fee_rate.ToString(FeeEstimateMode::SAT_VB))};
+    }
+    if (feeCalc.reason == FeeReason::FALLBACK && !wallet.m_allow_fallback_fee) {
+        return util::Error{strprintf(_("Fee estimation failed. Fallbackfee is disabled. Wait a few blocks or enable %s."), "-fallbackfee")};
+    }
+
+    BIP39Seed derived_seed{};
+    BIP39SeedGuard seed_cleanup{derived_seed};
+    bilingual_str seed_error;
+    if (!GetPrivateWalletSeed(wallet, derived_seed, seed_error)) {
+        return util::Error{seed_error};
+    }
+
+    auto build_from_private_notes = [&]() EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet) -> util::Result<CreatedTransactionResult> {
+        const auto private_build_start{SteadyClock::now()};
+        if (coin_control.HasSelected()) {
+            return util::Error{_("Nito.network private-note spending cannot mix manually selected transparent UTXOs with private notes; use shieldtoaddress for transparent UTXO shielding.")};
+        }
+
+        uint256 private_root;
+        uint64_t private_commitment_count{0};
+        if (auto root_res = load_private_root(private_root, private_commitment_count); !root_res) {
+            return util::Error{util::ErrorString(root_res)};
+        }
+        auto private_no_spendable_notes_error = [&](const PrivateSpendAvailability& private_availability) {
+            if (coin_control.HasSelectedPrivateNotes()) {
+                if (private_availability.spendable_notes == 0 && private_availability.unconfirmed_notes > 0) {
+                    return _("The selected private notes are waiting for confirmation. Wait for the next block before spending them.");
+                }
+                return _("The selected private notes do not cover the transaction target.");
+            }
+            if (private_availability.unconfirmed_notes > 0) {
+                return _("Private funds are waiting for confirmation. Wait for the next block before spending private notes.");
+            }
+            return _("No spendable private notes are available.");
+        };
+        if (private_commitment_count == 0) {
+            return util::Error{private_no_spendable_notes_error(GetPrivateSpendAvailability(wallet, coin_control))};
+        }
+        auto private_selection_error = [&](CAmount target) {
+            const auto private_availability = GetPrivateSpendAvailability(wallet, coin_control);
+            if (coin_control.ListSelectedPrivateNotes().size() > PRIVATE_WALLET_MAX_ACTIONS ||
+                (!coin_control.HasSelectedPrivateNotes() && private_availability.spendable_value >= target)) {
+                return _("Private transaction would exceed the maximum Orchard action count.");
+            }
+            if (coin_control.HasSelectedPrivateNotes()) {
+                if (private_availability.spendable_notes == 0 && private_availability.unconfirmed_notes > 0) {
+                    return _("The selected private notes are waiting for confirmation. Wait for the next block before spending them.");
+                }
+                return _("The selected private notes do not cover the transaction target.");
+            }
+            if (private_availability.spendable_notes == 0) {
+                return private_no_spendable_notes_error(private_availability);
+            }
+            CAmount total_private_value{private_availability.spendable_value};
+            const bool have_total_private_value = MoneyAddSigned(total_private_value, private_availability.unconfirmed_value, total_private_value);
+            if (private_availability.spendable_value < target && have_total_private_value && total_private_value >= target) {
+                return _("Some private funds are still waiting for confirmation. Wait for the next block or spend a smaller confirmed amount.");
+            }
+            return strprintf(_("Insufficient confirmed private funds. Available private balance: %s; required: %s."),
+                FormatMoney(private_availability.spendable_value), FormatMoney(target));
+        };
+
+        CAmount fee{fee_rate.GetFee(1000)};
+        CTransactionRef final_tx;
+        CAmount final_fee{0};
+        std::vector<PSBTProprietary> final_private_psbt_records;
+        std::vector<uint256> final_private_spend_note_ids;
+        std::vector<PreparedPrivateSpend> prepared;
+        std::string private_error;
+        int64_t select_ms{0};
+        int64_t estimate_ms{0};
+        int64_t proof_ms{0};
+        int64_t verify_ms{0};
+        int64_t final_estimated_vsize{0};
+        int64_t final_actual_vsize{0};
+        int final_attempt{0};
+
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            if (fee < 0 || !MoneyRange(fee)) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{_("Private transaction fee is out of range.")};
+            }
+
+            CAmount selection_target{recipients_sum};
+            if (!subtract_fee_from_outputs && !MoneyAddSigned(selection_target, fee, selection_target)) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{_("Private transaction target amount out of range.")};
+            }
+
+            std::vector<const CPrivateWalletNote*> selected;
+            CAmount selected_value{0};
+            const auto select_start{SteadyClock::now()};
+            if (!SelectPrivateNotes(wallet, selection_target, coin_control, selected, selected_value)) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{private_selection_error(selection_target)};
+            }
+
+            CleansePreparedPrivateSpends(prepared);
+            prepared.clear();
+            if (!PreparePrivateSpends(selected, derived_seed, wallet.chain(), private_root, prepared, private_error)) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{Untranslated(private_error.empty() ? "failed to prepare private spends" : private_error)};
+            }
+            select_ms += Ticks<std::chrono::milliseconds>(SteadyClock::now() - select_start);
+
+            auto recipient_values_res = calculate_recipient_values(fee);
+            if (!recipient_values_res) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{util::ErrorString(recipient_values_res)};
+            }
+            const std::vector<CAmount>& recipient_values = *recipient_values_res;
+
+            auto private_output_sum_res = sum_recipient_values(Span<const CAmount>{recipient_values}, /*private_outputs=*/true);
+            if (!private_output_sum_res) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{util::ErrorString(private_output_sum_res)};
+            }
+
+            CMutableTransaction txNew;
+            if (coin_control.m_version) {
+                txNew.nVersion = coin_control.m_version.value();
+            } else if (coin_control.m_signal_bip125_rbf.value_or(wallet.m_signal_rbf)) {
+                // A private-note-only transaction has no transparent input
+                // sequence with which to signal BIP125 replacement.
+                txNew.nVersion = NITO_PRIVATE_RBF_TX_VERSION;
+            }
+
+            auto transparent_output_sum_res = add_transparent_outputs(txNew, Span<const CAmount>{recipient_values});
+            if (!transparent_output_sum_res) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{util::ErrorString(transparent_output_sum_res)};
+            }
+
+            CAmount spend_target_sum{*private_output_sum_res};
+            if (!MoneyAddSigned(spend_target_sum, *transparent_output_sum_res, spend_target_sum)) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{_("Private transaction spend target out of range.")};
+            }
+
+            CAmount change_value = selected_value - spend_target_sum - fee;
+            if (change_value < 0 || !MoneyRange(change_value)) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{_("Private transaction change amount out of range.")};
+            }
+
+            std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> change_raw{};
+            bool uses_change{change_value > 0};
+            if (uses_change) {
+                auto change_recipient_res = GetDominantPrivateChangeRecipient(selected);
+                if (!change_recipient_res) {
+                    CleansePreparedPrivateSpends(prepared);
+                    return util::Error{util::ErrorString(change_recipient_res)};
+                }
+                change_raw = *change_recipient_res;
+            }
+
+            std::vector<PrivateOrchardSpendInfo> spend_infos;
+            spend_infos.reserve(prepared.size());
+            for (const PreparedPrivateSpend& spend : prepared) {
+                const CPrivateWalletNote& note = *spend.note;
+                spend_infos.push_back(PrivateOrchardSpendInfo{
+                    Span<const unsigned char>{spend.spending_key.data(), spend.spending_key.size()},
+                    Span<const unsigned char>{note.recipient_raw.data(), note.recipient_raw.size()},
+                    note.value,
+                    Span<const unsigned char>{note.rho.data(), note.rho.size()},
+                    Span<const unsigned char>{note.rseed.data(), note.rseed.size()},
+                    static_cast<uint32_t>(note.commitment_index),
+                    Span<const unsigned char>{spend.merkle_path.data(), spend.merkle_path.size()},
+                });
+            }
+
+            std::vector<PrivateOrchardOutputInfo> output_infos;
+            output_infos.reserve(private_recipient_count + (uses_change ? 1 : 0));
+            for (size_t i = 0; i < vecSend.size(); ++i) {
+                if (!vecSend[i].IsPrivate()) continue;
+                output_infos.push_back(PrivateOrchardOutputInfo{
+                    Span<const unsigned char>{vecSend[i].private_raw_address->data(), vecSend[i].private_raw_address->size()},
+                    recipient_values[i],
+                    false,
+                });
+            }
+            if (uses_change) {
+                output_infos.push_back(PrivateOrchardOutputInfo{
+                    Span<const unsigned char>{change_raw.data(), change_raw.size()},
+                    change_value,
+                    true,
+                });
+            }
+
+            const size_t action_count = EstimatePrivateBundleActions(spend_infos.size(), output_infos.size());
+            if (action_count == 0 || action_count > PRIVATE_WALLET_MAX_ACTIONS) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{_("Private transaction would exceed the maximum Orchard action count.")};
+            }
+
+            if (coin_control.m_locktime) {
+                txNew.nLockTime = coin_control.m_locktime.value();
+            } else {
+                FastRandomContext rng_fast;
+                DiscourageFeeSniping(txNew, rng_fast, wallet.chain(), wallet.GetLastBlockHash(), wallet.GetLastBlockHeight());
+            }
+
+            const auto estimate_start{SteadyClock::now()};
+            const TxSize estimated_size{EstimatePrivateTransactionSize(txNew, action_count, private_root, /*value_balance=*/0)};
+            const int64_t estimated_private_delta{EstimatePrivateBundleWeightDelta(txNew, action_count, private_root, /*value_balance=*/0)};
+            const CAmount fee_needed = fee_rate.GetFee(estimated_size.vsize);
+            estimate_ms += Ticks<std::chrono::milliseconds>(SteadyClock::now() - estimate_start);
+            if (fee_needed != fee) {
+                fee = fee_needed;
+                CleansePreparedPrivateSpends(prepared);
+                prepared.clear();
+                continue;
+            }
+
+            auto sighash_callback = [&txNew](const CPrivateBundle& effects_bundle, uint256& sighash_out, std::string& error) {
+                CMutableTransaction sighash_tx{txNew};
+                sighash_tx.m_private_bundle = effects_bundle;
+                sighash_out = PrivateBundleSighash(sighash_tx);
+                error.clear();
+                return true;
+            };
+
+            CPrivateBundle bundle;
+            const auto proof_start{SteadyClock::now()};
+            auto build_result = sign
+                ? BuildPrivateOrchardBundleWithSighashCallback(
+                    Span<const PrivateOrchardSpendInfo>{spend_infos},
+                    Span<const PrivateOrchardOutputInfo>{output_infos},
+                    private_root,
+                    sighash_callback,
+                    bundle,
+                    private_error)
+                : BuildPrivateOrchardBundleEffectsOnly(
+                    Span<const PrivateOrchardSpendInfo>{spend_infos},
+                    Span<const PrivateOrchardOutputInfo>{output_infos},
+                    private_root,
+                    bundle,
+                    private_error);
+            proof_ms += Ticks<std::chrono::milliseconds>(SteadyClock::now() - proof_start);
+            if (build_result != PrivateOrchardBuildResult::OK) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{Untranslated(private_error.empty() ? "failed to build private Orchard bundle" : private_error)};
+            }
+
+            std::string weight_error;
+            if (!CheckPrivateWeightEstimate(txNew, bundle, action_count, estimated_private_delta, weight_error)) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{Untranslated(weight_error)};
+            }
+
+            txNew.m_private_bundle = std::move(bundle);
+            CTransactionRef tx = MakeTransactionRef(txNew);
+
+            if (sign) {
+                const auto verify_start{SteadyClock::now()};
+                std::string verify_error;
+                if (VerifyPrivateOrchardBundle(*tx, verify_error) != PrivateOrchardVerifyResult::OK) {
+                    CleansePreparedPrivateSpends(prepared);
+                    return util::Error{Untranslated(verify_error.empty() ? "private Orchard bundle verification failed" : verify_error)};
+                }
+                verify_ms += Ticks<std::chrono::milliseconds>(SteadyClock::now() - verify_start);
+            }
+
+            const int64_t actual_weight = sign ? static_cast<int64_t>(GetTransactionWeight(*tx)) : estimated_size.weight;
+            const int64_t actual_vsize = sign ? static_cast<int64_t>(GetVirtualTransactionSize(*tx)) : estimated_size.vsize;
+            if (actual_vsize > estimated_size.vsize) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{Untranslated(strprintf("private Orchard vsize estimate mismatch: estimated=%d actual=%d", estimated_size.vsize, actual_vsize))};
+            }
+
+            if (actual_weight > MAX_STANDARD_TX_WEIGHT) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{_("Transaction too large")};
+            }
+            if (fee > wallet.m_default_max_tx_fee) {
+                CleansePreparedPrivateSpends(prepared);
+                return util::Error{TransactionErrorString(TransactionError::MAX_FEE_EXCEEDED)};
+            }
+            if (gArgs.GetBoolArg("-walletrejectlongchains", DEFAULT_WALLET_REJECT_LONG_CHAINS)) {
+                auto result = wallet.chain().checkChainLimits(tx);
+                if (!result) {
+                    CleansePreparedPrivateSpends(prepared);
+                    return util::Error{util::ErrorString(result)};
+                }
+            }
+
+            final_tx = tx;
+            final_fee = fee;
+            final_estimated_vsize = estimated_size.vsize;
+            final_actual_vsize = actual_vsize;
+            final_attempt = attempt + 1;
+            final_private_spend_note_ids.clear();
+            final_private_spend_note_ids.reserve(selected.size());
+            for (const CPrivateWalletNote* note : selected) {
+                final_private_spend_note_ids.push_back(note->cmx);
+            }
+            if (!sign) {
+                final_private_psbt_records.clear();
+
+                CPrivatePSBTOrchardBundlePlan plan;
+                plan.anchor = private_root;
+                plan.value_balance = tx->m_private_bundle->GetValueBalance();
+                plan.spend_count = static_cast<uint32_t>(prepared.size());
+                plan.output_count = static_cast<uint32_t>(output_infos.size());
+                final_private_psbt_records.push_back(MakeNitoPSBTOrchardBundlePlanProprietary(plan));
+
+                for (uint64_t spend_index = 0; spend_index < prepared.size(); ++spend_index) {
+                    const PreparedPrivateSpend& spend = prepared[spend_index];
+                    const CPrivateWalletNote& note = *spend.note;
+                    CPrivatePSBTOrchardSpendMaterial material;
+                    material.cmx = note.cmx;
+                    material.nullifier = note.nullifier;
+                    material.value = note.value;
+                    material.derivation_version = note.derivation_version;
+                    material.account = note.account;
+                    material.internal = note.internal;
+                    material.diversifier_index = note.diversifier_index;
+                    material.commitment_index = note.commitment_index;
+                    material.action_index = note.action_index;
+                    material.recipient_raw = note.recipient_raw;
+                    material.rho = note.rho;
+                    material.rseed = note.rseed;
+                    material.merkle_path.assign(spend.merkle_path.begin(), spend.merkle_path.end());
+                    final_private_psbt_records.push_back(MakeNitoPSBTOrchardSpendMaterialProprietary(spend_index, material));
+                }
+
+                for (uint64_t output_index = 0; output_index < output_infos.size(); ++output_index) {
+                    const PrivateOrchardOutputInfo& output = output_infos[output_index];
+                    CPrivatePSBTOrchardOutputMaterial material;
+                    material.recipient_raw.assign(output.recipient_raw.begin(), output.recipient_raw.end());
+                    material.value = output.value;
+                    material.ovk_internal = output.ovk_internal;
+                    final_private_psbt_records.push_back(MakeNitoPSBTOrchardOutputMaterialProprietary(output_index, material));
+                }
+            }
+            break;
+        }
+
+        CleansePreparedPrivateSpends(prepared);
+
+        if (!final_tx) {
+            return util::Error{_("Unable to converge Nito.network private transaction fee calculation.")};
+        }
+
+        wallet.WalletLogPrintf("Private Coin Selection: Source:private Notes:%u Fee:%d VSize:%u EstimateVSize:%u Attempts:%d SelectMs:%d EstimateMs:%d ProofMs:%d VerifyMs:%d BuildMs:%d\n",
+            static_cast<unsigned>(final_tx->m_private_bundle ? final_tx->m_private_bundle->effects.actions.size() : 0),
+            final_fee,
+            static_cast<unsigned>(final_actual_vsize),
+            static_cast<unsigned>(final_estimated_vsize),
+            final_attempt,
+            select_ms,
+            estimate_ms,
+            proof_ms,
+            verify_ms,
+            Ticks<std::chrono::milliseconds>(SteadyClock::now() - private_build_start));
+
+        CreatedTransactionResult result(final_tx, final_fee, std::nullopt, feeCalc);
+        result.private_psbt_records = std::move(final_private_psbt_records);
+        result.private_spend_note_ids = std::move(final_private_spend_note_ids);
+        return result;
+    };
+
+    auto build_from_transparent_coins = [&]() EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet) -> util::Result<CreatedTransactionResult> {
+        const auto private_build_start{SteadyClock::now()};
+        if (!has_private_recipient) {
+            return util::Error{_("shieldtoaddress requires nito1x private recipients only.")};
+        }
+
+        uint256 private_root;
+        uint64_t private_commitment_count{0};
+        if (auto root_res = load_private_root(private_root, private_commitment_count); !root_res) {
+            return util::Error{util::ErrorString(root_res)};
+        }
+
+        CAmount fee{fee_rate.GetFee(1000)};
+        CTransactionRef final_tx;
+        CAmount final_fee{0};
+        int64_t select_ms{0};
+        int64_t estimate_ms{0};
+        int64_t proof_ms{0};
+        int64_t sign_ms{0};
+        int64_t verify_ms{0};
+        int64_t final_estimated_vsize{0};
+        int64_t final_actual_vsize{0};
+        int final_attempt{0};
+
+        const OutputType change_type = wallet.TransactionChangeType(coin_control.m_change_type ? *coin_control.m_change_type : wallet.m_default_change_type, vecSend);
+        ReserveDestination reservedest(&wallet, change_type);
+        CScript scriptChange;
+        bool use_source_change{false};
+        bool change_key_unavailable{false};
+        if (!std::get_if<CNoDestination>(&coin_control.destChange)) {
+            scriptChange = GetScriptForDestination(coin_control.destChange);
+        } else {
+            CTxDestination dest;
+            auto op_dest = reservedest.GetReservedDestination(/*internal=*/true);
+            if (!op_dest) {
+                change_key_unavailable = !CanUseSourceChange(wallet, coin_control, change_type);
+                use_source_change = !change_key_unavailable;
+            } else {
+                dest = *op_dest;
+                scriptChange = GetScriptForDestination(dest);
+            }
+            CHECK_NONFATAL(IsValidDestination(dest) != scriptChange.empty());
+            if (change_key_unavailable) scriptChange = BuildTransparentChangeSizingScript();
+        }
+        bool final_uses_transparent_change{false};
+
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            if (fee < 0 || !MoneyRange(fee)) {
+                return util::Error{_("Private transaction fee is out of range.")};
+            }
+
+            auto recipient_values_res = calculate_recipient_values(fee);
+            if (!recipient_values_res) return util::Error{util::ErrorString(recipient_values_res)};
+            const std::vector<CAmount>& recipient_values = *recipient_values_res;
+
+            auto private_output_sum_res = sum_recipient_values(Span<const CAmount>{recipient_values}, /*private_outputs=*/true);
+            if (!private_output_sum_res) return util::Error{util::ErrorString(private_output_sum_res)};
+            const CAmount private_output_sum = *private_output_sum_res;
+
+            auto transparent_output_sum_res = sum_recipient_values(Span<const CAmount>{recipient_values}, /*private_outputs=*/false);
+            if (!transparent_output_sum_res) return util::Error{util::ErrorString(transparent_output_sum_res)};
+            const CAmount transparent_output_sum = *transparent_output_sum_res;
+
+            CAmount spend_target_sum{private_output_sum};
+            if (!MoneyAddSigned(spend_target_sum, transparent_output_sum, spend_target_sum)) {
+                return util::Error{_("Private shielding spend target out of range.")};
+            }
+
+            CAmount selection_target{subtract_fee_from_outputs ? recipients_sum : spend_target_sum};
+            if (!subtract_fee_from_outputs && !MoneyAddSigned(selection_target, fee, selection_target)) {
+                return util::Error{_("Private shielding target amount out of range.")};
+            }
+
+            const auto select_start{SteadyClock::now()};
+            FastRandomContext rng_fast;
+            CoinSelectionParams coin_selection_params{rng_fast};
+            coin_selection_params.m_avoid_partial_spends = coin_control.m_avoid_partial_spends;
+            coin_selection_params.m_include_unsafe_inputs = coin_control.m_include_unsafe_inputs;
+            coin_selection_params.m_long_term_feerate = wallet.m_consolidate_feerate;
+            coin_selection_params.m_discard_feerate = GetDiscardRate(wallet);
+            coin_selection_params.m_effective_feerate = fee_rate;
+            coin_selection_params.m_subtract_fee_outputs = subtract_fee_from_outputs;
+            coin_selection_params.min_viable_change = 1;
+            coin_selection_params.tx_noinputs_size = 10;
+
+            PreSelectedInputs preset_inputs;
+            if (coin_control.HasSelected()) {
+                auto res_fetch_inputs = FetchSelectedInputs(wallet, coin_control, coin_selection_params);
+                if (!res_fetch_inputs) return util::Error{util::ErrorString(res_fetch_inputs)};
+                preset_inputs = *res_fetch_inputs;
+            }
+
+            CoinsResult available_coins;
+            if (coin_control.m_allow_other_inputs) {
+                available_coins = AvailableCoins(wallet, &coin_control, coin_selection_params.m_effective_feerate);
+            }
+
+            auto select_coins_res = SelectCoins(wallet, available_coins, preset_inputs, selection_target, coin_control, coin_selection_params);
+            if (!select_coins_res) {
+                const bilingual_str& err = util::ErrorString(select_coins_res);
+                return util::Error{err.empty() ? _("Insufficient funds") : err};
+            }
+            const SelectionResult& result = *select_coins_res;
+            std::vector<std::shared_ptr<COutput>> selected_coins = result.GetShuffledInputVector();
+            select_ms += Ticks<std::chrono::milliseconds>(SteadyClock::now() - select_start);
+
+            if (coin_control.HasSelected() && coin_control.HasSelectedOrder()) {
+                std::stable_sort(selected_coins.begin(), selected_coins.end(),
+                    [&coin_control](const std::shared_ptr<COutput>& a, const std::shared_ptr<COutput>& b) {
+                        auto a_pos = coin_control.GetSelectionPos(a->outpoint);
+                        auto b_pos = coin_control.GetSelectionPos(b->outpoint);
+                        if (a_pos.has_value() && b_pos.has_value()) {
+                            return a_pos.value() < b_pos.value();
+                        }
+                        return a_pos.has_value() && !b_pos.has_value();
+                    });
+            }
+
+            const CAmount selected_value = result.GetSelectedValue();
+            CScript selected_change_script{scriptChange};
+            if (use_source_change) {
+                auto change_dest_res = GetDominantTransparentChangeDestination(wallet, result);
+                if (!change_dest_res) return util::Error{util::ErrorString(change_dest_res)};
+                selected_change_script = GetScriptForDestination(*change_dest_res);
+            }
+            CTxOut change_prototype_txout(0, selected_change_script);
+            const CAmount transparent_change_dust = GetDustThreshold(change_prototype_txout, wallet.chain().relayDustFee());
+            CAmount transparent_change_value = selected_value - spend_target_sum - fee;
+            if (transparent_change_value < 0 || !MoneyRange(transparent_change_value)) {
+                return util::Error{_("Private shielding transparent change amount out of range.")};
+            }
+            const bool uses_transparent_change = transparent_change_value > transparent_change_dust;
+            if (uses_transparent_change && change_key_unavailable) {
+                return util::Error{_("Transaction needs a change address, but we can't generate it.")};
+            }
+
+            std::vector<PrivateOrchardOutputInfo> output_infos;
+            output_infos.reserve(private_recipient_count);
+            for (size_t i = 0; i < vecSend.size(); ++i) {
+                if (!vecSend[i].IsPrivate()) continue;
+                output_infos.push_back(PrivateOrchardOutputInfo{
+                    Span<const unsigned char>{vecSend[i].private_raw_address->data(), vecSend[i].private_raw_address->size()},
+                    recipient_values[i],
+                    false,
+                });
+            }
+            const size_t action_count = EstimatePrivateBundleActions(/*spend_count=*/0, output_infos.size());
+            if (action_count == 0 || action_count > PRIVATE_WALLET_MAX_ACTIONS) {
+                return util::Error{_("Private shielding transaction would exceed the maximum Orchard action count.")};
+            }
+
+            CMutableTransaction txNew;
+            if (coin_control.m_version) {
+                txNew.nVersion = coin_control.m_version.value();
+            }
+
+            bool use_anti_fee_sniping = true;
+            const uint32_t default_sequence{coin_control.m_signal_bip125_rbf.value_or(wallet.m_signal_rbf) ? MAX_BIP125_RBF_SEQUENCE : CTxIn::MAX_SEQUENCE_NONFINAL};
+            for (const std::shared_ptr<COutput>& coin : selected_coins) {
+                std::optional<uint32_t> sequence = coin_control.GetSequence(coin->outpoint);
+                if (sequence) {
+                    use_anti_fee_sniping = false;
+                }
+                txNew.vin.emplace_back(coin->outpoint, CScript{}, sequence.value_or(default_sequence));
+
+                auto scripts = coin_control.GetScripts(coin->outpoint);
+                if (scripts.first) {
+                    txNew.vin.back().scriptSig = *scripts.first;
+                }
+                if (scripts.second) {
+                    txNew.vin.back().scriptWitness = *scripts.second;
+                }
+            }
+            if (coin_control.m_locktime) {
+                txNew.nLockTime = coin_control.m_locktime.value();
+                use_anti_fee_sniping = false;
+            }
+            if (use_anti_fee_sniping) {
+                DiscourageFeeSniping(txNew, rng_fast, wallet.chain(), wallet.GetLastBlockHash(), wallet.GetLastBlockHeight());
+            }
+            auto add_transparent_outputs_res = add_transparent_outputs(txNew, Span<const CAmount>{recipient_values});
+            if (!add_transparent_outputs_res) {
+                return util::Error{util::ErrorString(add_transparent_outputs_res)};
+            }
+            if (*add_transparent_outputs_res != transparent_output_sum) {
+                return util::Error{_("Transparent output total amount out of range.")};
+            }
+            if (uses_transparent_change) {
+                CTxOut change_output(transparent_change_value, selected_change_script);
+                if (IsDust(change_output, wallet.chain().relayDustFee())) {
+                    return util::Error{_("Private shielding transparent change amount is dust.")};
+                }
+                const unsigned int change_pos_out = rng_fast.randrange(txNew.vout.size() + 1);
+                txNew.vout.insert(txNew.vout.begin() + change_pos_out, std::move(change_output));
+            }
+
+            CMutableTransaction tx_without_private{txNew};
+            const auto estimate_start{SteadyClock::now()};
+            int64_t estimated_private_delta{0};
+            auto estimated_size_res = EstimateSignedTransparentPrivateTransactionSize(
+                tx_without_private,
+                wallet,
+                coin_control,
+                action_count,
+                private_root,
+                /*value_balance=*/0,
+                estimated_private_delta);
+            if (!estimated_size_res) {
+                return util::Error{util::ErrorString(estimated_size_res)};
+            }
+            const TxSize estimated_size{*estimated_size_res};
+            estimate_ms += Ticks<std::chrono::milliseconds>(SteadyClock::now() - estimate_start);
+
+            const CAmount fee_needed = fee_rate.GetFee(estimated_size.vsize) + result.GetTotalBumpFees();
+            const CAmount actual_fee = selected_value - spend_target_sum - (uses_transparent_change ? transparent_change_value : 0);
+            if (actual_fee < fee_needed) {
+                fee = fee_needed;
+                continue;
+            }
+
+            auto sighash_callback = [&txNew](const CPrivateBundle& effects_bundle, uint256& sighash_out, std::string& error) {
+                CMutableTransaction sighash_tx{txNew};
+                sighash_tx.m_private_bundle = effects_bundle;
+                sighash_out = PrivateBundleSighash(sighash_tx);
+                error.clear();
+                return true;
+            };
+
+            CPrivateBundle bundle;
+            std::string private_error;
+            const auto proof_start{SteadyClock::now()};
+            auto build_result = BuildPrivateOrchardBundleWithSighashCallback(
+                Span<const PrivateOrchardSpendInfo>{},
+                Span<const PrivateOrchardOutputInfo>{output_infos},
+                private_root,
+                sighash_callback,
+                bundle,
+                private_error);
+            proof_ms += Ticks<std::chrono::milliseconds>(SteadyClock::now() - proof_start);
+            if (build_result != PrivateOrchardBuildResult::OK) {
+                return util::Error{Untranslated(private_error.empty() ? "failed to build private shielding Orchard bundle" : private_error)};
+            }
+
+            std::string weight_error;
+            if (!CheckPrivateWeightEstimate(tx_without_private, bundle, action_count, estimated_private_delta, weight_error)) {
+                return util::Error{Untranslated(weight_error)};
+            }
+
+            txNew.m_private_bundle = std::move(bundle);
+            if (!sign) {
+                for (CTxIn& txin : txNew.vin) {
+                    txin.scriptSig.clear();
+                    txin.scriptWitness.SetNull();
+                }
+            }
+
+            if (sign) {
+                const auto sign_start{SteadyClock::now()};
+                if (!wallet.SignTransaction(txNew)) {
+                    return util::Error{_("Signing transaction failed")};
+                }
+                sign_ms += Ticks<std::chrono::milliseconds>(SteadyClock::now() - sign_start);
+            }
+
+            CTransactionRef tx = MakeTransactionRef(txNew);
+
+            const auto verify_start{SteadyClock::now()};
+            std::string verify_error;
+            if (VerifyPrivateOrchardBundle(*tx, verify_error) != PrivateOrchardVerifyResult::OK) {
+                return util::Error{Untranslated(verify_error.empty() ? "private Orchard bundle verification failed" : verify_error)};
+            }
+            verify_ms += Ticks<std::chrono::milliseconds>(SteadyClock::now() - verify_start);
+
+            const int64_t tx_weight = sign ? static_cast<int64_t>(GetTransactionWeight(*tx)) : estimated_size.weight;
+            const int64_t tx_vsize = sign ? static_cast<int64_t>(GetVirtualTransactionSize(*tx)) : estimated_size.vsize;
+            if (tx_vsize > estimated_size.vsize) {
+                return util::Error{Untranslated(strprintf("private shielding vsize estimate mismatch: estimated=%d actual=%d", estimated_size.vsize, tx_vsize))};
+            }
+
+            if (tx_weight > MAX_STANDARD_TX_WEIGHT) {
+                return util::Error{_("Transaction too large")};
+            }
+            if (actual_fee > wallet.m_default_max_tx_fee) {
+                return util::Error{TransactionErrorString(TransactionError::MAX_FEE_EXCEEDED)};
+            }
+            if (gArgs.GetBoolArg("-walletrejectlongchains", DEFAULT_WALLET_REJECT_LONG_CHAINS)) {
+                auto chain_limit = wallet.chain().checkChainLimits(tx);
+                if (!chain_limit) {
+                    return util::Error{util::ErrorString(chain_limit)};
+                }
+            }
+
+            final_tx = tx;
+            final_fee = actual_fee;
+            final_estimated_vsize = estimated_size.vsize;
+            final_actual_vsize = tx_vsize;
+            final_attempt = attempt + 1;
+            final_uses_transparent_change = uses_transparent_change;
+
+            wallet.WalletLogPrintf("Private Coin Selection: Source:transparent Algorithm:%s Waste:%d Fee:%d VSize:%u EstimateVSize:%u Attempts:%d SelectMs:%d EstimateMs:%d ProofMs:%d SignMs:%d VerifyMs:%d BuildMs:%d\n",
+                GetAlgorithmName(result.GetAlgo()),
+                result.GetWaste(),
+                actual_fee,
+                static_cast<unsigned>(final_actual_vsize),
+                static_cast<unsigned>(final_estimated_vsize),
+                final_attempt,
+                select_ms,
+                estimate_ms,
+                proof_ms,
+                sign_ms,
+                verify_ms,
+                Ticks<std::chrono::milliseconds>(SteadyClock::now() - private_build_start));
+
+            break;
+        }
+
+        if (!final_tx) {
+            return util::Error{_("Unable to converge Nito.network transparent-to-private transaction fee calculation.")};
+        }
+        if (final_uses_transparent_change) {
+            reservedest.KeepDestination();
+        }
+        return CreatedTransactionResult(final_tx, final_fee, std::nullopt, feeCalc);
+    };
+
+    switch (coin_control.m_private_tx_source) {
+    case CCoinControl::PrivateTxSource::TRANSPARENT_COINS:
+        return build_from_transparent_coins();
+    case CCoinControl::PrivateTxSource::PRIVATE_NOTES:
+        return build_from_private_notes();
+    case CCoinControl::PrivateTxSource::AUTO:
+        if (has_private_recipient) {
+            return build_from_transparent_coins();
+        }
+        return build_from_private_notes();
+    }
+
+    return util::Error{_("Invalid Nito.network private transaction source.")};
+}
+} // namespace
+
 static util::Result<CreatedTransactionResult> CreateTransactionInternal(
         CWallet& wallet,
         const std::vector<CRecipient>& vecSend,
@@ -983,6 +2310,17 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
         bool sign) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
     AssertLockHeld(wallet.cs_wallet);
+
+    const bool has_private_recipient = std::any_of(vecSend.begin(), vecSend.end(), [](const CRecipient& recipient) {
+        return recipient.IsPrivate();
+    });
+    if (has_private_recipient || coin_control.m_private_tx_source != CCoinControl::PrivateTxSource::AUTO) {
+        if (!wallet.HaveChain() || !wallet.chain().hasOrchardIndex()) {
+            return util::Error{_("The private wallet index is not available. Restart Nito Core with private wallet indexing enabled (-orchardindex=1) before using Bech32x wallet features.")};
+        }
+        wallet.RefreshPrivateCommitmentIndexes();
+        return CreatePrivateTransactionInternal(wallet, vecSend, change_pos, coin_control, sign);
+    }
 
     FastRandomContext rng_fast;
     CMutableTransaction txNew; // The resulting transaction that we make
@@ -1013,45 +2351,29 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
 
     // Create change script that will be used if we need change
     CScript scriptChange;
-    bilingual_str error; // possible error str
+    bool use_source_change{false};
+    bool change_key_unavailable{false};
 
-    // coin control: send change to custom address
+    // Internal coin control may still force a change destination for replacement
+    // transactions. Normal wallet sends reserve a fresh internal destination.
     if (!std::get_if<CNoDestination>(&coin_control.destChange)) {
         scriptChange = GetScriptForDestination(coin_control.destChange);
     } else { // no coin control: send change to newly generated address
-        // Note: We use a new key here to keep it from being obvious which side is the change.
-        //  The drawback is that by not reusing a previous key, the change may be lost if a
-        //  backup is restored, if the backup doesn't have the new private key for the change.
-        //  If we reused the old key, it would be possible to add code to look for and
-        //  rediscover unknown transactions that were written with keys of ours to recover
-        //  post-backup change.
-
-        // Reserve a new key pair from key pool. If it fails, provide a dummy
-        // destination in case we don't need change.
         CTxDestination dest;
-        auto op_dest = reservedest.GetReservedDestination(true);
+        auto op_dest = reservedest.GetReservedDestination(/*internal=*/true);
         if (!op_dest) {
-            error = _("Transaction needs a change address, but we can't generate it.") + Untranslated(" ") + util::ErrorString(op_dest);
+            // Keep the source-return fallback for imported/watch-only wallets,
+            // without overriding an explicit type or exhausting an HD keypool.
+            change_key_unavailable = !CanUseSourceChange(wallet, coin_control, change_type);
+            use_source_change = !change_key_unavailable;
         } else {
             dest = *op_dest;
             scriptChange = GetScriptForDestination(dest);
         }
-        // A valid destination implies a change script (and
-        // vice-versa). An empty change script will abort later, if the
-        // change keypool ran out, but change is required.
         CHECK_NONFATAL(IsValidDestination(dest) != scriptChange.empty());
-    }
-    CTxOut change_prototype_txout(0, scriptChange);
-    coin_selection_params.change_output_size = GetSerializeSize(change_prototype_txout);
-
-    // Get size of spending the change output
-    int change_spend_size = CalculateMaximumSignedInputSize(change_prototype_txout, &wallet, /*coin_control=*/nullptr);
-    // If the wallet doesn't know how to sign change output, assume p2sh-p2wpkh
-    // as lower-bound to allow BnB to do it's thing
-    if (change_spend_size == -1) {
-        coin_selection_params.change_spend_size = DUMMY_NESTED_P2WPKH_INPUT_SIZE;
-    } else {
-        coin_selection_params.change_spend_size = (size_t)change_spend_size;
+        if (use_source_change || change_key_unavailable) {
+            scriptChange = BuildTransparentChangeSizingScript();
+        }
     }
 
     // Set discard feerate
@@ -1070,22 +2392,9 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
         return util::Error{strprintf(_("Fee estimation failed. Fallbackfee is disabled. Wait a few blocks or enable %s."), "-fallbackfee")};
     }
 
-    // Calculate the cost of change
-    // Cost of change is the cost of creating the change output + cost of spending the change output in the future.
-    // For creating the change output now, we use the effective feerate.
-    // For spending the change output in the future, we use the discard feerate for now.
-    // So cost of change = (change output size * effective feerate) + (size of spending change output * discard feerate)
-    coin_selection_params.m_change_fee = coin_selection_params.m_effective_feerate.GetFee(coin_selection_params.change_output_size);
-    coin_selection_params.m_cost_of_change = coin_selection_params.m_discard_feerate.GetFee(coin_selection_params.change_spend_size) + coin_selection_params.m_change_fee;
+    SetTransparentChangeSizing(wallet, coin_selection_params, scriptChange);
 
     coin_selection_params.m_min_change_target = GenerateChangeTarget(std::floor(recipients_sum / vecSend.size()), coin_selection_params.m_change_fee, rng_fast);
-
-    // The smallest change amount should be:
-    // 1. at least equal to dust threshold
-    // 2. at least 1 sat greater than fees to spend it at m_discard_feerate
-    const auto dust = GetDustThreshold(change_prototype_txout, coin_selection_params.m_discard_feerate);
-    const auto change_spend_fee = coin_selection_params.m_discard_feerate.GetFee(coin_selection_params.change_spend_size);
-    coin_selection_params.min_viable_change = std::max(change_spend_fee + 1, dust);
 
     // Static vsize overhead + outputs vsize. 4 nVersion, 4 nLocktime, 1 input count, 1 witness overhead (dummy, flag, stack size)
     coin_selection_params.tx_noinputs_size = 10 + GetSizeOfCompactSize(vecSend.size()); // bytes for output count
@@ -1144,8 +2453,18 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
            result.GetWaste(),
            result.GetSelectedValue());
 
+    if (use_source_change) {
+        auto change_dest_res = GetDominantTransparentChangeDestination(wallet, result);
+        if (!change_dest_res) return util::Error{util::ErrorString(change_dest_res)};
+        scriptChange = GetScriptForDestination(*change_dest_res);
+        SetTransparentChangeSizing(wallet, coin_selection_params, scriptChange);
+    }
+
     const CAmount change_amount = result.GetChange(coin_selection_params.min_viable_change, coin_selection_params.m_change_fee);
     if (change_amount > 0) {
+        if (change_key_unavailable) {
+            return util::Error{_("Transaction needs a change address, but we can't generate it.")};
+        }
         CTxOut newTxOut(change_amount, scriptChange);
         if (!change_pos) {
             // Insert change txn at random position:
@@ -1286,11 +2605,6 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
         return util::Error{Untranslated(STR_INTERNAL_BUG("Fee needed > fee paid"))};
     }
 
-    // Give up if change keypool ran out and change is required
-    if (scriptChange.empty() && change_pos) {
-        return util::Error{error};
-    }
-
     if (sign && !wallet.SignTransaction(txNew)) {
         return util::Error{_("Signing transaction failed")};
     }
@@ -1317,9 +2631,9 @@ static util::Result<CreatedTransactionResult> CreateTransactionInternal(
         }
     }
 
-    // Before we return success, we assume any change key will be used to prevent
-    // accidental reuse.
-    reservedest.KeepDestination();
+    if (change_pos) {
+        reservedest.KeepDestination();
+    }
 
     wallet.WalletLogPrintf("Coin Selection: Algorithm:%s, Waste Metric Score:%d\n", GetAlgorithmName(result.GetAlgo()), result.GetWaste());
     wallet.WalletLogPrintf("Fee Calculation: Fee:%d Bytes:%u Tgt:%d (requested %d) Reason:\"%s\" Decay %.5f: Estimation: (%g - %g) %.2f%% %.1f/(%.1f %d mem %.1f out) Fail: (%g - %g) %.2f%% %.1f/(%.1f %d mem %.1f out)\n",
@@ -1349,6 +2663,9 @@ util::Result<CreatedTransactionResult> CreateTransaction(
     }
 
     LOCK(wallet.cs_wallet);
+    if (wallet.IsAvailableBalanceSyncPending()) {
+        return util::Error{WalletSyncPendingMessage()};
+    }
 
     auto res = CreateTransactionInternal(wallet, vecSend, change_pos, coin_control, sign);
     TRACE4(coin_selection, normal_create_tx_internal,
@@ -1358,6 +2675,9 @@ util::Result<CreatedTransactionResult> CreateTransaction(
            res && res->change_pos.has_value() ? int32_t(*res->change_pos) : -1);
     if (!res) return res;
     const auto& txr_ungrouped = *res;
+    if (txr_ungrouped.tx->HasPrivateBundle()) {
+        return res;
+    }
     // try with avoidpartialspends unless it's enabled already
     if (txr_ungrouped.fee > 0 /* 0 means non-functional fee rate estimation */ && wallet.m_max_aps_fee > -1 && !coin_control.m_avoid_partial_spends) {
         TRACE1(coin_selection, attempting_aps_create_tx, wallet.GetName().c_str());
@@ -1387,7 +2707,7 @@ util::Result<CreatedTransactionResult> CreateTransaction(
     return res;
 }
 
-util::Result<CreatedTransactionResult> FundTransaction(CWallet& wallet, const CMutableTransaction& tx, const std::vector<CRecipient>& vecSend, std::optional<unsigned int> change_pos, bool lockUnspents, CCoinControl coinControl)
+util::Result<CreatedTransactionResult> FundTransaction(CWallet& wallet, const CMutableTransaction& tx, const std::vector<CRecipient>& vecSend, std::optional<unsigned int> change_pos, bool lockUnspents, CCoinControl coinControl, bool sign)
 {
     // We want to make sure tx.vout is not used now that we are passing outputs as a vector of recipients.
     // This sets us up to remove tx completely in a future PR in favor of passing the inputs directly.
@@ -1398,6 +2718,11 @@ util::Result<CreatedTransactionResult> FundTransaction(CWallet& wallet, const CM
 
     // Set the user desired version
     coinControl.m_version = tx.nVersion;
+    if (sign &&
+        coinControl.m_private_tx_source == CCoinControl::PrivateTxSource::PRIVATE_NOTES &&
+        tx.nVersion == CTransaction::CURRENT_VERSION) {
+        coinControl.m_version.reset();
+    }
 
     // Acquire the locks to prevent races to the new locked unspents between the
     // CreateTransaction call and LockCoin calls (when lockUnspents is true).
@@ -1427,7 +2752,7 @@ util::Result<CreatedTransactionResult> FundTransaction(CWallet& wallet, const CM
         preset_txin.SetScriptWitness(txin.scriptWitness);
     }
 
-    auto res = CreateTransaction(wallet, vecSend, change_pos, coinControl, false);
+    auto res = CreateTransaction(wallet, vecSend, change_pos, coinControl, sign);
     if (!res) {
         return res;
     }

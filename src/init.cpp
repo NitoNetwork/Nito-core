@@ -24,12 +24,15 @@
 #include <common/args.h>
 #include <common/system.h>
 #include <consensus/amount.h>
+#include <consensus/private_tx_verify.h>
 #include <deploymentstatus.h>
 #include <hash.h>
 #include <httprpc.h>
 #include <httpserver.h>
 #include <index/blockfilterindex.h>
 #include <index/coinstatsindex.h>
+#include <index/orchardindex.h>
+#include <index/transparenthistoryindex.h>
 #include <index/txindex.h>
 #include <init/common.h>
 #include <interfaces/chain.h>
@@ -91,6 +94,7 @@
 #include <walletinitinterface.h>
 
 #include <algorithm>
+#include <array>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
@@ -98,6 +102,7 @@
 #include <functional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -139,6 +144,41 @@ static constexpr bool DEFAULT_PROXYRANDOMIZE{true};
 static constexpr bool DEFAULT_REST_ENABLE{false};
 static constexpr bool DEFAULT_I2P_ACCEPT_INCOMING{true};
 static constexpr bool DEFAULT_STOPAFTERBLOCKIMPORT{false};
+static constexpr bool DEFAULT_NITO_ANCHOR_PEERS{true};
+
+static constexpr std::array<std::string_view, 2> NITO_MAINNET_ANCHOR_PEERS{
+    "87.106.216.17:8820",
+    "217.160.149.211:8820",
+};
+
+static bool HasConfiguredPeer(const std::vector<std::string>& peers, std::string_view peer)
+{
+    const std::string peer_with_port{peer};
+    const std::string peer_without_port{peer.substr(0, peer.find(':'))};
+    return std::any_of(peers.begin(), peers.end(), [&](const std::string& configured) {
+        return configured == peer_with_port || configured == peer_without_port;
+    });
+}
+
+static size_t AddNitoMainnetAnchorPeers(std::vector<std::string>& added_nodes)
+{
+    size_t added_count{0};
+    for (const auto peer : NITO_MAINNET_ANCHOR_PEERS) {
+        if (!HasConfiguredPeer(added_nodes, peer)) {
+            added_nodes.emplace_back(peer);
+            ++added_count;
+        }
+    }
+    return added_count;
+}
+
+static bool OnlyNetAllowsIpv4(const ArgsManager& args)
+{
+    const std::vector<std::string> onlynets{args.GetArgs("-onlynet")};
+    return onlynets.empty() || std::any_of(onlynets.begin(), onlynets.end(), [](const std::string& net) {
+        return net == "ipv4";
+    });
+}
 
 #ifdef WIN32
 // Win32 LevelDB doesn't use filedescriptors, and the ones used for
@@ -260,6 +300,12 @@ void Interrupt(NodeContext& node)
     if (g_txindex) {
         g_txindex->Interrupt();
     }
+    if (auto* orchard_index = GetOrchardIndex()) {
+        orchard_index->Interrupt();
+    }
+    if (auto* transparent_history_index = GetTransparentHistoryIndex()) {
+        transparent_history_index->Interrupt();
+    }
     ForEachBlockFilterIndex([](BlockFilterIndex& index) { index.Interrupt(); });
     if (g_coin_stats_index) {
         g_coin_stats_index->Interrupt();
@@ -297,10 +343,11 @@ void Shutdown(NodeContext& node)
 
     StopTorControl();
 
-    // After everything has been shut down, but before things get flushed, stop the
-    // scheduler and load block thread.
-    if (node.scheduler) node.scheduler->stop();
     if (node.chainman && node.chainman->m_thread_load.joinable()) node.chainman->m_thread_load.join();
+    // After everything has been shut down, but before things get flushed, stop the
+    // scheduler. The load block thread may call SyncWithValidationInterfaceQueue(),
+    // so it must be joined while the scheduler is still servicing callbacks.
+    if (node.scheduler) node.scheduler->stop();
 
     // After the threads that potentially access these pointers have been stopped,
     // destruct and reset all to nullptr.
@@ -343,6 +390,14 @@ void Shutdown(NodeContext& node)
     if (g_coin_stats_index) {
         g_coin_stats_index->Stop();
         g_coin_stats_index.reset();
+    }
+    if (auto* orchard_index = GetOrchardIndex()) {
+        orchard_index->Stop();
+        DestroyOrchardIndex();
+    }
+    if (auto* transparent_history_index = GetTransparentHistoryIndex()) {
+        transparent_history_index->Stop();
+        DestroyTransparentHistoryIndex();
     }
     ForEachBlockFilterIndex([](BlockFilterIndex& index) { index.Stop(); });
     DestroyAllBlockFilterIndexes();
@@ -475,7 +530,7 @@ void SetupServerArgs(ArgsManager& argsman)
 #endif
     argsman.AddArg("-blockreconstructionextratxn=<n>", strprintf("Extra transactions to keep in memory for compact block reconstructions (default: %u)", DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-blocksonly", strprintf("Whether to reject transactions from network peers. Automatic broadcast and rebroadcast of any transactions from inbound peers is disabled, unless the peer has the 'forcerelay' permission. RPC transactions are not affected. (default: %u)", DEFAULT_BLOCKSONLY), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-coinstatsindex", strprintf("Maintain coinstats index used by the gettxoutsetinfo RPC (default: %u)", DEFAULT_COINSTATSINDEX), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-coinstatsindex", strprintf("Maintain coinstats index used by the gettxoutsetinfo RPC. Pruned nodes default this off unless explicitly enabled. (default: %u)", DEFAULT_COINSTATSINDEX), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-conf=<file>", strprintf("Specify path to read-only configuration file. Relative paths will be prefixed by datadir location (only useable from command line, not configuration file) (default: %s)", BITCOIN_CONF_FILENAME), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-datadir=<dir>", "Specify data directory", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-dbbatchsize", strprintf("Maximum database write batch size in bytes (default: %u)", nDefaultDbBatchSize), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::OPTIONS);
@@ -487,6 +542,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-maxorphantx=<n>", strprintf("Keep at most <n> unconnectable transactions in memory (default: %u)", DEFAULT_MAX_ORPHAN_TRANSACTIONS), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-mempoolexpiry=<n>", strprintf("Do not keep transactions in the mempool longer than <n> hours (default: %u)", DEFAULT_MEMPOOL_EXPIRY_HOURS), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-minimumchainwork=<hex>", strprintf("Minimum work assumed to exist on a valid chain in hex (default: %s, testnet: %s, signet: %s)", defaultChainParams->GetConsensus().nMinimumChainWork.GetHex(), testnetChainParams->GetConsensus().nMinimumChainWork.GetHex(), signetChainParams->GetConsensus().nMinimumChainWork.GetHex()), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-localchainworkanchor", "Enable the production local anti-rollback chainwork anchor on regtest (default: 0; always enabled on non-mockable networks)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-par=<n>", strprintf("Set the number of script verification threads (0 = auto, up to %d, <0 = leave that many cores free, default: %d)",
         MAX_SCRIPTCHECK_THREADS, DEFAULT_SCRIPTCHECK_THREADS), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-persistmempool", strprintf("Whether to save the mempool on shutdown and load on restart (default: %u)", DEFAULT_PERSIST_MEMPOOL), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
@@ -506,7 +562,10 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-startupnotify=<cmd>", "Execute command on startup.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-shutdownnotify=<cmd>", "Execute command immediately before beginning shutdown. The need for shutdown may be urgent, so be careful not to delay it long (if the command doesn't require interaction with the server, consider having it fork into the background).", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 #endif
-    argsman.AddArg("-txindex", strprintf("Maintain a full transaction index, used by the getrawtransaction rpc call (default: %u)", DEFAULT_TXINDEX), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-txindex", strprintf("Maintain a full transaction index, used by the getrawtransaction rpc call. Pruned nodes default this off and cannot force it on. (default: %u)", DEFAULT_TXINDEX), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-orchardindex", strprintf("Maintain Orchard compact data, spend witnesses and public transaction history for private wallets. Enabled by default also with pruning; use -orchardindex=0 to disable. Required blocks must be indexed before deletion; index storage is additional to the prune target. (default: %u)", DEFAULT_ORCHARDINDEX), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-transparenthistoryindex", strprintf("Maintain a local transparent script history index for complete recovery-phrase wallet restoration. Pruned nodes default this off and cannot force it on. (default: %u)", DEFAULT_TRANSPARENTHISTORYINDEX), ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-transparenthistoryindexcommitdelay=<ms>", "Delay a transparent history index append immediately before its durable commit (regtest only, default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-blockfilterindex=<type>",
                  strprintf("Maintain an index of compact filters by block (default: %s, values: %s).", DEFAULT_BLOCKFILTERINDEX, ListBlockFilterTypes()) +
                  " If <type> is not supplied or if <type> = 1, indexes for all known types are enabled.",
@@ -531,6 +590,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-maxsendbuffer=<n>", strprintf("Maximum per-connection memory usage for the send buffer, <n>*1000 bytes (default: %u)", DEFAULT_MAXSENDBUFFER), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-maxtimeadjustment", strprintf("Maximum allowed median peer time offset adjustment. Local perspective of time may be influenced by outbound peers forward or backward by this amount (default: %u seconds).", DEFAULT_MAX_TIME_ADJUSTMENT), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-maxuploadtarget=<n>", strprintf("Tries to keep outbound traffic under the given target per 24h. Limit does not apply to peers with 'download' permission or blocks created within past week. 0 = no limit (default: %s). Optional suffix units [k|K|m|M|g|G|t|T] (default: M). Lowercase is 1000 base while uppercase is 1024 base", DEFAULT_MAX_UPLOAD_TARGET), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-nitoanchorpeers", strprintf("Attempt to keep Nito's mainnet anchor peers connected as manual peers on startup (default: %u). Ignored on non-mainnet chains, when -connect is used, when -maxconnections=0, or when -onlynet excludes IPv4.", DEFAULT_NITO_ANCHOR_PEERS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-onion=<ip:port>", "Use separate SOCKS5 proxy to reach peers via Tor onion services, set -noonion to disable (default: -proxy)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-i2psam=<ip:port>", "I2P SAM proxy to reach I2P peers and accept I2P connections (default: none)", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-i2pacceptincoming", strprintf("Whether to accept inbound I2P connections (default: %i). Ignored if -i2psam is not set. Listening for inbound I2P connections is done through the SAM proxy, not by binding to a local address and port.", DEFAULT_I2P_ACCEPT_INCOMING), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -540,8 +600,8 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-peerblockfilters", strprintf("Serve compact block filters to peers per BIP 157 (default: %u)", DEFAULT_PEERBLOCKFILTERS), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-txreconciliation", strprintf("Enable transaction reconciliations per BIP 330 (default: %d)", DEFAULT_TXRECONCILIATION_ENABLE), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::CONNECTION);
     // TODO: remove the sentence "Nodes not using ... incoming connections." once the changes from
-    // https://github.com/nito/nito/pull/23542 have become widespread.
-    argsman.AddArg("-port=<port>", strprintf("Listen for connections on <port>. Nodes not using the default ports (default: %u, testnet: %u, signet: %u, regtest: %u) are unlikely to get incoming connections. Not relevant for I2P (see doc/i2p.md).", defaultChainParams->GetDefaultPort(), testnetChainParams->GetDefaultPort(), signetChainParams->GetDefaultPort(), regtestChainParams->GetDefaultPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
+    // https://github.com/bitcoin/bitcoin/pull/23542 have become widespread.
+    argsman.AddArg("-port=<port>", strprintf("Listen for connections on <port>. Nodes not using the default ports (default: %u, testnet: %u, signet: %u, regtest: %u) are unlikely to get incoming connections. If set to a value x, the default onion listening port will be set to x+1. Not relevant for I2P (see doc/i2p.md).", defaultChainParams->GetDefaultPort(), testnetChainParams->GetDefaultPort(), signetChainParams->GetDefaultPort(), regtestChainParams->GetDefaultPort()), ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::CONNECTION);
     argsman.AddArg("-proxy=<ip:port>", "Connect through SOCKS5 proxy, set -noproxy to disable (default: disabled)", ArgsManager::ALLOW_ANY | ArgsManager::DISALLOW_ELISION, OptionsCategory::CONNECTION);
     argsman.AddArg("-proxyrandomize", strprintf("Randomize credentials for every proxy connection. This enables Tor stream isolation (default: %u)", DEFAULT_PROXYRANDOMIZE), ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-seednode=<ip>", "Connect to a node to retrieve peer addresses, and disconnect. This option can be specified multiple times to connect to multiple nodes.", ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
@@ -615,6 +675,7 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-capturemessages", "Capture all P2P messages to disk", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-mocktime=<n>", "Replace actual time with " + UNIX_EPOCH_TIME + " (default: 0)", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-maxsigcachesize=<n>", strprintf("Limit sum of signature cache and script execution cache sizes to <n> MiB (default: %u)", DEFAULT_MAX_SIG_CACHE_BYTES >> 20), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
+    argsman.AddArg("-maxorchardproofcachesize=<n>", strprintf("Limit the Orchard proof verification cache to <n> MiB (default: %u)", DEFAULT_MAX_PRIVATE_ORCHARD_PROOF_CACHE_BYTES >> 20), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-maxtipage=<n>",
                    strprintf("Maximum tip age in seconds to consider node in initial block download (default: %u)",
                              Ticks<std::chrono::seconds>(DEFAULT_MAX_TIP_AGE)),
@@ -789,6 +850,20 @@ void InitParameterInteraction(ArgsManager& args)
             LogPrintf("%s: parameter interaction: -blocksonly=1 -> setting -maxmempool=%d\n", __func__, DEFAULT_BLOCKSONLY_MAX_MEMPOOL_SIZE_MB);
     }
 
+    if (args.GetIntArg("-prune", 0)) {
+        if (!args.IsArgSet("-txindex") && args.SoftSetBoolArg("-txindex", false)) {
+            LogPrintf("%s: parameter interaction: -prune set -> setting -txindex=0\n", __func__);
+        }
+        if (!args.IsArgSet("-coinstatsindex") && args.SoftSetBoolArg("-coinstatsindex", false)) {
+            LogPrintf("%s: parameter interaction: -prune set -> setting -coinstatsindex=0\n", __func__);
+        }
+        // Orchard retains the data needed by private wallets after pruning.
+        // Keep its normal default and preserve any explicit operator choice.
+        if (!args.IsArgSet("-transparenthistoryindex") && args.SoftSetBoolArg("-transparenthistoryindex", false)) {
+            LogPrintf("%s: parameter interaction: -prune set -> setting -transparenthistoryindex=0\n", __func__);
+        }
+    }
+
     // Forcing relay from whitelisted hosts implies we will accept relays from them in the first place.
     if (args.GetBoolArg("-whitelistforcerelay", DEFAULT_WHITELISTFORCERELAY)) {
         if (args.SoftSetBoolArg("-whitelistrelay", true))
@@ -902,6 +977,14 @@ bool AppInitParameterInteraction(const ArgsManager& args)
         return InitError(errors);
     }
 
+    const int64_t transparent_history_commit_delay{args.GetIntArg("-transparenthistoryindexcommitdelay", 0)};
+    if (transparent_history_commit_delay < 0) {
+        return InitError(_("-transparenthistoryindexcommitdelay cannot be negative."));
+    }
+    if (transparent_history_commit_delay > 0 && !chainparams.IsMockableChain()) {
+        return InitError(_("-transparenthistoryindexcommitdelay is only available on regtest."));
+    }
+
     // Warn if unrecognized section name are present in the config file.
     bilingual_str warnings;
     for (const auto& section : args.GetUnrecognizedSections()) {
@@ -910,6 +993,10 @@ bool AppInitParameterInteraction(const ArgsManager& args)
 
     if (!warnings.empty()) {
         InitWarning(warnings);
+    }
+
+    if (chainparams.GetConsensus().privateTxActivationHeight >= 0) {
+        nLocalServices = ServiceFlags(nLocalServices | NODE_NITO_PRIVATE);
     }
 
     if (!fs::is_directory(args.GetBlocksDirPath())) {
@@ -927,7 +1014,10 @@ bool AppInitParameterInteraction(const ArgsManager& args)
     if (blockfilterindex_value == "" || blockfilterindex_value == "1") {
         g_enabled_filter_types = AllBlockFilterTypes();
     } else if (blockfilterindex_value != "0") {
-        const std::vector<std::string> names = args.GetArgs("-blockfilterindex");
+        std::vector<std::string> names = args.GetArgs("-blockfilterindex");
+        if (names.empty()) {
+            names.push_back(blockfilterindex_value);
+        }
         for (const auto& name : names) {
             BlockFilterType filter_type;
             if (!BlockFilterTypeByName(name, filter_type)) {
@@ -954,6 +1044,9 @@ bool AppInitParameterInteraction(const ArgsManager& args)
     if (args.GetIntArg("-prune", 0)) {
         if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX))
             return InitError(_("Prune mode is incompatible with -txindex."));
+        if (args.GetBoolArg("-transparenthistoryindex", DEFAULT_TRANSPARENTHISTORYINDEX)) {
+            return InitError(_("Prune mode is incompatible with -transparenthistoryindex. Disable pruning or start with -transparenthistoryindex=0."));
+        }
         if (args.GetBoolArg("-reindex-chainstate", false)) {
             return InitError(_("Prune mode is incompatible with -reindex-chainstate. Use full -reindex instead."));
         }
@@ -1045,6 +1138,7 @@ bool AppInitParameterInteraction(const ArgsManager& args)
         }
         BlockManager::Options blockman_opts_dummy{
             .chainparams = chainman_opts_dummy.chainparams,
+            .datadir = chainman_opts_dummy.datadir,
             .blocks_dir = args.GetBlocksDirPath(),
             .notifications = chainman_opts_dummy.notifications,
         };
@@ -1138,9 +1232,11 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     ValidationCacheSizes validation_cache_sizes{};
     ApplyArgsManOptions(args, validation_cache_sizes);
     if (!InitSignatureCache(validation_cache_sizes.signature_cache_bytes)
-        || !InitScriptExecutionCache(validation_cache_sizes.script_execution_cache_bytes))
-    {
+        || !InitScriptExecutionCache(validation_cache_sizes.script_execution_cache_bytes)) {
         return InitError(strprintf(_("Unable to allocate memory for -maxsigcachesize: '%s' MiB"), args.GetIntArg("-maxsigcachesize", DEFAULT_MAX_SIG_CACHE_BYTES >> 20)));
+    }
+    if (!InitPrivateOrchardProofCache(validation_cache_sizes.private_orchard_proof_cache_bytes)) {
+        return InitError(strprintf(_("Unable to allocate memory for -maxorchardproofcachesize: '%s' MiB"), args.GetIntArg("-maxorchardproofcachesize", DEFAULT_MAX_PRIVATE_ORCHARD_PROOF_CACHE_BYTES >> 20)));
     }
 
     assert(!node.scheduler);
@@ -1461,13 +1557,17 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
     BlockManager::Options blockman_opts{
         .chainparams = chainman_opts.chainparams,
+        .datadir = chainman_opts.datadir,
         .blocks_dir = args.GetBlocksDirPath(),
         .notifications = chainman_opts.notifications,
     };
     Assert(ApplyArgsManOptions(args, blockman_opts)); // no error can happen, already checked in AppInitParameterInteraction
 
     // cache size calculations
-    CacheSizes cache_sizes = CalculateCacheSizes(args, g_enabled_filter_types.size());
+    const size_t local_history_index_cache_count{
+        (args.GetBoolArg("-orchardindex", DEFAULT_ORCHARDINDEX) && chainparams.GetConsensus().privateTxActivationHeight >= 0 ? 1U : 0U) +
+        (args.GetBoolArg("-transparenthistoryindex", DEFAULT_TRANSPARENTHISTORYINDEX) ? 1U : 0U)};
+    CacheSizes cache_sizes = CalculateCacheSizes(args, g_enabled_filter_types.size() + local_history_index_cache_count);
 
     LogPrintf("Cache configuration:\n");
     LogPrintf("* Using %.1f MiB for block index database\n", cache_sizes.block_tree_db * (1.0 / 1024 / 1024));
@@ -1477,6 +1577,12 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     for (BlockFilterType filter_type : g_enabled_filter_types) {
         LogPrintf("* Using %.1f MiB for %s block filter index database\n",
                   cache_sizes.filter_index * (1.0 / 1024 / 1024), BlockFilterTypeName(filter_type));
+    }
+    if (args.GetBoolArg("-orchardindex", DEFAULT_ORCHARDINDEX) && chainparams.GetConsensus().privateTxActivationHeight >= 0) {
+        LogPrintf("* Using %.1f MiB for Orchard index database\n", cache_sizes.filter_index * (1.0 / 1024 / 1024));
+    }
+    if (args.GetBoolArg("-transparenthistoryindex", DEFAULT_TRANSPARENTHISTORYINDEX)) {
+        LogPrintf("* Using %.1f MiB for transparent history index database\n", cache_sizes.filter_index * (1.0 / 1024 / 1024));
     }
     LogPrintf("* Using %.1f MiB for chain state database\n", cache_sizes.coins_db * (1.0 / 1024 / 1024));
 
@@ -1503,6 +1609,14 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
         node.chainman = std::make_unique<ChainstateManager>(*Assert(node.shutdown), chainman_opts, blockman_opts);
         ChainstateManager& chainman = *node.chainman;
+
+        // Load the one-way activation latch before LoadChainstate can wipe the
+        // block index for -reindex. A malformed marker is fatal: starting P2P
+        // with pre-activation rules would silently weaken the transition.
+        std::string activation_latch_error;
+        if (!chainman.m_blockman.LoadNitoPrivateActivationLatch(activation_latch_error)) {
+            return InitError(Untranslated(activation_latch_error));
+        }
 
         // This is defined and set here instead of inline in validation.h to avoid a hard
         // dependency between validation and index/base, since the latter is not in
@@ -1613,6 +1727,16 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     for (const auto& filter_type : g_enabled_filter_types) {
         InitBlockFilterIndex([&]{ return interfaces::MakeChain(node); }, filter_type, cache_sizes.filter_index, false, fReindex);
         node.indexes.emplace_back(GetBlockFilterIndex(filter_type));
+    }
+
+    if (args.GetBoolArg("-orchardindex", DEFAULT_ORCHARDINDEX) && chainparams.GetConsensus().privateTxActivationHeight >= 0) {
+        InitOrchardIndex([&]{ return interfaces::MakeChain(node); }, cache_sizes.filter_index, false, fReindex);
+        node.indexes.emplace_back(GetOrchardIndex());
+    }
+
+    if (args.GetBoolArg("-transparenthistoryindex", DEFAULT_TRANSPARENTHISTORYINDEX)) {
+        InitTransparentHistoryIndex([&]{ return interfaces::MakeChain(node); }, cache_sizes.filter_index, false, fReindex);
+        node.indexes.emplace_back(GetTransparentHistoryIndex());
     }
 
     if (args.GetBoolArg("-coinstatsindex", DEFAULT_COINSTATSINDEX)) {
@@ -1780,12 +1904,19 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     connOptions.nSendBufferMaxSize = 1000 * args.GetIntArg("-maxsendbuffer", DEFAULT_MAXSENDBUFFER);
     connOptions.nReceiveFloodSize = 1000 * args.GetIntArg("-maxreceivebuffer", DEFAULT_MAXRECEIVEBUFFER);
     connOptions.m_added_nodes = args.GetArgs("-addnode");
+    const bool enable_nito_anchor_peers{args.GetBoolArg("-nitoanchorpeers", DEFAULT_NITO_ANCHOR_PEERS)};
+    if (enable_nito_anchor_peers && Params().GetChainType() == ChainType::MAIN && !args.IsArgSet("-connect") &&
+        nMaxConnections > 0 && OnlyNetAllowsIpv4(args)) {
+        const size_t added_count{AddNitoMainnetAnchorPeers(connOptions.m_added_nodes)};
+        LogPrintf("Added %u Nito mainnet anchor peer(s) as manual peers\n", static_cast<unsigned>(added_count));
+    }
     connOptions.nMaxOutboundLimit = *opt_max_upload;
     connOptions.m_peer_connect_timeout = peer_connect_timeout;
 
     // Port to bind to if `-bind=addr` is provided without a `:port` suffix.
     const uint16_t default_bind_port =
         static_cast<uint16_t>(args.GetIntArg("-port", Params().GetDefaultPort()));
+    const uint16_t default_bind_port_onion = default_bind_port + 1;
 
     const auto BadPortWarning = [](const char* prefix, uint16_t port) {
         return strprintf(_("%s request to listen on port %u. This port is considered \"bad\" and "
@@ -1811,7 +1942,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             const std::string network_type = bind_arg.substr(index + 1);
             if (network_type == "onion") {
                 const std::string truncated_bind_arg = bind_arg.substr(0, index);
-                bind_addr = Lookup(truncated_bind_arg, BaseParams().OnionServiceTargetPort(), false);
+                bind_addr = Lookup(truncated_bind_arg, default_bind_port_onion, false);
                 if (bind_addr.has_value()) {
                     connOptions.onion_binds.push_back(bind_addr.value());
                     continue;
@@ -1841,15 +1972,18 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         }
     }
 
+    const bool listen_onion = args.GetBoolArg("-listenonion", DEFAULT_LISTEN_ONION);
     CService onion_service_target;
     if (!connOptions.onion_binds.empty()) {
         onion_service_target = connOptions.onion_binds.front();
-    } else {
-        onion_service_target = DefaultOnionServiceTarget();
+    } else if (!connOptions.vBinds.empty()) {
+        onion_service_target = connOptions.vBinds.front();
+    } else if (listen_onion) {
+        onion_service_target = DefaultOnionServiceTarget(default_bind_port_onion);
         connOptions.onion_binds.push_back(onion_service_target);
     }
 
-    if (args.GetBoolArg("-listenonion", DEFAULT_LISTEN_ONION)) {
+    if (listen_onion) {
         if (connOptions.onion_binds.size() > 1) {
             InitWarning(strprintf(_("More than one onion bind address is provided. Using %s "
                                     "for the automatically created Tor onion service."),
@@ -1980,6 +2114,9 @@ bool StartIndexBackgroundSync(NodeContext& node)
         const CBlockIndex* start_block = *indexes_start_block;
         if (!start_block) start_block = chainman.ActiveChain().Genesis();
         if (!chainman.m_blockman.CheckBlockDataAvailability(*index_chain.Tip(), *Assert(start_block))) {
+            if (older_index_name == "orchardindex") {
+                return InitError(_("The Orchard index cannot catch up because required blocks have been pruned. To recover Orchard functionality, use a non-pruned node or explicitly rebuild with -reindex and -prune=0. This requires downloading data, time and disk space. No resynchronization has been started. To continue without Orchard, restart with -orchardindex=0; private balances and spending will be unavailable."));
+            }
             return InitError(strprintf(Untranslated("%s best block of the index goes beyond pruned data. Please disable the index or reindex (which will download the whole blockchain again)"), older_index_name));
         }
     }

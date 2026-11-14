@@ -1,0 +1,11 @@
+--- a/xcb.pc.in
++++ b/xcb.pc.in
+@@ -6,7 +6,7 @@ xcbproto_version=@XCBPROTO_VERSION@
+ Name: XCB
+ Description: X-protocol C Binding
+ Version: @PACKAGE_VERSION@
+-Requires.private: @NEEDED@
++Requires: @NEEDED@
+ Libs: -L${libdir} -lxcb
+ Libs.private: @LIBS@
+ Cflags: -I${includedir}

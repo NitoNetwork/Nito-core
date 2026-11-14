@@ -14,9 +14,12 @@
 #include <chain.h>
 #include <checkqueue.h>
 #include <clientversion.h>
+#include <common/args.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <consensus/merkle.h>
+#include <consensus/params.h>
+#include <consensus/private_tx_verify.h>
 #include <consensus/tx_check.h>
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
@@ -39,12 +42,14 @@
 #include <policy/rbf.h>
 #include <policy/settings.h>
 #include <pow.h>
+#include <private/private_state.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
 #include <random.h>
 #include <reverse_iterator.h>
 #include <script/script.h>
 #include <script/sigcache.h>
+#include <script/solver.h>
 #include <signet.h>
 #include <tinyformat.h>
 #include <txdb.h>
@@ -69,10 +74,15 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cerrno>
+#include <cstdio>
 #include <deque>
 #include <numeric>
 #include <optional>
+#include <set>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -113,6 +123,155 @@ static constexpr int PRUNE_LOCK_BUFFER{10};
 GlobalMutex g_best_block_mutex;
 std::condition_variable g_best_block_cv;
 uint256 g_best_block;
+
+static constexpr const char* LOCAL_CHAINWORK_ANCHOR_FILENAME{"local-chainwork-anchor"};
+
+struct LocalChainworkAnchor {
+    int32_t height{-1};
+    uint256 block_hash{};
+    arith_uint256 chain_work{};
+    int64_t time{0};
+};
+
+enum class LocalChainworkAnchorStatus {
+    MISSING,
+    OK,
+    INVALID,
+};
+
+struct LocalChainworkAnchorReadResult {
+    LocalChainworkAnchorStatus status{LocalChainworkAnchorStatus::MISSING};
+    LocalChainworkAnchor anchor{};
+    std::string error{};
+};
+
+static fs::path LocalChainworkAnchorPath(const fs::path& datadir)
+{
+    return datadir / LOCAL_CHAINWORK_ANCHOR_FILENAME;
+}
+
+static bool LocalChainworkAnchorEnabled(const CChainParams& params)
+{
+    // Production networks always enforce the anchor. The debug switch exists
+    // solely so regtest can exercise the production durability path.
+    return !params.IsMockableChain() || gArgs.GetBoolArg("-localchainworkanchor", false);
+}
+
+static LocalChainworkAnchorReadResult ReadLocalChainworkAnchor(const fs::path& datadir)
+{
+    const fs::path path{LocalChainworkAnchorPath(datadir)};
+    FILE* file{fsbridge::fopen(path, "r")};
+    if (!file) {
+        if (errno == ENOENT) return {};
+        return {LocalChainworkAnchorStatus::INVALID, {}, strprintf("cannot open %s", fs::PathToString(path))};
+    }
+
+    LocalChainworkAnchor anchor;
+    bool have_height{false};
+    bool have_hash{false};
+    bool have_work{false};
+    bool have_time{false};
+
+    char buffer[512];
+    while (std::fgets(buffer, sizeof(buffer), file)) {
+        const std::string line{TrimString(buffer)};
+        if (line.empty() || line[0] == '#') continue;
+
+        const size_t sep{line.find('=')};
+        if (sep == std::string::npos) {
+            std::fclose(file);
+            return {LocalChainworkAnchorStatus::INVALID, {}, strprintf("invalid line in %s: %s", fs::PathToString(path), line)};
+        }
+
+        const std::string key{TrimString(std::string_view{line}.substr(0, sep))};
+        const std::string value{TrimString(std::string_view{line}.substr(sep + 1))};
+        if (key == "height") {
+            have_height = ParseInt32(value, &anchor.height);
+        } else if (key == "blockhash") {
+            have_hash = IsHex(value) && value.size() == 64;
+            if (have_hash) anchor.block_hash = uint256S(value);
+        } else if (key == "chainwork") {
+            have_work = IsHex(value) && value.size() == 64;
+            if (have_work) anchor.chain_work = UintToArith256(uint256S(value));
+        } else if (key == "time") {
+            have_time = ParseInt64(value, &anchor.time);
+        }
+    }
+
+    if (std::ferror(file)) {
+        std::fclose(file);
+        return {LocalChainworkAnchorStatus::INVALID, {}, strprintf("cannot read %s", fs::PathToString(path))};
+    }
+    std::fclose(file);
+
+    if (!have_height || anchor.height < 0 || !have_hash || !have_work || !have_time) {
+        return {LocalChainworkAnchorStatus::INVALID, {}, strprintf("missing or invalid field in %s", fs::PathToString(path))};
+    }
+    return {LocalChainworkAnchorStatus::OK, anchor, {}};
+}
+
+static bool WriteLocalChainworkAnchor(const fs::path& datadir, const CBlockIndex& tip)
+{
+    const auto current{ReadLocalChainworkAnchor(datadir)};
+    if (current.status == LocalChainworkAnchorStatus::OK && tip.nChainWork <= current.anchor.chain_work) {
+        return true;
+    }
+    if (current.status == LocalChainworkAnchorStatus::INVALID) {
+        LogPrintf("Warning: local anti-rollback anchor is invalid and will not be overwritten: %s\n", current.error);
+        return false;
+    }
+
+    const fs::path path{LocalChainworkAnchorPath(datadir)};
+    const fs::path tmp_path{path + ".tmp"};
+    FILE* file{fsbridge::fopen(tmp_path, "w")};
+    if (!file) {
+        LogPrintf("Warning: cannot write local anti-rollback anchor %s\n", fs::PathToString(tmp_path));
+        return false;
+    }
+
+    const std::string block_hash{tip.GetBlockHash().ToString()};
+    const std::string chain_work{tip.nChainWork.GetHex()};
+    const int written{std::fprintf(file,
+        "# Nito local anti-rollback chainwork anchor v1\n"
+        "# Delete this file only when intentionally restoring an older datadir.\n"
+        "height=%d\n"
+        "blockhash=%s\n"
+        "chainwork=%s\n"
+        "time=%lld\n",
+        tip.nHeight,
+        block_hash.c_str(),
+        chain_work.c_str(),
+        static_cast<long long>(tip.GetBlockTime()))};
+
+    bool ok{written >= 0 && FileCommit(file)};
+    if (std::fclose(file) != 0) ok = false;
+    if (!ok || !RenameOver(tmp_path, path)) {
+        LogPrintf("Warning: failed to commit local anti-rollback anchor %s\n", fs::PathToString(path));
+        return false;
+    }
+    return true;
+}
+
+static bool CheckLocalChainworkAnchor(const fs::path& datadir, const CBlockIndex& tip)
+{
+    const auto current{ReadLocalChainworkAnchor(datadir)};
+    if (current.status == LocalChainworkAnchorStatus::MISSING) return true;
+    if (current.status == LocalChainworkAnchorStatus::INVALID) {
+        return error("Local anti-rollback anchor is invalid: %s. Delete %s only when intentionally resetting local rollback protection.",
+                     current.error, fs::PathToString(LocalChainworkAnchorPath(datadir)));
+    }
+    if (tip.nChainWork < current.anchor.chain_work) {
+        return error("Local anti-rollback anchor refuses chain tip %s at height %d with chainwork %s below previously observed height %d hash %s chainwork %s. Delete %s only when intentionally restoring an older datadir.",
+                     tip.GetBlockHash().ToString(),
+                     tip.nHeight,
+                     tip.nChainWork.GetHex(),
+                     current.anchor.height,
+                     current.anchor.block_hash.ToString(),
+                     current.anchor.chain_work.GetHex(),
+                     fs::PathToString(LocalChainworkAnchorPath(datadir)));
+    }
+    return true;
+}
 
 const CBlockIndex* Chainstate::FindForkInGlobalIndex(const CBlockLocator& locator) const
 {
@@ -263,6 +422,7 @@ bool CheckSequenceLocksAtTip(CBlockIndex* tip,
 
 // Returns the script flags which should be checked for a given block
 static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const ChainstateManager& chainman);
+static bool CheckWitnessMalleation(const CBlock& block, bool expect_witness_commitment, BlockValidationState& state);
 
 static void LimitMempoolSize(CTxMemPool& pool, CCoinsViewCache& coins_cache)
     EXCLUSIVE_LOCKS_REQUIRED(::cs_main, pool.cs)
@@ -380,6 +540,17 @@ void Chainstate::MaybeUpdateMempoolForReorg(
                 }
             }
         }
+        if (tx.HasPrivateBundle()) {
+            const CCoinsViewCache& chain_private_view = CoinsTip();
+            if (!chain_private_view.HavePrivateAnchor(tx.m_private_bundle->effects.anchor)) {
+                return true;
+            }
+            for (const auto& action : tx.m_private_bundle->effects.actions) {
+                if (chain_private_view.HavePrivateNullifier(action.nullifier)) {
+                    return true;
+                }
+            }
+        }
         // Transaction is still valid and cached LockPoints are updated.
         return false;
     };
@@ -428,17 +599,17 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationS
             assert(coinFromUTXOSet.out == coin.out);
         }
     }
-    
 
-    // Block Legacy/P2SH transactions before activation height
+    // Preserve the V3 relay policy used before the transparent legacy output
+    // formats were re-enabled on mainnet.
     if (current_height + 1 < legacy_activation_height) {
         for (const CTxOut& txout : tx.vout) {
-            TxoutType whichType;
-            std::vector<std::vector<unsigned char>> vSolutions;
-            whichType = Solver(txout.scriptPubKey, vSolutions);
-            if (whichType == TxoutType::PUBKEY ||
-                whichType == TxoutType::PUBKEYHASH ||
-                whichType == TxoutType::SCRIPTHASH) {
+            TxoutType which_type;
+            std::vector<std::vector<unsigned char>> solutions;
+            which_type = Solver(txout.scriptPubKey, solutions);
+            if (which_type == TxoutType::PUBKEY ||
+                which_type == TxoutType::PUBKEYHASH ||
+                which_type == TxoutType::SCRIPTHASH) {
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-nonstandard-script");
             }
         }
@@ -489,11 +660,14 @@ public:
          * policies such as mempool min fee and min relay fee.
          */
         const bool m_package_feerates;
+        /** Optional global budget for proof verification of unsolicited P2P transactions. */
+        PrivateOrchardProofRateLimiter* const m_private_proof_rate_limiter;
 
         /** Parameters for single transaction mempool validation. */
         static ATMPArgs SingleAccept(const CChainParams& chainparams, int64_t accept_time,
                                      bool bypass_limits, std::vector<COutPoint>& coins_to_uncache,
-                                     bool test_accept) {
+                                     bool test_accept,
+                                     PrivateOrchardProofRateLimiter* private_proof_rate_limiter) {
             return ATMPArgs{/* m_chainparams */ chainparams,
                             /* m_accept_time */ accept_time,
                             /* m_bypass_limits */ bypass_limits,
@@ -502,6 +676,7 @@ public:
                             /* m_allow_replacement */ true,
                             /* m_package_submission */ false,
                             /* m_package_feerates */ false,
+                            /* m_private_proof_rate_limiter */ private_proof_rate_limiter,
             };
         }
 
@@ -516,6 +691,7 @@ public:
                             /* m_allow_replacement */ false,
                             /* m_package_submission */ false, // not submitting to mempool
                             /* m_package_feerates */ false,
+                            /* m_private_proof_rate_limiter */ nullptr,
             };
         }
 
@@ -530,6 +706,7 @@ public:
                             /* m_allow_replacement */ false,
                             /* m_package_submission */ true,
                             /* m_package_feerates */ true,
+                            /* m_private_proof_rate_limiter */ nullptr,
             };
         }
 
@@ -543,6 +720,7 @@ public:
                             /* m_allow_replacement */ true,
                             /* m_package_submission */ true, // do not LimitMempoolSize in Finalize()
                             /* m_package_feerates */ false, // only 1 transaction
+                            /* m_private_proof_rate_limiter */ package_args.m_private_proof_rate_limiter,
             };
         }
 
@@ -556,7 +734,8 @@ public:
                  bool test_accept,
                  bool allow_replacement,
                  bool package_submission,
-                 bool package_feerates)
+                 bool package_feerates,
+                 PrivateOrchardProofRateLimiter* private_proof_rate_limiter)
             : m_chainparams{chainparams},
               m_accept_time{accept_time},
               m_bypass_limits{bypass_limits},
@@ -564,7 +743,8 @@ public:
               m_test_accept{test_accept},
               m_allow_replacement{allow_replacement},
               m_package_submission{package_submission},
-              m_package_feerates{package_feerates}
+              m_package_feerates{package_feerates},
+              m_private_proof_rate_limiter{private_proof_rate_limiter}
         {
         }
     };
@@ -736,6 +916,13 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
         return false; // state filled in by CheckTransaction
     }
 
+    const bool private_tx_active_next{Consensus::PrivateTxActive(m_active_chainstate.m_chainman.GetConsensus(), m_active_chainstate.m_chain.Height() + 1)};
+    if (!private_tx_active_next) {
+        if (tx.HasPrivateBundle()) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-private-before-activation");
+        }
+    }
+
     // Coinbase is only valid in a block, not as a loose transaction
     if (tx.IsCoinBase())
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "coinbase");
@@ -799,6 +986,31 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
         }
     }
 
+    if (tx.HasPrivateBundle()) {
+        const CCoinsViewCache& chain_private_view = m_active_chainstate.CoinsTip();
+        if (!chain_private_view.HavePrivateAnchor(tx.m_private_bundle->effects.anchor)) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-private-anchor-unknown");
+        }
+        for (const auto& action : tx.m_private_bundle->effects.actions) {
+            if (chain_private_view.HavePrivateNullifier(action.nullifier)) {
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-private-nullifier-spent");
+            }
+            const CTransaction* ptxConflicting = m_pool.GetPrivateNullifierConflict(action.nullifier);
+            if (ptxConflicting) {
+                if (!args.m_allow_replacement) {
+                    return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "bip125-replacement-disallowed");
+                }
+                if (!ws.m_conflicts.count(ptxConflicting->GetHash())) {
+                    const bool allow_rbf{m_pool.m_full_rbf || SignalsOptInRBF(*ptxConflicting) || ptxConflicting->nVersion == 3};
+                    if (!allow_rbf) {
+                        return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "txn-mempool-conflict");
+                    }
+                    ws.m_conflicts.insert(ptxConflicting->GetHash());
+                }
+            }
+        }
+    }
+
     m_view.SetBackend(m_viewmempool);
 
     const CCoinsViewCache& coins_cache = m_active_chainstate.CoinsTip();
@@ -846,7 +1058,7 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
     }
 
     // The mempool holds txs for the next block, so pass height+1 to CheckTxInputs
-    if (!Consensus::CheckTxInputs(tx, state, m_view, m_active_chainstate.m_chain.Height() + 1, ws.m_base_fees)) {
+    if (!Consensus::CheckTxInputs(tx, state, m_view, m_active_chainstate.m_chain.Height() + 1, ws.m_base_fees, /*check_private_proofs=*/false)) {
         return false; // state filled in by CheckTxInputs
     }
 
@@ -1073,16 +1285,25 @@ bool MemPoolAccept::PolicyScriptChecks(const ATMPArgs& args, Workspace& ws)
 
     constexpr unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
 
+    // Orchard authorization is intentionally deferred until all inexpensive
+    // contextual and fee checks pass. This prevents invalid proof variants of
+    // an underfee transaction from consuming Halo2 verification work.
+    if (tx.HasPrivateBundle() && args.m_private_proof_rate_limiter != nullptr &&
+        !args.m_private_proof_rate_limiter->TryAcquire(
+            GetPrivateOrchardVerificationCost(tx.m_private_bundle->effects.actions.size()),
+            GetTime<std::chrono::microseconds>())) {
+        return state.Invalid(TxValidationResult::TX_RECONSIDERABLE, "private-proof-rate-limited");
+    }
+    if (!CheckPrivateBundleProofs(tx, state, PrivateProofCacheMode::STORE)) {
+        return false;
+    }
+
     // Check input scripts and signatures.
     // This is done last to help prevent CPU exhaustion denial-of-service attacks.
     if (!CheckInputScripts(tx, state, m_view, scriptVerifyFlags, true, false, ws.m_precomputed_txdata)) {
-        // SCRIPT_VERIFY_CLEANSTACK requires SCRIPT_VERIFY_WITNESS, so we
-        // need to turn both off, and compare against just turning off CLEANSTACK
-        // to see if the failure is specifically due to witness validation.
-        TxValidationState state_dummy; // Want reported failures to be from first CheckInputScripts
-        if (!tx.HasWitness() && CheckInputScripts(tx, state_dummy, m_view, scriptVerifyFlags & ~(SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_CLEANSTACK), true, false, ws.m_precomputed_txdata) &&
-                !CheckInputScripts(tx, state_dummy, m_view, scriptVerifyFlags & ~SCRIPT_VERIFY_CLEANSTACK, true, false, ws.m_precomputed_txdata)) {
-            // Only the witness is missing, so the transaction itself may be fine.
+        // Detect witness stripping without executing Script a second and third
+        // time. The original rejection details are deliberately preserved.
+        if (!tx.HasWitness() && SpendsWitnessProgram(tx, m_view)) {
             state.Invalid(TxValidationResult::TX_WITNESS_STRIPPED,
                     state.GetRejectReason(), state.GetDebugMessage());
         }
@@ -1646,7 +1867,8 @@ PackageMempoolAcceptResult MemPoolAccept::AcceptPackage(const Package& package, 
 } // anon namespace
 
 MempoolAcceptResult AcceptToMemoryPool(Chainstate& active_chainstate, const CTransactionRef& tx,
-                                       int64_t accept_time, bool bypass_limits, bool test_accept)
+                                       int64_t accept_time, bool bypass_limits, bool test_accept,
+                                       PrivateOrchardProofRateLimiter* private_proof_rate_limiter)
     EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
 {
     AssertLockHeld(::cs_main);
@@ -1655,7 +1877,8 @@ MempoolAcceptResult AcceptToMemoryPool(Chainstate& active_chainstate, const CTra
     CTxMemPool& pool{*active_chainstate.GetMempool()};
 
     std::vector<COutPoint> coins_to_uncache;
-    auto args = MemPoolAccept::ATMPArgs::SingleAccept(chainparams, accept_time, bypass_limits, coins_to_uncache, test_accept);
+    auto args = MemPoolAccept::ATMPArgs::SingleAccept(
+        chainparams, accept_time, bypass_limits, coins_to_uncache, test_accept, private_proof_rate_limiter);
     MempoolAcceptResult result = MemPoolAccept(pool, active_chainstate).AcceptSingleTransaction(tx, args);
     if (result.m_result_type != MempoolAcceptResult::ResultType::VALID) {
         // Remove coins that were not present in the coins cache before calling
@@ -2085,7 +2308,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
 
     // Ignore blocks that contain transactions which are 'overwritten' by later transactions,
     // unless those are already completely spent.
-    // See https://github.com/nito/nito/issues/22596 for additional information.
+    // See https://github.com/bitcoin/bitcoin/issues/22596 for additional information.
     // Note: the blocks specified here are different than the ones used in ConnectBlock because DisconnectBlock
     // unwinds the blocks in reverse. As a result, the inconsistency is not discovered until the earlier
     // blocks with the duplicate coinbase transactions are disconnected.
@@ -2130,6 +2353,27 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
             }
             // At this point, all of txundo.vprevout should have been moved out.
         }
+    }
+
+    if (BlockHasPrivateTransactions(block)) {
+        CPrivateBlockUndo private_undo;
+        const uint256 block_hash = pindex->GetBlockHash();
+        if (!view.GetPrivateBlockUndo(block_hash, private_undo)) {
+            error("DisconnectBlock(): private undo data missing");
+            return DISCONNECT_FAILED;
+        }
+        if (private_undo.vtxundo.size() != block.vtx.size()) {
+            error("DisconnectBlock(): block and private undo data inconsistent");
+            return DISCONNECT_FAILED;
+        }
+        for (size_t i = block.vtx.size(); i > 0; --i) {
+            std::string private_error;
+            if (!UndoPrivateTransaction(view, private_undo.vtxundo[i - 1], private_error)) {
+                error("DisconnectBlock(): private undo failed: %s", private_error);
+                return DISCONNECT_FAILED;
+            }
+        }
+        view.ErasePrivateBlockUndo(block_hash);
     }
 
     // move best block pointer to prevout block
@@ -2266,6 +2510,10 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (!fJustCheck)
             view.SetBestBlock(pindex->GetBlockHash());
         return true;
+    }
+
+    if (!CheckWitnessMalleation(block, DeploymentActiveAt(*pindex, m_chainman, Consensus::DEPLOYMENT_SEGWIT), state)) {
+        return error("%s: CheckWitnessMalleation: %s", __func__, state.ToString());
     }
 
     bool fScriptChecks = true;
@@ -2415,25 +2663,47 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     // in multiple threads). Preallocate the vector size so a new allocation
     // doesn't invalidate pointers into the vector, and keep txsdata in scope
     // for as long as `control`.
-    CCheckQueueControl<CScriptCheck> control(fScriptChecks && parallel_script_checks ? &m_chainman.GetCheckQueue() : nullptr);
     std::vector<PrecomputedTransactionData> txsdata(block.vtx.size());
+    CCheckQueueControl<CScriptCheck> control(fScriptChecks && parallel_script_checks ? &m_chainman.GetCheckQueue() : nullptr);
 
     std::vector<int> prevheights;
     CAmount nFees = 0;
     int nInputs = 0;
     int64_t nSigOpsCost = 0;
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
+    CPrivateBlockUndo private_block_undo;
+    if (BlockHasPrivateTransactions(block)) {
+        private_block_undo.vtxundo.resize(block.vtx.size());
+    }
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
         const CTransaction &tx = *(block.vtx[i]);
 
         nInputs += tx.vin.size();
 
+        if (!tx.IsCoinBase() && !Consensus::PrivateTxActive(params.GetConsensus(), pindex->nHeight)) {
+            if (tx.HasPrivateBundle()) {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-private-before-activation");
+            }
+        }
+
         if (!tx.IsCoinBase())
         {
             CAmount txfee = 0;
             TxValidationState tx_state;
-            if (!Consensus::CheckTxInputs(tx, tx_state, view, pindex->nHeight, txfee)) {
+            const PrivateProofCacheMode private_proof_cache_mode{
+                fJustCheck ? PrivateProofCacheMode::STORE : PrivateProofCacheMode::ERASE};
+            if (!Consensus::CheckTxInputs(
+                    tx,
+                    tx_state,
+                    view,
+                    pindex->nHeight,
+                    txfee,
+                    /*check_private_proofs=*/true,
+                    private_proof_cache_mode)) {
+                if (tx_state.IsError()) {
+                    return state.Error(tx_state.GetRejectReason());
+                }
                 // Any transaction validation failure in ConnectBlock is a block consensus failure
                 state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                             tx_state.GetRejectReason(), tx_state.GetDebugMessage());
@@ -2484,12 +2754,23 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             control.Add(std::move(vChecks));
         }
 
+        if (tx.HasPrivateBundle()) {
+            if (!Consensus::PrivateTxActive(params.GetConsensus(), pindex->nHeight)) {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-private-before-activation", "private transaction before activation height");
+            }
+            std::string private_error;
+            if (!ApplyPrivateTransaction(tx, view, private_block_undo.vtxundo[i], private_error)) {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-private-state", private_error);
+            }
+        }
+
         CTxUndo undoDummy;
         if (i > 0) {
             blockundo.vtxundo.emplace_back();
         }
         UpdateCoins(tx, view, i == 0 ? undoDummy : blockundo.vtxundo.back(), pindex->nHeight);
     }
+
     const auto time_3{SteadyClock::now()};
     time_connect += time_3 - time_2;
     LogPrint(BCLog::BENCH, "      - Connect %u transactions: %.2fms (%.3fms/tx, %.3fms/txin) [%.2fs (%.2fms/blk)]\n", (unsigned)block.vtx.size(),
@@ -2518,6 +2799,10 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
 
     if (fJustCheck)
         return true;
+
+    if (BlockHasPrivateTransactions(block)) {
+        view.AddPrivateBlockUndo(pindex->GetBlockHash(), private_block_undo);
+    }
 
     if (!m_blockman.WriteUndoDataForBlock(blockundo, state, *pindex)) {
         return false;
@@ -2728,6 +3013,22 @@ bool Chainstate::FlushStateToDisk(
         }
     }
     if (full_flush_completed) {
+        // Advance the anti-rollback anchor only after the matching chainstate
+        // has been committed. Writing it from UpdateTip() can leave an anchor
+        // ahead of the durable coins tip if the process crashes between the
+        // two writes, making the node refuse its own valid datadir.
+        // An empty chainstate has no observed chainwork to protect. This can
+        // legitimately be flushed while the node is being initialized (and is
+        // exercised by cache-resize tests), so do not manufacture an anchor
+        // from a coins-cache marker before a block is connected.
+        if (this == &m_chainman.ActiveChainstate() && m_chain.Tip() != nullptr &&
+            LocalChainworkAnchorEnabled(m_chainman.GetParams())) {
+            const uint256 durable_tip_hash{CoinsTip().GetBestBlock()};
+            const CBlockIndex* durable_tip{m_blockman.LookupBlockIndex(durable_tip_hash)};
+            if (!durable_tip || !WriteLocalChainworkAnchor(m_chainman.m_options.datadir, *durable_tip)) {
+                return FatalError(m_chainman.GetNotifications(), state, "Failed to persist local anti-rollback chainwork anchor");
+            }
+        }
         // Update best block in wallet (so we can detect restored wallets).
         GetMainSignals().ChainStateFlushed(this->GetRole(), m_chain.GetLocator());
     }
@@ -3017,6 +3318,15 @@ bool Chainstate::ConnectTip(BlockValidationState& state, CBlockIndex* pindexNew,
     if (m_mempool) {
         m_mempool->removeForBlock(blockConnecting.vtx, pindexNew->nHeight);
         disconnectpool.removeForBlock(blockConnecting.vtx);
+    }
+
+    // Persist the activation transition before exposing the activated tip.
+    // This is intentionally one-way: a later reorg below H must not make this
+    // node resume private-incompatible peer traffic.
+    if (this == &m_chainman.ActiveChainstate() &&
+        Consensus::PrivateTxActive(m_chainman.GetConsensus(), pindexNew->nHeight) &&
+        !m_blockman.MarkNitoPrivateActivationObserved()) {
+        return FatalError(m_chainman.GetNotifications(), state, "Failed to persist Nito private activation latch");
     }
     // Update m_chain & related variables.
     m_chain.SetTip(*pindexNew);
@@ -3762,13 +4072,13 @@ static bool CheckWitnessMalleation(const CBlock& block, bool expect_witness_comm
         }
     }
 
-    // No witness data is allowed in blocks that don't commit to witness data, as this would otherwise leave room for spam
+    // No witness-like data is allowed in blocks that don't commit to it, as this would otherwise leave room for spam
     for (const auto& tx : block.vtx) {
-        if (tx->HasWitness()) {
+        if (tx->HasWitnessLikeData()) {
             return state.Invalid(
                 /*result=*/BlockValidationResult::BLOCK_MUTATED,
                 /*reject_reason=*/"unexpected-witness",
-                /*debug_message=*/strprintf("%s : unexpected witness data found", __func__));
+                /*debug_message=*/strprintf("%s : unexpected witness-like data found", __func__));
         }
     }
 
@@ -3817,6 +4127,7 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
 
     // Check transactions
     // Must check for duplicate inputs (see CVE-2018-17144)
+    std::set<uint256> block_private_nullifiers;
     for (const auto& tx : block.vtx) {
         TxValidationState tx_state;
         if (!CheckTransaction(*tx, tx_state)) {
@@ -3825,6 +4136,14 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
             assert(tx_state.GetResult() == TxValidationResult::TX_CONSENSUS);
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, tx_state.GetRejectReason(),
                                  strprintf("Transaction check failed (tx hash %s) %s", tx->GetHash().ToString(), tx_state.GetDebugMessage()));
+        }
+        if (tx->HasPrivateBundle()) {
+            for (const auto& action : tx->m_private_bundle->effects.actions) {
+                if (!block_private_nullifiers.insert(action.nullifier).second) {
+                    return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-private-nullifier-duplicate-block",
+                                         strprintf("Duplicate private nullifier in block (tx hash %s)", tx->GetHash().ToString()));
+                }
+            }
         }
     }
     unsigned int nSigOps = 0;
@@ -3858,6 +4177,13 @@ std::vector<unsigned char> ChainstateManager::GenerateCoinbaseCommitment(CBlock&
     std::vector<unsigned char> commitment;
     int commitpos = GetWitnessCommitmentIndex(block);
     std::vector<unsigned char> ret(32, 0x00);
+    if (!block.vtx.empty() && !block.vtx[0]->vin.empty() && block.vtx[0]->HasWitness()) {
+        const auto& witness_stack = block.vtx[0]->vin[0].scriptWitness.stack;
+        if (witness_stack.size() != 1 || witness_stack[0].size() != 32) {
+            throw std::runtime_error("coinbase witness reserved value must be a single 32-byte stack item");
+        }
+        ret = witness_stack[0];
+    }
     if (commitpos == NO_WITNESS_COMMITMENT) {
         uint256 witnessroot = BlockWitnessMerkleRoot(block, nullptr);
         CHash256().Write(witnessroot).Write(ret).Finalize(witnessroot);
@@ -3947,13 +4273,9 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
     if (block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-diffbits", "incorrect proof of work");
 
-    // Check against checkpoints
     if (chainman.m_options.checkpoints_enabled) {
-        // Don't accept any forks from the main chain prior to last checkpoint.
-        // GetLastCheckpoint finds the last checkpoint in MapCheckpoints that's in our
-        // BlockIndex().
-        const CBlockIndex* pcheckpoint = blockman.GetLastCheckpoint(chainman.GetParams().Checkpoints());
-        if (pcheckpoint && nHeight < pcheckpoint->nHeight) {
+        const CBlockIndex* checkpoint = blockman.GetLastCheckpoint(chainman.GetParams().Checkpoints());
+        if (checkpoint && nHeight < checkpoint->nHeight) {
             LogPrintf("ERROR: %s: forked chain older than last checkpoint (height %d)\n", __func__, nHeight);
             return state.Invalid(BlockValidationResult::BLOCK_CHECKPOINT, "bad-fork-prior-to-checkpoint");
         }
@@ -4004,6 +4326,11 @@ static bool ContextualCheckBlock(const CBlock& block, BlockValidationState& stat
     for (const auto& tx : block.vtx) {
         if (!IsFinalTx(*tx, nHeight, nLockTimeCutoff)) {
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-txns-nonfinal", "non-final transaction");
+        }
+        if (!tx->IsCoinBase() && !Consensus::PrivateTxActive(chainman.GetConsensus(), nHeight)) {
+            if (tx->HasPrivateBundle()) {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-private-before-activation", "private transaction before activation height");
+            }
         }
     }
 
@@ -4345,7 +4672,10 @@ bool ChainstateManager::ProcessNewBlock(const std::shared_ptr<const CBlock>& blo
     return true;
 }
 
-MempoolAcceptResult ChainstateManager::ProcessTransaction(const CTransactionRef& tx, bool test_accept)
+MempoolAcceptResult ChainstateManager::ProcessTransaction(
+    const CTransactionRef& tx,
+    bool test_accept,
+    PrivateOrchardProofRateLimiter* private_proof_rate_limiter)
 {
     AssertLockHeld(cs_main);
     Chainstate& active_chainstate = ActiveChainstate();
@@ -4354,7 +4684,8 @@ MempoolAcceptResult ChainstateManager::ProcessTransaction(const CTransactionRef&
         state.Invalid(TxValidationResult::TX_NO_MEMPOOL, "no-mempool");
         return MempoolAcceptResult::Failure(state);
     }
-    auto result = AcceptToMemoryPool(active_chainstate, tx, GetTime(), /*bypass_limits=*/ false, test_accept);
+    auto result = AcceptToMemoryPool(
+        active_chainstate, tx, GetTime(), /*bypass_limits=*/false, test_accept, private_proof_rate_limiter);
     active_chainstate.GetMempool()->check(active_chainstate.CoinsTip(), active_chainstate.m_chain.Height() + 1);
     return result;
 }
@@ -4408,8 +4739,14 @@ bool Chainstate::LoadChainTip()
     assert(!coins_cache.GetBestBlock().IsNull()); // Never called when the coins view is empty
     const CBlockIndex* tip = m_chain.Tip();
 
+    const auto ensure_activation_latch = [this](const CBlockIndex* active_tip) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
+        return this != &m_chainman.ActiveChainstate() || !active_tip ||
+               !Consensus::PrivateTxActive(m_chainman.GetConsensus(), active_tip->nHeight) ||
+               m_blockman.MarkNitoPrivateActivationObserved();
+    };
+
     if (tip && tip->GetBlockHash() == coins_cache.GetBestBlock()) {
-        return true;
+        return ensure_activation_latch(tip);
     }
 
     // Load pointer to end of best chain
@@ -4420,12 +4757,27 @@ bool Chainstate::LoadChainTip()
     m_chain.SetTip(*pindex);
     PruneBlockIndexCandidates();
 
+    // Recover the latch for datadirs created before it existed, and close the
+    // narrow crash window defensively before networking starts.
+    if (!ensure_activation_latch(pindex)) {
+        return false;
+    }
+
     tip = m_chain.Tip();
+    if (this == &m_chainman.ActiveChainstate() && LocalChainworkAnchorEnabled(m_chainman.GetParams()) &&
+        !m_blockman.LoadingBlocks() && !CheckLocalChainworkAnchor(m_chainman.m_options.datadir, *tip)) {
+        return false;
+    }
     LogPrintf("Loaded best chain: hashBestChain=%s height=%d date=%s progress=%f\n",
               tip->GetBlockHash().ToString(),
               m_chain.Height(),
               FormatISO8601DateTime(tip->GetBlockTime()),
               GuessVerificationProgress(m_chainman.GetParams().TxData(), tip));
+    if (this == &m_chainman.ActiveChainstate() && LocalChainworkAnchorEnabled(m_chainman.GetParams()) &&
+        !m_blockman.LoadingBlocks() && !WriteLocalChainworkAnchor(m_chainman.m_options.datadir, *tip)) {
+        LogPrintf("Warning: local anti-rollback anchor was not updated for loaded tip height %d hash %s\n",
+                  tip->nHeight, tip->GetBlockHash().ToString());
+    }
     return true;
 }
 
@@ -4589,14 +4941,39 @@ bool Chainstate::RollforwardBlock(const CBlockIndex* pindex, CCoinsViewCache& in
         return error("ReplayBlock(): ReadBlockFromDisk failed at %d, hash=%s", pindex->nHeight, pindex->GetBlockHash().ToString());
     }
 
-    for (const CTransactionRef& tx : block.vtx) {
+    BlockValidationState state;
+    if (!CheckWitnessMalleation(block, DeploymentActiveAt(*pindex, m_chainman, Consensus::DEPLOYMENT_SEGWIT), state)) {
+        return error("ReplayBlock(): witness commitment check failed at %d, hash=%s: %s", pindex->nHeight, pindex->GetBlockHash().ToString(), state.ToString());
+    }
+
+    CPrivateBlockUndo private_block_undo;
+    if (BlockHasPrivateTransactions(block)) {
+        private_block_undo.vtxundo.resize(block.vtx.size());
+    }
+
+    for (size_t i = 0; i < block.vtx.size(); ++i) {
+        const CTransactionRef& tx = block.vtx[i];
         if (!tx->IsCoinBase()) {
             for (const CTxIn &txin : tx->vin) {
                 inputs.SpendCoin(txin.prevout);
             }
         }
+        if (!tx->IsCoinBase() && !Consensus::PrivateTxActive(m_chainman.GetConsensus(), pindex->nHeight)) {
+            if (tx->HasPrivateBundle()) {
+                return error("ReplayBlock(): private transaction before activation at %d, hash=%s", pindex->nHeight, pindex->GetBlockHash().ToString());
+            }
+        }
+        if (tx->HasPrivateBundle()) {
+            std::string private_error;
+            if (!ApplyPrivateTransaction(*tx, inputs, private_block_undo.vtxundo[i], private_error)) {
+                return error("ReplayBlock(): private state update failed at %d, hash=%s: %s", pindex->nHeight, pindex->GetBlockHash().ToString(), private_error);
+            }
+        }
         // Pass check = true as every addition may be an overwrite.
         AddCoins(inputs, *tx, pindex->nHeight, true);
+    }
+    if (BlockHasPrivateTransactions(block)) {
+        inputs.AddPrivateBlockUndo(pindex->GetBlockHash(), private_block_undo);
     }
     return true;
 }
@@ -5342,6 +5719,13 @@ bool ChainstateManager::ActivateSnapshot(
 {
     uint256 base_blockhash = metadata.m_base_blockhash;
 
+    const auto snapshot_data{GetParams().AssumeutxoForBlockhash(base_blockhash)};
+    if (snapshot_data && Consensus::PrivateTxActive(GetConsensus(), snapshot_data->height)) {
+        LogPrintf("[snapshot] refusing snapshot %s at height %d: the format does not authenticate Orchard consensus state\n",
+                  base_blockhash.ToString(), snapshot_data->height);
+        return false;
+    }
+
     if (this->SnapshotBlockhash()) {
         LogPrintf("[snapshot] can't activate a snapshot-based chainstate more than once\n");
         return false;
@@ -5509,6 +5893,11 @@ bool ChainstateManager::PopulateAndValidateSnapshot(
     }
 
     int base_height = snapshot_start_block->nHeight;
+    if (Consensus::PrivateTxActive(GetConsensus(), base_height)) {
+        LogPrintf("[snapshot] refusing snapshot at height %d: the format does not authenticate Orchard consensus state\n",
+                  base_height);
+        return false;
+    }
     const auto& maybe_au_data = GetParams().AssumeutxoForHeight(base_height);
 
     if (!maybe_au_data) {
@@ -5931,15 +6320,23 @@ ChainstateManager::~ChainstateManager()
     m_versionbitscache.Clear();
 }
 
-bool ChainstateManager::DetectSnapshotChainstate()
+bool ChainstateManager::DetectSnapshotChainstate(std::string& error)
 {
     assert(!m_snapshot_chainstate);
+    error.clear();
     std::optional<fs::path> path = node::FindSnapshotChainstateDir(m_options.datadir);
     if (!path) {
         return false;
     }
     std::optional<uint256> base_blockhash = node::ReadSnapshotBaseBlockhash(*path);
     if (!base_blockhash) {
+        return false;
+    }
+    const auto snapshot_data{GetParams().AssumeutxoForBlockhash(*base_blockhash)};
+    if (snapshot_data && Consensus::PrivateTxActive(GetConsensus(), snapshot_data->height)) {
+        error = strprintf(
+            "The existing UTXO snapshot at height %d cannot be loaded because its format does not authenticate Orchard consensus state. Remove the snapshot chainstate directory and restart with the fully validated chainstate.",
+            snapshot_data->height);
         return false;
     }
     LogPrintf("[snapshot] detected active snapshot chainstate (%s) - loading\n",

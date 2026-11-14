@@ -42,9 +42,13 @@ HelpMessageDialog::HelpMessageDialog(QWidget *parent, bool about) :
     {
         setWindowTitle(tr("About %1").arg(PACKAGE_NAME));
 
-        std::string licenseInfo = LicenseInfo();
+        const std::string licenseInfo = LicenseInfo() +
+            "\nThis application uses Qt, copyright The Qt Company Ltd. and other contributors, "
+            "under the GNU Lesser General Public License version 3. "
+            "See the accompanying SOURCE.md and licenses directory for the LGPL, GPL, "
+            "third-party notices and instructions for obtaining and rebuilding the matching source.\n";
         /// HTML-format the license message from the core
-        QString licenseInfoHTML = QString::fromStdString(LicenseInfo());
+        QString licenseInfoHTML = QString::fromStdString(licenseInfo);
         // Make URLs clickable
         QRegularExpression uri(QStringLiteral("<(.*)>"), QRegularExpression::InvertedGreedinessOption);
         licenseInfoHTML.replace(uri, QStringLiteral("<a href=\"\\1\">\\1</a>"));

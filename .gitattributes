@@ -1,1 +1,17 @@
 src/clientversion.cpp export-subst
+* text=auto eol=lf
+.gitattributes text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.mk text eol=lf
+*.patch text eol=lf -whitespace
+# Preserve the final blank line in verbatim upstream Apache license texts.
+contrib/release/extra-notices/*/LICENSE-APACHE whitespace=-blank-at-eof
+Cargo.lock text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+*.ts text eol=lf
+*.xlf text eol=lf
+LICENSE text eol=lf
+COPYING text eol=lf

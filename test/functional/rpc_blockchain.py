@@ -54,10 +54,12 @@ from test_framework.wallet import MiniWallet
 
 
 HEIGHT = 200  # blocks mined
+REGTEST_INITIAL_BLOCK_SUBSIDY = 512
 TIME_RANGE_STEP = 600  # ten-minute steps
-TIME_RANGE_MTP = TIME_GENESIS_BLOCK + (HEIGHT - 6) * TIME_RANGE_STEP
-TIME_RANGE_TIP = TIME_GENESIS_BLOCK + (HEIGHT - 1) * TIME_RANGE_STEP
-TIME_RANGE_END = TIME_GENESIS_BLOCK + HEIGHT * TIME_RANGE_STEP
+FIRST_BLOCK_TIME = TIME_GENESIS_BLOCK + TIME_RANGE_STEP
+TIME_RANGE_MTP = TIME_GENESIS_BLOCK + (HEIGHT - 5) * TIME_RANGE_STEP
+TIME_RANGE_TIP = TIME_GENESIS_BLOCK + HEIGHT * TIME_RANGE_STEP
+TIME_RANGE_END = TIME_RANGE_TIP + TIME_RANGE_STEP
 DIFFICULTY_ADJUSTMENT_INTERVAL = 2016
 
 
@@ -91,12 +93,13 @@ class BlockchainTest(NitoTestFramework):
         self._test_waitforblockheight()
         self._test_getblock()
         self._test_getdeploymentinfo()
+        self.restart_node(0)
         self._test_y2106()
         assert self.nodes[0].verifychain(4, 0)
 
     def mine_chain(self):
         self.log.info(f"Generate {HEIGHT} blocks after the genesis block in ten-minute steps")
-        for t in range(TIME_GENESIS_BLOCK, TIME_RANGE_END, TIME_RANGE_STEP):
+        for t in range(FIRST_BLOCK_TIME, TIME_RANGE_END, TIME_RANGE_STEP):
             self.nodes[0].setmocktime(t)
             self.generate(self.wallet, 1)
         assert_equal(self.nodes[0].getblockchaininfo()['blocks'], HEIGHT)
@@ -125,6 +128,7 @@ class BlockchainTest(NitoTestFramework):
         self.log.info("Test getblockchaininfo")
 
         keys = [
+            'activated',
             'bestblockhash',
             'blocks',
             'chain',
@@ -133,6 +137,7 @@ class BlockchainTest(NitoTestFramework):
             'headers',
             'initialblockdownload',
             'mediantime',
+            'privateTxActivationHeight',
             'pruned',
             'size_on_disk',
             'time',
@@ -143,6 +148,8 @@ class BlockchainTest(NitoTestFramework):
 
         assert_equal(res['time'], TIME_RANGE_END - TIME_RANGE_STEP)
         assert_equal(res['mediantime'], TIME_RANGE_MTP)
+        assert_equal(res['privateTxActivationHeight'], 1)
+        assert_equal(res['activated'], True)
 
         # result should have these additional pruning keys if manual pruning is enabled
         assert_equal(sorted(res.keys()), sorted(['pruneheight', 'automatic_pruning'] + keys))
@@ -223,19 +230,6 @@ class BlockchainTest(NitoTestFramework):
                     'signalling': '#'*(height-143),
                 },
                 'active': False
-            },
-            'taproot': {
-                'type': 'bip9',
-                'bip9': {
-                    'start_time': -1,
-                    'timeout': 9223372036854775807,
-                    'min_activation_height': 0,
-                    'status': 'active',
-                    'status_next': 'active',
-                    'since': 0,
-                },
-                'height': 0,
-                'active': True
             }
           }
         })
@@ -258,7 +252,8 @@ class BlockchainTest(NitoTestFramework):
         self.check_signalling_deploymentinfo_result(self.nodes[0].getdeploymentinfo(), gbci207["blocks"], gbci207["bestblockhash"], "started")
 
         # block just prior to lock in
-        self.generate(self.wallet, 287 - gbci207["blocks"])
+        blocks_to_lock_in = 287 - gbci207["blocks"]
+        assert_equal(len(self.generate(self.wallet, blocks_to_lock_in, maxtries=100_000_000)), blocks_to_lock_in)
         gbci287 = self.nodes[0].getblockchaininfo()
         self.check_signalling_deploymentinfo_result(self.nodes[0].getdeploymentinfo(), gbci287["blocks"], gbci287["bestblockhash"], "locked_in")
 
@@ -267,10 +262,12 @@ class BlockchainTest(NitoTestFramework):
 
     def _test_y2106(self):
         self.log.info("Check that block timestamps work until year 2106")
-        self.generate(self.nodes[0], 8)[-1]
+        assert_equal(len(self.generate(self.nodes[0], 8, maxtries=100_000_000)), 8)
         time_2106 = 2**32 - 1
         self.nodes[0].setmocktime(time_2106)
-        last = self.generate(self.nodes[0], 6)[-1]
+        blocks = self.generate(self.nodes[0], 6, maxtries=100_000_000)
+        assert_equal(len(blocks), 6)
+        last = blocks[-1]
         assert_equal(self.nodes[0].getblockheader(last)["mediantime"], time_2106)
 
     def _test_getchaintxstats(self):
@@ -331,7 +328,7 @@ class BlockchainTest(NitoTestFramework):
         node = self.nodes[0]
         res = node.gettxoutsetinfo()
 
-        assert_equal(res['total_amount'], Decimal('8725.00000000'))
+        assert_equal(res['total_amount'], Decimal(REGTEST_INITIAL_BLOCK_SUBSIDY * HEIGHT))
         assert_equal(res['transactions'], HEIGHT)
         assert_equal(res['height'], HEIGHT)
         assert_equal(res['txouts'], HEIGHT)
@@ -523,14 +520,19 @@ class BlockchainTest(NitoTestFramework):
         fork_hash = node.getblockhash(fork_height)
         fork_block = node.getblock(fork_hash)
 
-        def solve_and_send_block(prevhash, height, time):
-            b = create_block(prevhash, create_coinbase(height), time)
+        def solve_and_send_block(prevhash, height, time, bits):
+            b = create_block(
+                prevhash,
+                create_coinbase(height, nValue=REGTEST_INITIAL_BLOCK_SUBSIDY),
+                time,
+                tmpl={"bits": bits},
+            )
             b.solve()
             peer.send_and_ping(msg_block(b))
             return b
 
-        b1 = solve_and_send_block(int(fork_hash, 16), fork_height+1, fork_block['time'] + 1)
-        b2 = solve_and_send_block(b1.sha256, fork_height+2, b1.nTime + 1)
+        b1 = solve_and_send_block(int(fork_hash, 16), fork_height+1, fork_block['time'] + TIME_RANGE_STEP, fork_block['bits'])
+        b2 = solve_and_send_block(b1.sha256, fork_height+2, b1.nTime + TIME_RANGE_STEP, fork_block['bits'])
 
         node.invalidateblock(b2.hash)
 

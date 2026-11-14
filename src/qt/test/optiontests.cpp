@@ -20,6 +20,37 @@
 #include <univalue.h>
 
 #include <fstream>
+#include <initializer_list>
+
+namespace {
+void EraseSetting(common::Settings& settings, const std::string& name)
+{
+    settings.command_line_options.erase(name);
+    settings.command_line_options.erase("-" + name);
+    settings.forced_settings.erase(name);
+    settings.forced_settings.erase("-" + name);
+    settings.rw_settings.erase(name);
+    settings.rw_settings.erase("-" + name);
+    for (auto& section : settings.ro_config) {
+        section.second.erase(name);
+        section.second.erase("-" + name);
+    }
+}
+
+void ClearPersistentSettings(interfaces::Node& node, std::initializer_list<const char*> names)
+{
+    gArgs.LockSettings([&](common::Settings& s) {
+        for (const char* name : names) {
+            EraseSetting(s, name);
+        }
+    });
+    for (const char* name : names) {
+        node.forceSetting(name, common::SettingsValue{});
+        node.updateRwSetting(name, common::SettingsValue{});
+        QVERIFY2(node.getPersistentSetting(name).isNull(), name);
+    }
+}
+} // namespace
 
 OptionTests::OptionTests(interfaces::Node& node) : m_node(node)
 {
@@ -35,6 +66,9 @@ void OptionTests::init()
 
 void OptionTests::migrateSettings()
 {
+    ClearPersistentSettings(m_node, {"dbcache", "par", "listen", "onion", "proxy", "prune"});
+    QVERIFY(gArgs.WriteSettingsFile());
+
     // Set legacy QSettings and verify that they get cleared and migrated to
     // settings.json
     QSettings settings;
@@ -76,13 +110,14 @@ void OptionTests::migrateSettings()
         "    \"onion\": \"onion:234\",\n"
         "    \"par\": \"12\",\n"
         "    \"proxy\": \"proxy:123\",\n"
-        "    \"prune\": \"2861\"\n"
+        "    \"prune\": \"2861\",\n"
+        "    \"upnp\": false\n"
         "}\n");
 }
 
 void OptionTests::integerGetArgBug()
 {
-    // Test regression https://github.com/nito/nito/issues/24457. Ensure
+    // Test regression https://github.com/bitcoin/bitcoin/issues/24457. Ensure
     // that setting integer prune value doesn't cause an exception to be thrown
     // in the OptionsModel constructor
     gArgs.LockSettings([&](common::Settings& settings) {
@@ -104,10 +139,8 @@ void OptionTests::parametersInteraction()
     // It was fixed via https://github.com/nito-core/gui/pull/568.
     // With fListen=false in ~/.config/Nito/Nito-Qt.conf and all else left as default,
     // nito-qt should set both -listen and -listenonion to false and start successfully.
-    gArgs.LockSettings([&](common::Settings& s) {
-        s.forced_settings.erase("listen");
-        s.forced_settings.erase("listenonion");
-    });
+    ClearPersistentSettings(m_node, {"listen", "listenonion"});
+    QVERIFY(gArgs.WriteSettingsFile());
     QVERIFY(!gArgs.IsArgSet("-listen"));
     QVERIFY(!gArgs.IsArgSet("-listenonion"));
 

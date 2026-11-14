@@ -20,12 +20,19 @@
 #include <limits>
 #include <vector>
 
+namespace {
+bool SignalsReplacement(const CTransaction& tx)
+{
+    return SignalsOptInRBF(tx) || tx.nVersion == 3;
+}
+} // namespace
+
 RBFTransactionState IsRBFOptIn(const CTransaction& tx, const CTxMemPool& pool)
 {
     AssertLockHeld(pool.cs);
 
     // First check the transaction itself.
-    if (SignalsOptInRBF(tx)) {
+    if (SignalsReplacement(tx)) {
         return RBFTransactionState::REPLACEABLE_BIP125;
     }
 
@@ -42,7 +49,7 @@ RBFTransactionState IsRBFOptIn(const CTransaction& tx, const CTxMemPool& pool)
                                                         /*fSearchForParents=*/false)};
 
     for (CTxMemPool::txiter it : ancestors) {
-        if (SignalsOptInRBF(it->GetTx())) {
+        if (SignalsReplacement(it->GetTx())) {
             return RBFTransactionState::REPLACEABLE_BIP125;
         }
     }
@@ -52,7 +59,7 @@ RBFTransactionState IsRBFOptIn(const CTransaction& tx, const CTxMemPool& pool)
 RBFTransactionState IsRBFOptInEmptyMempool(const CTransaction& tx)
 {
     // If we don't have a local mempool we can only check the transaction itself.
-    return SignalsOptInRBF(tx) ? RBFTransactionState::REPLACEABLE_BIP125 : RBFTransactionState::UNKNOWN;
+    return SignalsReplacement(tx) ? RBFTransactionState::REPLACEABLE_BIP125 : RBFTransactionState::UNKNOWN;
 }
 
 std::optional<std::string> GetEntriesForConflicts(const CTransaction& tx,

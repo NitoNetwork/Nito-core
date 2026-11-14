@@ -262,6 +262,26 @@
             </property>
            </widget>
           </item>
+          <item>
+           <widget class="QCheckBox" name="m_enable_legacy_receive_address_types">
+            <property name="text">
+             <string>Enable Legacy/P2SH receiving addresses</string>
+            </property>
+            <property name="toolTip">
+             <string>Show Legacy (P2PKH) and P2SH-SegWit in the receiving address type selector.</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="m_enable_bech32x_orchard_receive_addresses">
+            <property name="text">
+             <string>Enable private Bech32x receiving addresses</string>
+            </property>
+            <property name="toolTip">
+             <string>Show Bech32x private receiving addresses, private balances and private balance controls after the activation block.</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>

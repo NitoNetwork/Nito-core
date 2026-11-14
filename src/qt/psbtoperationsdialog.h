@@ -13,6 +13,8 @@
 #include <qt/clientmodel.h>
 #include <qt/walletmodel.h>
 
+#include <optional>
+
 namespace Ui {
 class PSBTOperationsDialog;
 }
@@ -37,6 +39,7 @@ public Q_SLOTS:
 private:
     Ui::PSBTOperationsDialog* m_ui;
     PartiallySignedTransaction m_transaction_data;
+    std::optional<uint256> m_private_intent_hash;
     WalletModel* m_wallet_model;
     ClientModel* m_client_model;
 

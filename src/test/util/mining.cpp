@@ -14,6 +14,7 @@
 #include <primitives/transaction.h>
 #include <test/util/script.h>
 #include <util/check.h>
+#include <util/time.h>
 #include <validation.h>
 #include <validationinterface.h>
 #include <versionbits.h>
@@ -118,7 +119,10 @@ std::shared_ptr<CBlock> PrepareBlock(const NodeContext& node, const CScript& coi
             ->block);
 
     LOCK(cs_main);
-    block->nTime = Assert(node.chainman)->ActiveChain().Tip()->GetMedianTimePast() + 1;
+    const CBlockIndex* tip{Assert(node.chainman)->ActiveChain().Tip()};
+    block->nTime = tip->GetBlockTime() + 2 * Params().GetConsensus().nPowTargetSpacing + 1;
+    block->nBits = GetNextWorkRequired(tip, block.get(), Params().GetConsensus());
+    SetMockTime(block->nTime);
     block->hashMerkleRoot = BlockMerkleRoot(*block);
 
     return block;

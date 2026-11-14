@@ -286,6 +286,29 @@ public:
 
     std::unique_ptr<BlockTreeDB> m_block_tree_db GUARDED_BY(::cs_main);
 
+    /**
+     * Persistent one-way latch set after the active chain first reaches the
+     * Nito private activation height. It deliberately survives reorgs so the
+     * node never resumes private-incompatible peer traffic after activation
+     * has been observed.
+     */
+    std::atomic_bool m_nito_private_activation_observed{false};
+
+    bool NitoPrivateActivationObserved() const
+    {
+        return m_nito_private_activation_observed.load(std::memory_order_acquire);
+    }
+
+    /**
+     * Load the canonical activation latch from the network data directory.
+     * A missing file means activation has never been observed. Any malformed
+     * or unreadable file is an error and must prevent networking from starting.
+     */
+    bool LoadNitoPrivateActivationLatch(std::string& error);
+
+    /** Persist the one-way activation latch before exposing the activated tip. */
+    bool MarkNitoPrivateActivationObserved() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+
     bool WriteBlockIndexDB() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     bool LoadBlockIndexDB(const std::optional<uint256>& snapshot_blockhash)
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
@@ -328,7 +351,7 @@ public:
     /** Calculate the amount of disk space the block & undo files currently use */
     uint64_t CalculateCurrentUsage();
 
-    //! Returns last CBlockIndex* that is a checkpoint
+    //! Return the last configured checkpoint present in the block index.
     const CBlockIndex* GetLastCheckpoint(const CCheckpointData& data) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
     //! Check if all blocks in the [upper_block, lower_block] range have data available.

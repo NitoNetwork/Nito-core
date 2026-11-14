@@ -1,0 +1,58 @@
+--- a/util-internal.h
++++ b/util-internal.h
+@@ -476,8 +476,8 @@
+ #endif
+ 
+ #ifdef _WIN32
+-#define EV_SOCK_FMT EV_I64_FMT
+-#define EV_SOCK_ARG(x) EV_I64_ARG((x))
++#define EV_SOCK_FMT "%p"
++#define EV_SOCK_ARG(x) ((void *)(uintptr_t)(x))
+ #else
+ #define EV_SOCK_FMT "%d"
+ #define EV_SOCK_ARG(x) (x)
+--- a/evutil.c
++++ b/evutil.c
+@@ -701,6 +701,7 @@
+ 	*/
+ 	HMODULE lib = evutil_load_windows_system_library_(TEXT("iphlpapi.dll"));
+ 	GetAdaptersAddresses_fn_t fn;
++	FARPROC proc;
+ 	ULONG size, res;
+ 	IP_ADAPTER_ADDRESSES *addresses = NULL, *address;
+ 	int result = -1;
+@@ -712,8 +713,9 @@
+ 	if (!lib)
+ 		goto done;
+ 
+-	if (!(fn = (GetAdaptersAddresses_fn_t) GetProcAddress(lib, "GetAdaptersAddresses")))
++	if (!(proc = GetProcAddress(lib, "GetAdaptersAddresses")))
+ 		goto done;
++	memcpy(&fn, &proc, sizeof(fn));
+ 
+ 	/* Guess how much space we need. */
+ 	size = 15*1024;
+--- a/evdns.c
++++ b/evdns.c
+@@ -3773,6 +3773,7 @@
+ 	int status = 0, r, added_any;
+ 	IP_ADDR_STRING *ns;
+ 	GetNetworkParams_fn_t fn;
++	FARPROC proc;
+ 
+ 	ASSERT_LOCKED(base);
+ 	if (!(handle = evutil_load_windows_system_library_(
+@@ -3781,11 +3782,12 @@
+ 		status = -1;
+ 		goto done;
+ 	}
+-	if (!(fn = (GetNetworkParams_fn_t) GetProcAddress(handle, "GetNetworkParams"))) {
++	if (!(proc = GetProcAddress(handle, "GetNetworkParams"))) {
+ 		log(EVDNS_LOG_WARN, "Could not get address of function.");
+ 		status = -1;
+ 		goto done;
+ 	}
++	memcpy(&fn, &proc, sizeof(fn));
+ 
+ 	buf = mm_malloc(size);
+ 	if (!buf) { status = 4; goto done; }

@@ -1,0 +1,25 @@
+[package]
+name = "nito_orchard_ffi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "nito_orchard_ffi"
+crate-type = ["staticlib", "rlib"]
+
+[profile.release]
+panic = "unwind"
+
+[features]
+default = ["multicore"]
+multicore = ["orchard/multicore"]
+
+[dependencies]
+chacha20 = "=0.9.1"
+incrementalmerkletree = { version = "=0.8.2", features = ["legacy-api"] }
+nonempty = { version = "=0.11.0", default-features = false }
+orchard = { version = "=0.15.0", default-features = false, features = ["circuit", "std"] }
+rand_core = { version = "=0.6.4", features = ["getrandom"] }
+zcash_note_encryption = "=0.4.1"

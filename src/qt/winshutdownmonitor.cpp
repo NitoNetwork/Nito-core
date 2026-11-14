@@ -13,31 +13,26 @@
 
 // If we don't want a message to be processed by Qt, return true and set result to
 // the value that the window procedure should return. Otherwise return false.
-bool WinShutdownMonitor::nativeEventFilter(const QByteArray &eventType, void *pMessage, long *pnResult)
+bool WinShutdownMonitor::nativeEventFilter(const QByteArray& eventType, void* pMessage, qintptr* pnResult)
 {
-       Q_UNUSED(eventType);
+    Q_UNUSED(eventType);
 
-       MSG *pMsg = static_cast<MSG *>(pMessage);
+    MSG* pMsg = static_cast<MSG*>(pMessage);
 
-       switch(pMsg->message)
-       {
-           case WM_QUERYENDSESSION:
-           {
-               // Initiate a client shutdown after receiving a WM_QUERYENDSESSION and block
-               // Windows session end until we have finished client shutdown.
-               m_shutdown_fn();
-               *pnResult = FALSE;
-               return true;
-           }
+    switch (pMsg->message) {
+    case WM_QUERYENDSESSION:
+        // Initiate a client shutdown after receiving a WM_QUERYENDSESSION and block
+        // Windows session end until we have finished client shutdown.
+        m_shutdown_fn();
+        *pnResult = FALSE;
+        return true;
 
-           case WM_ENDSESSION:
-           {
-               *pnResult = FALSE;
-               return true;
-           }
-       }
+    case WM_ENDSESSION:
+        *pnResult = FALSE;
+        return true;
+    }
 
-       return false;
+    return false;
 }
 
 void WinShutdownMonitor::registerShutdownBlockReason(const QString& strReason, const HWND& mainWinId)

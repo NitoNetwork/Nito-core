@@ -9,6 +9,7 @@
 #define UNUSED
 #endif
 static const char UNUSED *nito_strings[] = {
+QT_TRANSLATE_NOOP("nito-core", "Wallet loading failed."),
 QT_TRANSLATE_NOOP("nito-core", "The %s developers"),
 QT_TRANSLATE_NOOP("nito-core", ""
 "%s corrupt. Try using the wallet tool nito-wallet to salvage or restoring "
@@ -140,9 +141,6 @@ QT_TRANSLATE_NOOP("nito-core", ""
 QT_TRANSLATE_NOOP("nito-core", ""
 "Prune mode is incompatible with -reindex-chainstate. Use full -reindex "
 "instead."),
-QT_TRANSLATE_NOOP("nito-core", ""
-"Prune: last wallet synchronisation goes beyond pruned data. You need to -"
-"reindex (download the whole blockchain again in case of pruned node)"),
 QT_TRANSLATE_NOOP("nito-core", ""
 "Rename of '%s' -> '%s' failed. You should resolve this by manually moving or "
 "deleting the invalid snapshot directory %s, otherwise you will encounter the "
@@ -352,9 +350,33 @@ QT_TRANSLATE_NOOP("nito-core", "Specified -walletdir \"%s\" is not a directory")
 QT_TRANSLATE_NOOP("nito-core", "Specified blocks directory \"%s\" does not exist."),
 QT_TRANSLATE_NOOP("nito-core", "Specified data directory \"%s\" does not exist."),
 QT_TRANSLATE_NOOP("nito-core", "Starting network threads…"),
+QT_TRANSLATE_NOOP("nito-core", "Some blocks required for complete wallet recovery have been pruned. To reconstruct your wallet and its complete history, use a non-pruned node or perform a full resynchronization. This requires downloading data, time and disk space. No resynchronization has been started."),
+QT_TRANSLATE_NOOP("nito-core", "The Orchard index cannot catch up because required blocks have been pruned. To recover Orchard functionality, use a non-pruned node or explicitly rebuild with -reindex and -prune=0. This requires downloading data, time and disk space. No resynchronization has been started. To continue without Orchard, restart with -orchardindex=0; private balances and spending will be unavailable."),
+QT_TRANSLATE_NOOP("nito-core", "A recovery phrase requires -orchardindex=1 after private activation."),
+QT_TRANSLATE_NOOP("nito-core", "A recovery phrase requires -transparenthistoryindex=1 when restoring an existing chain."),
+QT_TRANSLATE_NOOP("nito-core", "Automatic wallet history recovery failed and its failure state could not be saved."),
+QT_TRANSLATE_NOOP("nito-core", "Automatic wallet history recovery failed on its persisted chain target."),
+QT_TRANSLATE_NOOP("nito-core", "Automatic wallet history recovery was aborted."),
+QT_TRANSLATE_NOOP("nito-core", "Automatic wallet history recovery was interrupted while waiting for wallet indexes."),
+QT_TRANSLATE_NOOP("nito-core", "Automatic wallet history recovery was interrupted."),
+QT_TRANSLATE_NOOP("nito-core", "Cannot restore wallet history without chain access."),
+QT_TRANSLATE_NOOP("nito-core", "Could not find the automatic wallet history recovery start block."),
+QT_TRANSLATE_NOOP("nito-core", "Could not prepare wallet address discovery for automatic history recovery."),
+QT_TRANSLATE_NOOP("nito-core", "Could not save the pending automatic wallet history recovery target."),
+QT_TRANSLATE_NOOP("nito-core", "Restoring complete wallet history..."),
+QT_TRANSLATE_NOOP("nito-core", "The active chain target is unavailable; automatic wallet history recovery remains pending."),
+QT_TRANSLATE_NOOP("nito-core", "The private wallet index is being prepared for wallet recovery. Progress: %.1f%% (%d/%d)."),
+QT_TRANSLATE_NOOP("nito-core", "The private wallet index is not available. Restart Nito Core with -orchardindex=1 to restore a recovery phrase."),
+QT_TRANSLATE_NOOP("nito-core", "The private wallet index is not available. Restart Nito Core with private wallet indexing enabled (-orchardindex=1) before wallet recovery can complete."),
+QT_TRANSLATE_NOOP("nito-core", "The private wallet index is not available. Restart Nito Core with private wallet indexing enabled (-orchardindex=1) before using Bech32x wallet features."),
+QT_TRANSLATE_NOOP("nito-core", "Private receiving address metadata is not available yet for this encrypted wallet. Unlock the wallet once or restore it from the recovery phrase to prepare private receiving addresses."),
 QT_TRANSLATE_NOOP("nito-core", "The source code is available from %s."),
 QT_TRANSLATE_NOOP("nito-core", "The specified config file %s does not exist"),
+QT_TRANSLATE_NOOP("nito-core", "The transparent history index is being prepared for wallet recovery. Progress: %.1f%% (%d/%d)."),
+QT_TRANSLATE_NOOP("nito-core", "The transparent history index is not available. Restart Nito Core with -transparenthistoryindex=1 before wallet recovery can complete."),
+QT_TRANSLATE_NOOP("nito-core", "The transparent history index is not available. Restart Nito Core with -transparenthistoryindex=1 to restore a recovery phrase."),
 QT_TRANSLATE_NOOP("nito-core", "The transaction amount is too small to pay the fee"),
+QT_TRANSLATE_NOOP("nito-core", "The wallet and its recovery roots were saved, but address discovery could not be prepared."),
 QT_TRANSLATE_NOOP("nito-core", "The wallet will avoid paying less than the minimum relay fee."),
 QT_TRANSLATE_NOOP("nito-core", "This is experimental software."),
 QT_TRANSLATE_NOOP("nito-core", "This is the minimum transaction fee you pay on every transaction."),
@@ -387,7 +409,12 @@ QT_TRANSLATE_NOOP("nito-core", "Unsupported logging category %s=%s."),
 QT_TRANSLATE_NOOP("nito-core", "User Agent comment (%s) contains unsafe characters."),
 QT_TRANSLATE_NOOP("nito-core", "Verifying blocks…"),
 QT_TRANSLATE_NOOP("nito-core", "Verifying wallet(s)…"),
+QT_TRANSLATE_NOOP("nito-core", "Wallet created, but complete recovery could not finish: %s"),
 QT_TRANSLATE_NOOP("nito-core", "Wallet file creation failed: %s"),
+QT_TRANSLATE_NOOP("nito-core", "Wallet history was restored, but its completion state could not be saved."),
+QT_TRANSLATE_NOOP("nito-core", "Wallet is currently rescanning; automatic history recovery remains pending."),
+QT_TRANSLATE_NOOP("nito-core", "Wallet is locked."),
 QT_TRANSLATE_NOOP("nito-core", "Wallet needed to be rewritten: restart %s to complete"),
+QT_TRANSLATE_NOOP("nito-core", "Wallet recovery complete."),
 QT_TRANSLATE_NOOP("nito-core", "acceptstalefeeestimates is not supported on %s chain."),
 };

@@ -1,4 +1,5 @@
-OSX_MIN_VERSION=11.0
+# Qt 6.8 supports macOS 12 and newer and builds its static objects for 12.0.
+OSX_MIN_VERSION=12.0
 OSX_SDK_VERSION=14.0
 XCODE_VERSION=15.0
 XCODE_BUILD_ID=15A240d
@@ -54,7 +55,7 @@ $(foreach TOOL,$(cctools_TOOLS),$(eval darwin_$(TOOL) = $$(build_prefix)/bin/$$(
 #     -mlinker-version
 #
 #         Ensures that modern linker features are enabled. See here for more
-#         details: https://github.com/nito/nito/pull/19407.
+#         details: https://github.com/bitcoin/bitcoin/pull/19407.
 #
 #     -B$(build_prefix)/bin
 #

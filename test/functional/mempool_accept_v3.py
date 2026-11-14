@@ -24,7 +24,7 @@ def cleanup(extra_args=None):
         def wrapper(self):
             try:
                 if extra_args is not None:
-                    self.restart_node(0, extra_args=extra_args)
+                    self.restart_node(0, extra_args=self.extra_args[0] + extra_args)
                 func(self)
             finally:
                 # Clear mempool again after test
@@ -37,7 +37,7 @@ def cleanup(extra_args=None):
 class MempoolAcceptV3(NitoTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
-        self.extra_args = [["-acceptnonstdtxn=1"]]
+        self.extra_args = [["-acceptnonstdtxn=1", "-mempoolfullrbf=0"]]
         self.setup_clean_chain = True
 
     def check_mempool(self, txids):
@@ -158,7 +158,9 @@ class MempoolAcceptV3(NitoTestFramework):
         )
 
         self.check_mempool([tx_v3_no_bip125["txid"]])
-        assert not node.getmempoolentry(tx_v3_no_bip125["txid"])["bip125-replaceable"]
+        # Nito reports version-3 policy replaceability even without sequence
+        # signalling, consistently with IsRBFOptIn and actual replacement.
+        assert node.getmempoolentry(tx_v3_no_bip125["txid"])["bip125-replaceable"]
         tx_v3_no_bip125_rbf = self.wallet.send_self_transfer(
             from_node=node,
             fee_rate=DEFAULT_FEE * 2,

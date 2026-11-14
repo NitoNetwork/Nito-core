@@ -16,6 +16,7 @@
 #include <span.h>
 #include <streams.h>
 
+#include <map>
 #include <optional>
 
 // Magic bytes
@@ -85,6 +86,171 @@ struct PSBTProprietary
     }
 };
 
+static constexpr uint64_t PSBT_NITO_GLOBAL_RESERVED_LEGACY_PRIVATE_AUTH = 1;
+static constexpr uint64_t PSBT_NITO_GLOBAL_ORCHARD_ACTION_AUTH_V1 = 2;
+static constexpr uint64_t PSBT_NITO_GLOBAL_ORCHARD_BUNDLE_AUTH_V1 = 3;
+static constexpr uint64_t PSBT_NITO_GLOBAL_ORCHARD_SPEND_MATERIAL_V1 = 4;
+static constexpr uint64_t PSBT_NITO_GLOBAL_ORCHARD_OUTPUT_MATERIAL_V1 = 5;
+static constexpr uint64_t PSBT_NITO_GLOBAL_ORCHARD_BUNDLE_PLAN_V1 = 6;
+
+class CPrivatePSBTOrchardBundlePlan
+{
+public:
+    int32_t version{1};
+    uint256 anchor;
+    CAmount value_balance{0};
+    uint32_t spend_count{0};
+    uint32_t output_count{0};
+
+    SERIALIZE_METHODS(CPrivatePSBTOrchardBundlePlan, obj)
+    {
+        READWRITE(obj.version, obj.anchor, obj.value_balance, obj.spend_count, obj.output_count);
+    }
+};
+
+class CPrivatePSBTOrchardSpendMaterial
+{
+public:
+    int32_t version{1};
+    uint256 cmx;
+    uint256 nullifier;
+    CAmount value{0};
+    uint32_t derivation_version{1};
+    uint32_t account{0};
+    bool internal{false};
+    uint32_t diversifier_index{0};
+    uint64_t commitment_index{0};
+    uint32_t action_index{0};
+    std::vector<unsigned char> recipient_raw;
+    std::vector<unsigned char> rho;
+    std::vector<unsigned char> rseed;
+    std::vector<unsigned char> merkle_path;
+
+    SERIALIZE_METHODS(CPrivatePSBTOrchardSpendMaterial, obj)
+    {
+        READWRITE(obj.version, obj.cmx, obj.nullifier, obj.value, obj.derivation_version,
+                  obj.account, obj.internal, obj.diversifier_index, obj.commitment_index,
+                  obj.action_index, obj.recipient_raw, obj.rho, obj.rseed, obj.merkle_path);
+    }
+};
+
+class CPrivatePSBTOrchardOutputMaterial
+{
+public:
+    int32_t version{1};
+    std::vector<unsigned char> recipient_raw;
+    CAmount value{0};
+    bool ovk_internal{false};
+
+    SERIALIZE_METHODS(CPrivatePSBTOrchardOutputMaterial, obj)
+    {
+        READWRITE(obj.version, obj.recipient_raw, obj.value, obj.ovk_internal);
+    }
+};
+
+struct NitoPrivatePSBTSigningData
+{
+    std::optional<CPrivatePSBTOrchardBundlePlan> plan;
+    std::map<uint64_t, CPrivatePSBTOrchardSpendMaterial> spends;
+    std::map<uint64_t, CPrivatePSBTOrchardOutputMaterial> outputs;
+
+    bool HasAny() const { return plan.has_value() || !spends.empty() || !outputs.empty(); }
+    bool IsComplete() const
+    {
+        return plan.has_value() &&
+            spends.size() == plan->spend_count &&
+            outputs.size() == plan->output_count;
+    }
+};
+
+inline const std::vector<unsigned char>& NitoPSBTProprietaryIdentifier()
+{
+    static const std::vector<unsigned char> identifier{'n', 'i', 't', 'o'};
+    return identifier;
+}
+
+inline std::vector<unsigned char> MakeNitoPSBTProprietaryKey(uint64_t subtype, Span<const unsigned char> keydata = {})
+{
+    std::vector<unsigned char> key;
+    VectorWriter writer{key, 0};
+    writer << CompactSizeWriter(PSBT_GLOBAL_PROPRIETARY);
+    writer << NitoPSBTProprietaryIdentifier();
+    writer << CompactSizeWriter(subtype);
+    key.insert(key.end(), keydata.begin(), keydata.end());
+    return key;
+}
+
+inline std::vector<unsigned char> MakeNitoPSBTCompactIndexKeyData(uint64_t index)
+{
+    std::vector<unsigned char> keydata;
+    VectorWriter writer{keydata, 0};
+    writer << CompactSizeWriter(index);
+    return keydata;
+}
+
+inline bool IsNitoPSBTProprietary(const PSBTProprietary& entry, uint64_t subtype)
+{
+    return entry.identifier == NitoPSBTProprietaryIdentifier() && entry.subtype == subtype;
+}
+
+inline PSBTProprietary MakeNitoPSBTOrchardBundleAuthProprietary(const CPrivateBundleAuth& auth)
+{
+    PSBTProprietary entry;
+    entry.identifier = NitoPSBTProprietaryIdentifier();
+    entry.subtype = PSBT_NITO_GLOBAL_ORCHARD_BUNDLE_AUTH_V1;
+    entry.key = MakeNitoPSBTProprietaryKey(entry.subtype);
+    VectorWriter writer{entry.value, 0};
+    writer << auth;
+    return entry;
+}
+
+inline PSBTProprietary MakeNitoPSBTOrchardActionAuthProprietary(uint64_t action_index, const CPrivateActionAuth& auth)
+{
+    PSBTProprietary entry;
+    entry.identifier = NitoPSBTProprietaryIdentifier();
+    entry.subtype = PSBT_NITO_GLOBAL_ORCHARD_ACTION_AUTH_V1;
+    const std::vector<unsigned char> keydata = MakeNitoPSBTCompactIndexKeyData(action_index);
+    entry.key = MakeNitoPSBTProprietaryKey(entry.subtype, Span<const unsigned char>{keydata});
+    VectorWriter writer{entry.value, 0};
+    writer << auth;
+    return entry;
+}
+
+inline PSBTProprietary MakeNitoPSBTOrchardBundlePlanProprietary(const CPrivatePSBTOrchardBundlePlan& plan)
+{
+    PSBTProprietary entry;
+    entry.identifier = NitoPSBTProprietaryIdentifier();
+    entry.subtype = PSBT_NITO_GLOBAL_ORCHARD_BUNDLE_PLAN_V1;
+    entry.key = MakeNitoPSBTProprietaryKey(entry.subtype);
+    VectorWriter writer{entry.value, 0};
+    writer << plan;
+    return entry;
+}
+
+inline PSBTProprietary MakeNitoPSBTOrchardSpendMaterialProprietary(uint64_t spend_index, const CPrivatePSBTOrchardSpendMaterial& material)
+{
+    PSBTProprietary entry;
+    entry.identifier = NitoPSBTProprietaryIdentifier();
+    entry.subtype = PSBT_NITO_GLOBAL_ORCHARD_SPEND_MATERIAL_V1;
+    const std::vector<unsigned char> keydata = MakeNitoPSBTCompactIndexKeyData(spend_index);
+    entry.key = MakeNitoPSBTProprietaryKey(entry.subtype, Span<const unsigned char>{keydata});
+    VectorWriter writer{entry.value, 0};
+    writer << material;
+    return entry;
+}
+
+inline PSBTProprietary MakeNitoPSBTOrchardOutputMaterialProprietary(uint64_t output_index, const CPrivatePSBTOrchardOutputMaterial& material)
+{
+    PSBTProprietary entry;
+    entry.identifier = NitoPSBTProprietaryIdentifier();
+    entry.subtype = PSBT_NITO_GLOBAL_ORCHARD_OUTPUT_MATERIAL_V1;
+    const std::vector<unsigned char> keydata = MakeNitoPSBTCompactIndexKeyData(output_index);
+    entry.key = MakeNitoPSBTProprietaryKey(entry.subtype, Span<const unsigned char>{keydata});
+    VectorWriter writer{entry.value, 0};
+    writer << material;
+    return entry;
+}
+
 // Takes a stream and multiple arguments and serializes them as if first serialized into a vector and then into the stream
 // The resulting output into the stream has the total serialized length of all of the objects followed by all objects concatenated with each other.
 template<typename Stream, typename... X>
@@ -107,6 +273,32 @@ void UnserializeFromVector(Stream& s, X&&... args)
     if (remaining_after + expected_size != remaining_before) {
         throw std::ios_base::failure("Size of value was not the stated size");
     }
+}
+
+// PSBT v0 unsigned transactions are serialized without witness data. Nito private
+// PSBTs may additionally carry private effects in the unsigned transaction, so
+// decode standard BIP174 bytes first and fall back to Nito's private-aware form.
+template<typename Stream>
+void UnserializeUnsignedTxFromVector(Stream& s, CMutableTransaction& tx)
+{
+    const size_t expected_size = ReadCompactSize(s);
+    std::vector<unsigned char> value(expected_size);
+    if (expected_size != 0) s.read(MakeWritableByteSpan(value));
+
+    try {
+        CMutableTransaction basic_tx;
+        SpanReader reader{value};
+        reader >> TX_NO_OPTIONAL(basic_tx);
+        if (!reader.empty()) throw std::ios_base::failure("Size of value was not the stated size");
+        tx = std::move(basic_tx);
+        return;
+    } catch (const std::exception&) {
+        // Fall through and try Nito's private-effects serialization.
+    }
+
+    SpanReader reader{value};
+    reader >> TX_NO_WITNESS(tx);
+    if (!reader.empty()) throw std::ios_base::failure("Size of value was not the stated size");
 }
 
 // Deserialize bytes of given length from the stream as a KeyOriginInfo
@@ -958,6 +1150,12 @@ struct PartiallySignedTransaction
 
     bool IsNull() const;
     uint32_t GetVersion() const;
+    void ApplyNitoPrivateAuthProprietary();
+    NitoPrivatePSBTSigningData GetNitoPrivateSigningData() const;
+    std::optional<uint256> GetNitoPrivateIntentHash() const;
+    bool HasNitoPrivateSigningMaterial() const;
+    void ClearNitoPrivateSigningMaterialProprietary();
+    void SetNitoPrivateAuthProprietaryFromTx();
 
     /** Merge psbt into this. The two psbts must have the same underlying CTransaction (i.e. the
       * same actual Nito transaction.) Returns true if the merge succeeded, false otherwise. */
@@ -1074,8 +1272,9 @@ struct PartiallySignedTransaction
                         throw std::ios_base::failure("Global unsigned tx key is more than one byte type");
                     }
                     CMutableTransaction mtx;
-                    // Set the stream to serialize with non-witness since this should always be non-witness
-                    UnserializeFromVector(s, TX_NO_WITNESS(mtx));
+                    // Decode standard BIP174 unsigned tx bytes, with a fallback
+                    // for Nito private-effects unsigned transactions.
+                    UnserializeUnsignedTxFromVector(s, mtx);
                     tx = std::move(mtx);
                     // Make sure that all scriptSigs and scriptWitnesses are empty
                     for (const CTxIn& txin : tx->vin) {
@@ -1165,6 +1364,7 @@ struct PartiallySignedTransaction
         if (!tx) {
             throw std::ios_base::failure("No unsigned transaction was provided");
         }
+        ApplyNitoPrivateAuthProprietary();
 
         // Read input data
         unsigned int i = 0;
@@ -1173,9 +1373,14 @@ struct PartiallySignedTransaction
             s >> input;
             inputs.push_back(input);
 
-            // Make sure the non-witness utxo matches the outpoint
-            if (input.non_witness_utxo && input.non_witness_utxo->GetHash() != tx->vin[i].prevout.hash) {
-                throw std::ios_base::failure("Non-witness UTXO does not match outpoint hash");
+            // Make sure the non-witness UTXO matches the complete outpoint.
+            if (input.non_witness_utxo) {
+                if (input.non_witness_utxo->GetHash() != tx->vin[i].prevout.hash) {
+                    throw std::ios_base::failure("Non-witness UTXO does not match outpoint hash");
+                }
+                if (tx->vin[i].prevout.n >= input.non_witness_utxo->vout.size()) {
+                    throw std::ios_base::failure("Input specifies output index that does not exist");
+                }
             }
             ++i;
         }

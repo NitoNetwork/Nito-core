@@ -9,6 +9,11 @@
 #include <logging.h>
 
 namespace wallet {
+bilingual_str PrunedWalletRecoveryError()
+{
+    return _("Some blocks required for complete wallet recovery have been pruned. To reconstruct your wallet and its complete history, use a non-pruned node or perform a full resynchronization. This requires downloading data, time and disk space. No resynchronization has been started.");
+}
+
 fs::path GetWalletDir()
 {
     fs::path path;

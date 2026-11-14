@@ -1,0 +1,18 @@
+--- a/split.c
++++ b/split.c
+@@ -278,11 +278,14 @@ Split_splitStringToQRinput(const char *string, QRinput *input,
+ 
+ static char *dupAndToUpper(const char *str, QRencodeMode hint)
+ {
++	size_t len;
+ 	char *newstr, *p;
+ 	QRencodeMode mode;
+ 
+-	newstr = strdup(str);
++	len = strlen(str) + 1;
++	newstr = (char *)malloc(len);
+ 	if(newstr == NULL) return NULL;
++	memcpy(newstr, str, len);
+ 
+ 	p = newstr;
+ 	while(*p != '\0') {

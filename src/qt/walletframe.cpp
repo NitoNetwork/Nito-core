@@ -21,6 +21,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -42,15 +43,27 @@ WalletFrame::WalletFrame(const PlatformStyle* _platformStyle, QWidget* parent)
     // hbox for no wallet
     QGroupBox* no_wallet_group = new QGroupBox(walletStack);
     QVBoxLayout* no_wallet_layout = new QVBoxLayout(no_wallet_group);
+    no_wallet_layout->setSpacing(8);
 
     QLabel *noWallet = new QLabel(tr("No wallet has been loaded.\nGo to File > Open Wallet to load a wallet.\n- OR -"));
     noWallet->setAlignment(Qt::AlignCenter);
-    no_wallet_layout->addWidget(noWallet, 0, Qt::AlignHCenter | Qt::AlignBottom);
+    no_wallet_layout->addStretch(1);
+    no_wallet_layout->addWidget(noWallet, 0, Qt::AlignHCenter);
 
     // A button for create wallet dialog
-    QPushButton* create_wallet_button = new QPushButton(tr("Create a new wallet"), walletStack);
+    QPushButton* create_wallet_button = new QPushButton(tr("Import or create a wallet"), walletStack);
     connect(create_wallet_button, &QPushButton::clicked, this, &WalletFrame::createWalletButtonClicked);
-    no_wallet_layout->addWidget(create_wallet_button, 0, Qt::AlignHCenter | Qt::AlignTop);
+    no_wallet_layout->addWidget(create_wallet_button, 0, Qt::AlignHCenter);
+
+    m_open_wallet_button = new QPushButton(QCoreApplication::translate("NitoGUI", "Open Wallet"), walletStack);
+    m_open_wallet_button->setEnabled(false);
+    m_open_wallet_button->setVisible(false);
+    connect(m_open_wallet_button, &QPushButton::clicked, this, [this] {
+        Q_EMIT openWalletButtonClicked(m_open_wallet_button->mapToGlobal(QPoint(0, m_open_wallet_button->height())));
+    });
+    no_wallet_layout->addSpacing(24);
+    no_wallet_layout->addWidget(m_open_wallet_button, 0, Qt::AlignHCenter);
+    no_wallet_layout->addStretch(1);
     no_wallet_group->setLayout(no_wallet_layout);
 
     walletStack->addWidget(no_wallet_group);
@@ -87,6 +100,14 @@ bool WalletFrame::addView(WalletView* walletView)
     mapWalletViews[walletView->getWalletModel()] = walletView;
 
     return true;
+}
+
+void WalletFrame::setOpenWalletButtonAvailable(bool available)
+{
+    if (m_open_wallet_button) {
+        m_open_wallet_button->setEnabled(available);
+        m_open_wallet_button->setVisible(available);
+    }
 }
 
 void WalletFrame::setCurrentWallet(WalletModel* wallet_model)
@@ -248,6 +269,13 @@ void WalletFrame::backupWallet()
     WalletView *walletView = currentWalletView();
     if (walletView)
         walletView->backupWallet();
+}
+
+void WalletFrame::showHDSeedMnemonic()
+{
+    WalletView *walletView = currentWalletView();
+    if (walletView)
+        walletView->showHDSeedMnemonic();
 }
 
 void WalletFrame::changePassphrase()

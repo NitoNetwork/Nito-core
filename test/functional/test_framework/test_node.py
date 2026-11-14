@@ -695,7 +695,9 @@ class TestNode():
         p2p_conn.peer_connect(**kwargs, send_version=send_version, net=self.chain, timeout_factor=self.timeout_factor, supports_v2_p2p=supports_v2_p2p)()
 
         self.p2ps.append(p2p_conn)
-        p2p_conn.wait_until(lambda: p2p_conn.is_connected, check_connected=False)
+        # A peer rejected during version negotiation may already be disconnected
+        # when this thread wakes. Still require proof that the connection opened.
+        p2p_conn.wait_until(lambda: p2p_conn.connection_opened, check_connected=False)
         if supports_v2_p2p and wait_for_v2_handshake:
             p2p_conn.wait_until(lambda: p2p_conn.v2_state.tried_v2_handshake)
         if send_version:
@@ -903,10 +905,15 @@ class RPCOverloadWrapper():
     def createwallet_passthrough(self, *args, **kwargs):
         return self.__getattr__("createwallet")(*args, **kwargs)
 
-    def createwallet(self, wallet_name, disable_private_keys=None, blank=None, passphrase='', avoid_reuse=None, descriptors=None, load_on_startup=None, external_signer=None):
+    def createwallet(self, wallet_name, disable_private_keys=None, blank=None, passphrase='', avoid_reuse=None, descriptors=None, load_on_startup=None, external_signer=None, bip39_passphrase=None):
         if descriptors is None:
             descriptors = self.descriptors
-        return self.__getattr__('createwallet')(wallet_name, disable_private_keys, blank, passphrase, avoid_reuse, descriptors, load_on_startup, external_signer)
+        args = [wallet_name, disable_private_keys, blank, passphrase, avoid_reuse, descriptors, load_on_startup, external_signer]
+        # Older binaries used by backwards-compatibility tests expose the
+        # eight-argument RPC. Only append the V4 extension when requested.
+        if bip39_passphrase is not None:
+            args.append(bip39_passphrase)
+        return self.__getattr__('createwallet')(*args)
 
     def importprivkey(self, privkey, label=None, rescan=None):
         wallet_info = self.getwalletinfo()

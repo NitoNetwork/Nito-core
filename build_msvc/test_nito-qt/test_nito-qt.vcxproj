@@ -72,16 +72,18 @@
 
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
     <ClCompile>
+      <PreprocessorDefinitions>QT_GUI_LIB;QT_WIDGETS_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\libnito_qt\$(GeneratedFilesOutDir)\..\;$(QtIncludeDir)\QtTest;$(QtIncludes);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>$(QtLibraryDir)\Qt5Test.lib;$(QtReleaseLibraries);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(QtLibraryDir)\Qt6Test.lib;$(QtReleaseLibraries);%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/LTCG:OFF</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
 
     <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
+      <PreprocessorDefinitions>QT_GUI_LIB;QT_WIDGETS_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\libnito_qt\$(GeneratedFilesOutDir)\..\;$(QtIncludeDir)\QtTest;$(QtIncludes);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -102,7 +104,7 @@
     </PropertyGroup>
     <Exec Command="echo Performing test_nito-qt moc generation task, output path $(GeneratedFilesOutDir)\moc." />
     <MakeDir Directories="$(GeneratedFilesOutDir)\moc\" />
-    <Exec Command="$(QtToolsDir)\moc.exe $(MOC_DEFINES) &quot;%(MocTestFiles.Identity)&quot; -o $(GeneratedFilesOutDir)\moc\moc_%(Filename).cpp" />
+    <Exec Command="&quot;$(QtToolsDir)\moc.exe&quot; $(MOC_DEFINES) &quot;%(MocTestFiles.Identity)&quot; -o $(GeneratedFilesOutDir)\moc\moc_%(Filename).cpp" />
   </Target>
   <Target Name="QtTestCleanGeneratedFiles">
     <Exec Command="echo Clean test_nito-qt generated files from $(GeneratedFilesOutDir)." />

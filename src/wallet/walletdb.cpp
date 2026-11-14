@@ -15,6 +15,7 @@
 #include <protocol.h>
 #include <script/script.h>
 #include <serialize.h>
+#include <support/cleanse.h>
 #include <sync.h>
 #include <util/bip32.h>
 #include <util/check.h>
@@ -40,6 +41,7 @@ const std::string ACTIVEEXTERNALSPK{"activeexternalspk"};
 const std::string ACTIVEINTERNALSPK{"activeinternalspk"};
 const std::string BESTBLOCK_NOMERKLE{"bestblock_nomerkle"};
 const std::string BESTBLOCK{"bestblock"};
+const std::string BIP39_DERIVED_SEED{"bip39derivedseed"};
 const std::string CRYPTED_KEY{"ckey"};
 const std::string CSCRIPT{"cscript"};
 const std::string DEFAULTKEY{"defaultkey"};
@@ -55,7 +57,12 @@ const std::string NAME{"name"};
 const std::string OLD_KEY{"wkey"};
 const std::string ORDERPOSNEXT{"orderposnext"};
 const std::string POOL{"pool"};
+const std::string PRIVATE_CHAIN{"privatechain"};
+const std::string PRIVATE_NOTE{"privatenote"};
+const std::string CRYPTED_PRIVATE_NOTE{"cryptedprivatenote"};
+const std::string PRIVATE_SPENT_NULLIFIER{"privatespentnullifier"};
 const std::string PURPOSE{"purpose"};
+const std::string SEED_HISTORY_STATE{"seedhistorystate"};
 const std::string SETTINGS{"settings"};
 const std::string TX{"tx"};
 const std::string VERSION{"version"};
@@ -112,7 +119,10 @@ bool WalletBatch::WriteKeyMetadata(const CKeyMetadata& meta, const CPubKey& pubk
 
 bool WalletBatch::WriteKey(const CPubKey& vchPubKey, const CPrivKey& vchPrivKey, const CKeyMetadata& keyMeta)
 {
-    if (!WriteKeyMetadata(keyMeta, vchPubKey, false)) {
+    // A previous key write may have failed after saving its metadata. Reuse
+    // that metadata on retry, preserving its original creation time.
+    if (!m_batch->Exists(std::make_pair(DBKeys::KEYMETA, vchPubKey)) &&
+        !WriteKeyMetadata(keyMeta, vchPubKey, false)) {
         return false;
     }
 
@@ -302,6 +312,67 @@ bool WalletBatch::WriteLockedUTXO(const COutPoint& output)
 bool WalletBatch::EraseLockedUTXO(const COutPoint& output)
 {
     return EraseIC(std::make_pair(DBKeys::LOCKED_UTXO, std::make_pair(output.hash, output.n)));
+}
+
+bool WalletBatch::WritePrivateNote(const CPrivateWalletNote& note)
+{
+    return WriteIC(std::make_pair(DBKeys::PRIVATE_NOTE, note.GetId()), note);
+}
+
+bool WalletBatch::ErasePrivateNote(const uint256& cmx)
+{
+    return EraseIC(std::make_pair(DBKeys::PRIVATE_NOTE, cmx));
+}
+
+bool WalletBatch::WriteCryptedPrivateNote(const uint256& cmx, const std::vector<unsigned char>& ciphertext)
+{
+    return WriteIC(std::make_pair(DBKeys::CRYPTED_PRIVATE_NOTE, cmx), ciphertext);
+}
+
+bool WalletBatch::EraseCryptedPrivateNote(const uint256& cmx)
+{
+    return EraseIC(std::make_pair(DBKeys::CRYPTED_PRIVATE_NOTE, cmx));
+}
+
+bool WalletBatch::WritePrivateSpentNullifier(const CPrivateSpentNullifier& spent)
+{
+    return WriteIC(std::make_pair(DBKeys::PRIVATE_SPENT_NULLIFIER, spent.GetId()), spent);
+}
+
+bool WalletBatch::ErasePrivateSpentNullifier(const uint256& nullifier)
+{
+    return EraseIC(std::make_pair(DBKeys::PRIVATE_SPENT_NULLIFIER, nullifier));
+}
+
+bool WalletBatch::WritePrivateChain(const CPrivateWalletChain& chain)
+{
+    return WriteIC(DBKeys::PRIVATE_CHAIN, chain);
+}
+
+bool WalletBatch::ReadBIP39DerivedSeed(CBIP39DerivedSeedRecord& record)
+{
+    return m_batch->Read(DBKeys::BIP39_DERIVED_SEED, record);
+}
+
+bool WalletBatch::WriteBIP39DerivedSeed(const CBIP39DerivedSeedRecord& record)
+{
+    return WriteIC(DBKeys::BIP39_DERIVED_SEED, record);
+}
+
+bool WalletBatch::EraseBIP39DerivedSeed()
+{
+    return EraseIC(DBKeys::BIP39_DERIVED_SEED);
+}
+
+bool WalletBatch::ReadSeedHistoryState(SeedHistoryState& state)
+{
+    return m_batch->Read(DBKeys::SEED_HISTORY_STATE, state);
+}
+
+bool WalletBatch::WriteSeedHistoryState(const SeedHistoryState& state)
+{
+    assert(state.IsValid());
+    return WriteIC(DBKeys::SEED_HISTORY_STATE, state);
 }
 
 bool LoadKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::string& strErr)
@@ -598,7 +669,9 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
     // Check whether rewrite is needed
     if (ckey_res.m_records > 0) {
         // Rewrite encrypted wallets of versions 0.4.0 and 0.5.0rc:
-        if (last_client == 40000 || last_client == 50000) result = std::max(result, DBErrors::NEED_REWRITE);
+        // Nito 4.0.0 also serializes CLIENT_VERSION as 40000, so do not treat
+        // the current client version as the historical Bitcoin 0.4 rewrite case.
+        if (last_client != CLIENT_VERSION && (last_client == 40000 || last_client == 50000)) result = std::max(result, DBErrors::NEED_REWRITE);
     }
 
     // Load keymeta
@@ -615,7 +688,7 @@ static DBErrors LoadLegacyWalletRecords(CWallet* pwallet, DatabaseBatch& batch, 
         if (keyMeta.nVersion >= CKeyMetadata::VERSION_WITH_HDDATA && !keyMeta.hd_seed_id.IsNull() && keyMeta.hdKeypath.size() > 0) {
             // Get the path from the key origin or from the path string
             // Not applicable when path is "s" or "m" as those indicate a seed
-            // See https://github.com/nito/nito/pull/12924
+            // See https://github.com/bitcoin/bitcoin/pull/12924
             bool internal = false;
             uint32_t index = 0;
             if (keyMeta.hdKeypath != "s" && keyMeta.hdKeypath != "m") {
@@ -1104,6 +1177,105 @@ static DBErrors LoadTxRecords(CWallet* pwallet, DatabaseBatch& batch, std::vecto
     return result;
 }
 
+static DBErrors LoadPrivateNoteRecords(CWallet* pwallet, DatabaseBatch& batch) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet)
+{
+    AssertLockHeld(pwallet->cs_wallet);
+    CPrivateWalletChain private_chain;
+    if (batch.Read(DBKeys::PRIVATE_CHAIN, private_chain)) {
+        pwallet->LoadPrivateChain(private_chain);
+    } else if (batch.Exists(DBKeys::PRIVATE_CHAIN)) {
+        pwallet->WalletLogPrintf("Refusing unreadable private chain state record\n");
+        return DBErrors::CORRUPT;
+    }
+
+    CBIP39DerivedSeedRecord derived_seed_record;
+    if (batch.Read(DBKeys::BIP39_DERIVED_SEED, derived_seed_record)) {
+        if (!pwallet->LoadBIP39DerivedSeedRecord(derived_seed_record)) {
+            pwallet->WalletLogPrintf("Refusing invalid or duplicate BIP39 derived-seed record\n");
+            if (!derived_seed_record.payload.empty()) {
+                memory_cleanse(derived_seed_record.payload.data(), derived_seed_record.payload.size());
+                derived_seed_record.payload.clear();
+            }
+            return DBErrors::CORRUPT;
+        }
+        if (!derived_seed_record.payload.empty()) {
+            memory_cleanse(derived_seed_record.payload.data(), derived_seed_record.payload.size());
+            derived_seed_record.payload.clear();
+        }
+    } else if (batch.Exists(DBKeys::BIP39_DERIVED_SEED)) {
+        pwallet->WalletLogPrintf("Refusing unreadable BIP39 derived-seed record\n");
+        return DBErrors::CORRUPT;
+    }
+
+    LoadResult note_res = LoadRecords(pwallet, batch, DBKeys::PRIVATE_NOTE,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+        uint256 cmx;
+        CPrivateWalletNote note;
+        key >> cmx;
+        value >> note;
+        if (note.GetId() != cmx) {
+            err = strprintf("Error: private note key mismatch for commitment %s", cmx.ToString());
+            return DBErrors::CORRUPT;
+        }
+        if (!pwallet->LoadPrivateNote(note)) {
+            err = strprintf("Error: duplicate or invalid private note commitment %s", cmx.ToString());
+            return DBErrors::CORRUPT;
+        }
+        return DBErrors::LOAD_OK;
+    });
+    LoadResult crypted_note_res = LoadRecords(pwallet, batch, DBKeys::CRYPTED_PRIVATE_NOTE,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+        uint256 cmx;
+        std::vector<unsigned char> ciphertext;
+        key >> cmx;
+        value >> ciphertext;
+        if (cmx.IsNull() || ciphertext.empty() || !pwallet->LoadCryptedPrivateNote(cmx, ciphertext)) {
+            err = strprintf("Error: invalid or duplicate encrypted private note %s", cmx.ToString());
+            return DBErrors::CORRUPT;
+        }
+        return DBErrors::LOAD_OK;
+    });
+    LoadResult spent_res = LoadRecords(pwallet, batch, DBKeys::PRIVATE_SPENT_NULLIFIER,
+        [] (CWallet* pwallet, DataStream& key, DataStream& value, std::string& err) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+        uint256 nullifier;
+        CPrivateSpentNullifier spent;
+        key >> nullifier;
+        value >> spent;
+        if (spent.GetId() != nullifier) {
+            err = strprintf("Error: private spent-nullifier key mismatch for nullifier %s", nullifier.ToString());
+            return DBErrors::CORRUPT;
+        }
+        if (!pwallet->LoadPrivateSpentNullifier(spent)) {
+            err = strprintf("Error: duplicate or invalid private spent nullifier %s", nullifier.ToString());
+            return DBErrors::CORRUPT;
+        }
+        return DBErrors::LOAD_OK;
+    });
+    return std::max({note_res.m_result, crypted_note_res.m_result, spent_res.m_result});
+}
+
+static DBErrors LoadSeedHistoryState(CWallet* pwallet, DatabaseBatch& batch) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet)
+{
+    AssertLockHeld(pwallet->cs_wallet);
+    try {
+        SeedHistoryState state;
+        if (batch.Read(DBKeys::SEED_HISTORY_STATE, state)) {
+            if (!state.IsValid()) {
+                pwallet->WalletLogPrintf("Refusing invalid seed history state record\n");
+                return DBErrors::CORRUPT;
+            }
+            pwallet->LoadSeedHistoryState(state);
+        } else if (batch.Exists(DBKeys::SEED_HISTORY_STATE)) {
+            pwallet->WalletLogPrintf("Refusing unreadable seed history state record\n");
+            return DBErrors::CORRUPT;
+        }
+    } catch (const std::exception& e) {
+        pwallet->WalletLogPrintf("Refusing unreadable seed history state record: %s\n", e.what());
+        return DBErrors::CORRUPT;
+    }
+    return DBErrors::LOAD_OK;
+}
+
 static DBErrors LoadActiveSPKMs(CWallet* pwallet, DatabaseBatch& batch) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet)
 {
     AssertLockHeld(pwallet->cs_wallet);
@@ -1191,11 +1363,25 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
         // Load tx records
         result = std::max(LoadTxRecords(pwallet, *m_batch, upgraded_txs, any_unordered), result);
 
+        // Load v4 private note records
+        result = std::max(LoadPrivateNoteRecords(pwallet, *m_batch), result);
+
+        // Load Nito recovery-phrase history state
+        result = std::max(LoadSeedHistoryState(pwallet, *m_batch), result);
+
         // Load SPKMs
         result = std::max(LoadActiveSPKMs(pwallet, *m_batch), result);
 
         // Load decryption keys
         result = std::max(LoadDecryptionKeys(pwallet, *m_batch), result);
+
+        // Validate the final BIP39 record state only after both its private
+        // chain binding and the wallet encryption keys have been loaded.
+        bilingual_str derived_seed_error;
+        if (!pwallet->ValidateBIP39DerivedSeedState(derived_seed_error)) {
+            pwallet->WalletLogPrintf("Refusing inconsistent BIP39 derived-seed state: %s\n", derived_seed_error.original);
+            return DBErrors::CORRUPT;
+        }
     } catch (...) {
         // Exceptions that can be ignored or treated as non-critical are handled by the individual loading functions.
         // Any uncaught exceptions will be caught here and treated as critical.
@@ -1379,7 +1565,11 @@ std::unique_ptr<WalletDatabase> MakeDatabase(const fs::path& path, const Databas
     }
 
     if (!format && options.require_existing) {
-        error = Untranslated(strprintf("Failed to load database path '%s'. Data is not in recognized format.", fs::PathToString(path)));
+        if (IsSQLiteFileHeader(SQLiteDataFile(path))) {
+            error = Untranslated(strprintf("Failed to load database path '%s'. The SQLite wallet appears to have been created for another network or by different software.", fs::PathToString(path)));
+        } else {
+            error = Untranslated(strprintf("Failed to load database path '%s'. Data is not in recognized format.", fs::PathToString(path)));
+        }
         status = DatabaseStatus::FAILED_BAD_FORMAT;
         return nullptr;
     }

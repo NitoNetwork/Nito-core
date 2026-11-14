@@ -35,6 +35,7 @@ ModalOverlay::ModalOverlay(bool enable_wallet, QWidget* parent)
         ui->infoText->setVisible(false);
         ui->infoTextStrong->setText(tr("%1 is currently syncing.  It will download headers and blocks from peers and validate them until reaching the tip of the block chain.").arg(PACKAGE_NAME));
     }
+    setLocalIndexProgress(QString(), false);
 
     m_animation.setTargetObject(this);
     m_animation.setPropertyName("pos");
@@ -90,6 +91,13 @@ void ModalOverlay::setKnownBestHeight(int count, const QDateTime& blockDate, boo
     if (presync) {
         UpdateHeaderPresyncLabel(count, blockDate);
     }
+}
+
+void ModalOverlay::setLocalIndexProgress(const QString& text, bool visible)
+{
+    ui->labelLocalIndexProgress->setVisible(visible);
+    ui->localIndexProgress->setVisible(visible);
+    ui->localIndexProgress->setText(text);
 }
 
 void ModalOverlay::tipUpdate(int count, const QDateTime& blockDate, double nVerificationProgress)

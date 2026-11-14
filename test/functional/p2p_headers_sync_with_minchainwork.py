@@ -34,7 +34,16 @@ class RejectLowDifficultyHeadersTest(NitoTestFramework):
         self.extra_args = [["-minimumchainwork=0x0", "-checkblockindex=0"], ["-minimumchainwork=0x1f", "-checkblockindex=0"], ["-minimumchainwork=0x1000", "-checkblockindex=0"], ["-minimumchainwork=0x1000", "-checkblockindex=0", "-whitelist=noban@127.0.0.1"]]
 
     def setup_network(self):
-        self.setup_nodes()
+        self.add_nodes(self.num_nodes, extra_args=self.extra_args)
+        self.start_node(0)
+        genesis_work = int(self.nodes[0].getblockheader(self.nodes[0].getblockhash(0))['chainwork'], 16)
+        # Nito genesis has mainnet difficulty; subsequent minimum-difficulty
+        # regtest blocks each add two units of work.
+        for i, blocks in ((1, NODE1_BLOCKS_REQUIRED), (2, NODE2_BLOCKS_REQUIRED), (3, NODE2_BLOCKS_REQUIRED)):
+            args = [f'-minimumchainwork={genesis_work + 2 * blocks:x}', '-checkblockindex=0']
+            if i == 3:
+                args.append('-whitelist=noban@127.0.0.1')
+            self.start_node(i, extra_args=args)
         self.reconnect_all()
         self.sync_all()
 
@@ -50,13 +59,14 @@ class RejectLowDifficultyHeadersTest(NitoTestFramework):
 
     def test_chains_sync_when_long_enough(self):
         self.log.info("Generate blocks on the node with no required chainwork, and verify nodes 1 and 2 have no new headers in their headers tree")
-        with self.nodes[1].assert_debug_log(expected_msgs=["[net] Ignoring low-work chain (height=14)"]), self.nodes[2].assert_debug_log(expected_msgs=["[net] Ignoring low-work chain (height=14)"]), self.nodes[3].assert_debug_log(expected_msgs=["Synchronizing blockheaders, height: 14"]):
+        with self.nodes[1].assert_debug_log(expected_msgs=["[net] Ignoring low-work chain (height=14)"]), self.nodes[2].assert_debug_log(expected_msgs=["[net] Ignoring low-work chain (height=14)"]):
             self.generate(self.nodes[0], NODE1_BLOCKS_REQUIRED-1, sync_fun=self.no_op)
 
         # Node3 should always allow headers due to noban permissions
         self.log.info("Check that node3 will sync headers (due to noban permissions)")
 
         def check_node3_chaintips(num_tips, tip_hash, height):
+            self.wait_until(lambda: self.nodes[3].getblockchaininfo()['headers'] == height)
             node3_chaintips = self.nodes[3].getchaintips()
             assert len(node3_chaintips) == num_tips
             assert {
@@ -73,19 +83,19 @@ class RejectLowDifficultyHeadersTest(NitoTestFramework):
             assert len(chaintips) == 1
             assert {
                 'height': 0,
-                'hash': '0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206',
+                'hash': self.nodes[0].getblockhash(0),
                 'branchlen': 0,
                 'status': 'active',
             } in chaintips
 
         self.log.info("Generate more blocks to satisfy node1's minchainwork requirement, and verify node2 still has no new headers in headers tree")
-        with self.nodes[2].assert_debug_log(expected_msgs=["[net] Ignoring low-work chain (height=15)"]), self.nodes[3].assert_debug_log(expected_msgs=["Synchronizing blockheaders, height: 15"]):
+        with self.nodes[2].assert_debug_log(expected_msgs=["[net] Ignoring low-work chain (height=15)"]):
             self.generate(self.nodes[0], NODE1_BLOCKS_REQUIRED - self.nodes[0].getblockcount(), sync_fun=self.no_op)
         self.sync_blocks(self.nodes[0:2]) # node3 will sync headers (noban permissions) but not blocks (due to minchainwork)
 
         assert {
             'height': 0,
-            'hash': '0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206',
+            'hash': self.nodes[0].getblockhash(0),
             'branchlen': 0,
             'status': 'active',
         } in self.nodes[2].getchaintips()

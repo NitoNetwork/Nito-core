@@ -23,6 +23,14 @@
 static constexpr uint8_t DB_COIN{'C'};
 static constexpr uint8_t DB_BEST_BLOCK{'B'};
 static constexpr uint8_t DB_HEAD_BLOCKS{'H'};
+static constexpr uint8_t DB_PRIVATE_NULLIFIER{'N'};
+static constexpr uint8_t DB_PRIVATE_COMMITMENT{'M'};
+static constexpr uint8_t DB_PRIVATE_ANCHOR{'R'};
+static constexpr uint8_t DB_PRIVATE_COMMITMENT_COUNT{'S'};
+static constexpr uint8_t DB_PRIVATE_CURRENT_ROOT{'T'};
+static constexpr uint8_t DB_PRIVATE_BLOCK_UNDO{'U'};
+static constexpr uint8_t DB_PRIVATE_FRONTIER{'V'};
+static constexpr uint8_t DB_PRIVATE_VALUE_POOL{'W'};
 // Keys used in previous version that might still be found in the DB:
 static constexpr uint8_t DB_COINS{'c'};
 
@@ -43,6 +51,34 @@ struct CoinEntry {
     explicit CoinEntry(const COutPoint* ptr) : outpoint(const_cast<COutPoint*>(ptr)), key(DB_COIN)  {}
 
     SERIALIZE_METHODS(CoinEntry, obj) { READWRITE(obj.key, obj.outpoint->hash, VARINT(obj.outpoint->n)); }
+};
+
+struct PrivateNullifierEntry {
+    const uint256* nullifier;
+    uint8_t key{DB_PRIVATE_NULLIFIER};
+    explicit PrivateNullifierEntry(const uint256* ptr) : nullifier(const_cast<uint256*>(ptr)) {}
+    SERIALIZE_METHODS(PrivateNullifierEntry, obj) { READWRITE(obj.key, *obj.nullifier); }
+};
+
+struct PrivateCommitmentEntry {
+    uint64_t index;
+    uint8_t key{DB_PRIVATE_COMMITMENT};
+    explicit PrivateCommitmentEntry(uint64_t idx) : index(idx) {}
+    SERIALIZE_METHODS(PrivateCommitmentEntry, obj) { READWRITE(obj.key, VARINT(obj.index)); }
+};
+
+struct PrivateAnchorEntry {
+    const uint256* anchor;
+    uint8_t key{DB_PRIVATE_ANCHOR};
+    explicit PrivateAnchorEntry(const uint256* ptr) : anchor(const_cast<uint256*>(ptr)) {}
+    SERIALIZE_METHODS(PrivateAnchorEntry, obj) { READWRITE(obj.key, *obj.anchor); }
+};
+
+struct PrivateBlockUndoEntry {
+    const uint256* block_hash;
+    uint8_t key{DB_PRIVATE_BLOCK_UNDO};
+    explicit PrivateBlockUndoEntry(const uint256* ptr) : block_hash(const_cast<uint256*>(ptr)) {}
+    SERIALIZE_METHODS(PrivateBlockUndoEntry, obj) { READWRITE(obj.key, *obj.block_hash); }
 };
 
 } // namespace
@@ -74,6 +110,67 @@ bool CCoinsViewDB::HaveCoin(const COutPoint &outpoint) const {
     return m_db->Exists(CoinEntry(&outpoint));
 }
 
+bool CCoinsViewDB::HavePrivateNullifier(const uint256& nullifier) const
+{
+    return m_db->Exists(PrivateNullifierEntry(&nullifier));
+}
+
+bool CCoinsViewDB::HavePrivateAnchor(const uint256& anchor) const
+{
+    if (m_db->Exists(PrivateAnchorEntry(&anchor))) {
+        return true;
+    }
+    uint256 empty_root;
+    std::string error;
+    return GetPrivateEmptyRoot(empty_root, error) && anchor == empty_root;
+}
+
+bool CCoinsViewDB::GetPrivateRoot(uint256& root) const
+{
+    if (m_db->Read(DB_PRIVATE_CURRENT_ROOT, root)) {
+        return true;
+    }
+    std::string error;
+    return GetPrivateEmptyRoot(root, error);
+}
+
+bool CCoinsViewDB::GetPrivateCommitmentCount(uint64_t& count) const
+{
+    if (m_db->Read(DB_PRIVATE_COMMITMENT_COUNT, count)) {
+        return true;
+    }
+    count = 0;
+    return true;
+}
+
+bool CCoinsViewDB::GetPrivateCommitment(uint64_t index, uint256& cmx) const
+{
+    return m_db->Read(PrivateCommitmentEntry(index), cmx);
+}
+
+bool CCoinsViewDB::GetPrivateFrontier(std::vector<unsigned char>& frontier) const
+{
+    if (m_db->Read(DB_PRIVATE_FRONTIER, frontier)) {
+        return true;
+    }
+    frontier.clear();
+    return true;
+}
+
+bool CCoinsViewDB::GetPrivateValuePool(CAmount& value_pool) const
+{
+    if (m_db->Read(DB_PRIVATE_VALUE_POOL, value_pool)) {
+        return true;
+    }
+    value_pool = 0;
+    return true;
+}
+
+bool CCoinsViewDB::GetPrivateBlockUndo(const uint256& block_hash, CPrivateBlockUndo& undo) const
+{
+    return m_db->Read(PrivateBlockUndoEntry(&block_hash), undo);
+}
+
 uint256 CCoinsViewDB::GetBestBlock() const {
     uint256 hashBestChain;
     if (!m_db->Read(DB_BEST_BLOCK, hashBestChain))
@@ -89,7 +186,7 @@ std::vector<uint256> CCoinsViewDB::GetHeadBlocks() const {
     return vhashHeadBlocks;
 }
 
-bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase) {
+bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase, CPrivateStateCache* private_cache) {
     CDBBatch batch(*m_db);
     size_t count = 0;
     size_t changed = 0;
@@ -140,12 +237,80 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, boo
         }
     }
 
+    if (private_cache && private_cache->HasChanges()) {
+        uint64_t existing_private_count{0};
+        if (!m_db->Read(DB_PRIVATE_COMMITMENT_COUNT, existing_private_count)) {
+            uint256 empty_root;
+            std::string error;
+            if (!GetPrivateEmptyRoot(empty_root, error)) {
+                LogPrintf("ERROR: unable to compute empty Orchard root: %s\n", error);
+                return false;
+            }
+            batch.Write(DB_PRIVATE_COMMITMENT_COUNT, uint64_t{0});
+            batch.Write(DB_PRIVATE_CURRENT_ROOT, empty_root);
+            batch.Write(DB_PRIVATE_FRONTIER, std::vector<unsigned char>{});
+            batch.Write(DB_PRIVATE_VALUE_POOL, CAmount{0});
+            batch.Write(PrivateAnchorEntry(&empty_root), uint64_t{0});
+        }
+
+        for (const auto& [nullifier, entry] : private_cache->nullifiers) {
+            if (!(entry.flags & CPrivateCacheEntry::DIRTY)) continue;
+            if (entry.present) {
+                batch.Write(PrivateNullifierEntry(&nullifier), uint8_t{1});
+            } else {
+                batch.Erase(PrivateNullifierEntry(&nullifier));
+            }
+        }
+        for (const auto& [anchor, entry] : private_cache->anchors) {
+            if (!(entry.flags & CPrivateCacheEntry::DIRTY)) continue;
+            if (entry.present) {
+                batch.Write(PrivateAnchorEntry(&anchor), uint64_t{1});
+            } else {
+                uint256 empty_root;
+                std::string error;
+                if (!GetPrivateEmptyRoot(empty_root, error) || anchor != empty_root) {
+                    batch.Erase(PrivateAnchorEntry(&anchor));
+                }
+            }
+        }
+        for (const auto& [index, cmx] : private_cache->commitments) {
+            if (cmx.has_value()) {
+                batch.Write(PrivateCommitmentEntry(index), *cmx);
+            } else {
+                batch.Erase(PrivateCommitmentEntry(index));
+            }
+        }
+        for (const auto& [block_hash, entry] : private_cache->block_undos) {
+            if (!(entry.flags & CPrivateUndoCacheEntry::DIRTY)) continue;
+            if (entry.present) {
+                batch.Write(PrivateBlockUndoEntry(&block_hash), entry.undo);
+            } else {
+                batch.Erase(PrivateBlockUndoEntry(&block_hash));
+            }
+        }
+        if (private_cache->commitment_count.has_value()) {
+            batch.Write(DB_PRIVATE_COMMITMENT_COUNT, *private_cache->commitment_count);
+        }
+        if (private_cache->current_root.has_value()) {
+            batch.Write(DB_PRIVATE_CURRENT_ROOT, *private_cache->current_root);
+        }
+        if (private_cache->frontier.has_value()) {
+            batch.Write(DB_PRIVATE_FRONTIER, *private_cache->frontier);
+        }
+        if (private_cache->value_pool.has_value()) {
+            batch.Write(DB_PRIVATE_VALUE_POOL, *private_cache->value_pool);
+        }
+    }
+
     // In the last batch, mark the database as consistent with hashBlock again.
     batch.Erase(DB_HEAD_BLOCKS);
     batch.Write(DB_BEST_BLOCK, hashBlock);
 
     LogPrint(BCLog::COINDB, "Writing final batch of %.2f MiB\n", batch.SizeEstimate() * (1.0 / 1048576.0));
     bool ret = m_db->WriteBatch(batch);
+    if (ret && erase && private_cache) {
+        private_cache->Clear();
+    }
     LogPrint(BCLog::COINDB, "Committed %u changed transaction outputs (out of %u) to coin database...\n", (unsigned int)changed, (unsigned int)count);
     return ret;
 }

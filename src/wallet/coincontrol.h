@@ -12,11 +12,13 @@
 #include <primitives/transaction.h>
 #include <script/keyorigin.h>
 #include <script/signingprovider.h>
+#include <uint256.h>
 
 #include <algorithm>
 #include <map>
 #include <optional>
 #include <set>
+#include <vector>
 
 namespace wallet {
 const int DEFAULT_MIN_DEPTH = 0;
@@ -81,8 +83,21 @@ public:
 class CCoinControl
 {
 public:
+    enum class PrivateTxSource {
+        //! Default wallet behavior: transparent UTXOs fund normal sends and shields to private recipients.
+        AUTO,
+        //! Force transparent UTXO shielding to private recipients.
+        TRANSPARENT_COINS,
+        //! Force spending locally decrypted private notes.
+        PRIVATE_NOTES,
+    };
+
     //! Custom change destination, if not set an address is generated
     CTxDestination destChange = CNoDestination();
+    //! Runtime wallet source policy for Nito.network private transaction creation.
+    PrivateTxSource m_private_tx_source{PrivateTxSource::AUTO};
+    //! Allow preselected spent private notes only when rebuilding an unconfirmed private RBF replacement.
+    bool m_allow_spent_private_note_replacement{false};
     //! Override the default change type if set, ignored if destChange is set
     std::optional<OutputType> m_change_type;
     //! If false, only safe inputs will be used
@@ -116,17 +131,18 @@ public:
     std::optional<uint32_t> m_locktime;
     //! Version
     std::optional<uint32_t> m_version;
-
     CCoinControl();
 
     /**
      * Returns true if there are pre-selected inputs.
      */
     bool HasSelected() const;
+    bool HasSelectedPrivateNotes() const;
     /**
      * Returns true if the given output is pre-selected.
      */
     bool IsSelected(const COutPoint& outpoint) const;
+    bool IsPrivateNoteSelected(const uint256& cmx) const;
     /**
      * Returns true if the given output is selected as an external input.
      */
@@ -140,10 +156,12 @@ public:
      * The output will be included in the transaction even if it's not the most optimal choice.
      */
     PreselectedInput& Select(const COutPoint& outpoint);
+    void SelectPrivateNote(const uint256& cmx);
     /**
      * Unselects the given output.
      */
     void UnSelect(const COutPoint& outpoint);
+    void UnSelectPrivateNote(const uint256& cmx);
     /**
      * Unselects all outputs.
      */
@@ -152,6 +170,7 @@ public:
      * List the selected inputs.
      */
     std::vector<COutPoint> ListSelected() const;
+    std::vector<uint256> ListSelectedPrivateNotes() const;
     /**
      * Set an input's weight.
      */
@@ -182,6 +201,7 @@ public:
 private:
     //! Selected inputs (inputs that will be used, regardless of whether they're optimal or not)
     std::map<COutPoint, PreselectedInput> m_selected;
+    std::set<uint256> m_selected_private_notes;
     unsigned int m_selection_pos{0};
 };
 } // namespace wallet

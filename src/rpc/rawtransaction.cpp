@@ -6,6 +6,7 @@
 
 #include <base58.h>
 #include <chain.h>
+#include <chainparams.h>
 #include <coins.h>
 #include <consensus/amount.h>
 #include <consensus/validation.h>
@@ -20,6 +21,7 @@
 #include <policy/packages.h>
 #include <policy/policy.h>
 #include <policy/rbf.h>
+#include <private/private_address.h>
 #include <primitives/transaction.h>
 #include <psbt.h>
 #include <random.h>
@@ -42,6 +44,8 @@
 #include <validation.h>
 #include <validationinterface.h>
 
+#include <algorithm>
+#include <array>
 #include <numeric>
 #include <stdint.h>
 
@@ -130,6 +134,15 @@ static std::vector<RPCResult> DecodeTxDoc(const std::string& txid_field_doc)
                 {RPCResult::Type::NUM, "n", "index"},
                 {RPCResult::Type::OBJ, "scriptPubKey", "", ScriptPubKeyDoc()},
             }},
+        }},
+        {RPCResult::Type::BOOL, "has_private_bundle", /*optional=*/true, "Whether the transaction carries a Nito.network private Orchard bundle."},
+        {RPCResult::Type::OBJ, "private_bundle", /*optional=*/true, "Nito.network private Orchard bundle summary.",
+        {
+            {RPCResult::Type::NUM, "version", "Private effects version."},
+            {RPCResult::Type::NUM, "flags", "Private effects flags."},
+            {RPCResult::Type::NUM, "actions", "Number of Orchard actions."},
+            {RPCResult::Type::STR_AMOUNT, "value_balance", "Signed net private value balance carried by the bundle."},
+            {RPCResult::Type::BOOL, "has_auth", "Whether witness-like private authorization is present."},
         }},
     };
 }
@@ -1044,6 +1057,36 @@ static RPCHelpMan decodepsbt()
                                 {RPCResult::Type::STR_HEX, "value", "The hex for the value"},
                             }},
                         }},
+                        {RPCResult::Type::OBJ, "nito_private_intent", /*optional=*/true, "Decoded Nito Orchard signing intent. Review this object before passing its hash to walletprocesspsbt.",
+                        {
+                            {RPCResult::Type::STR_HEX, "hash", "Commitment to the unsigned transaction and all Nito Orchard signing material"},
+                            {RPCResult::Type::STR_HEX, "anchor", "Orchard anchor committed by the signing plan"},
+                            {RPCResult::Type::STR_AMOUNT, "value_balance", "Signed Orchard value balance"},
+                            {RPCResult::Type::NUM, "spend_count", "Number of private notes spent"},
+                            {RPCResult::Type::NUM, "output_count", "Number of private outputs created"},
+                            {RPCResult::Type::ARR, "spends", "Private notes consumed by the signing plan",
+                            {
+                                {RPCResult::Type::OBJ, "", "",
+                                {
+                                    {RPCResult::Type::NUM, "index", "Signing-plan spend index"},
+                                    {RPCResult::Type::STR_HEX, "note_commitment", "Note commitment identifying the spent note"},
+                                    {RPCResult::Type::STR_HEX, "nullifier", "Nullifier committed by the spent note"},
+                                    {RPCResult::Type::STR_AMOUNT, "amount", "Amount of the spent note"},
+                                    {RPCResult::Type::NUM, "action_index", "Original Orchard action index of the note"},
+                                }},
+                            }},
+                            {RPCResult::Type::ARR, "outputs", "Private recipients and amounts reconstructed by the signer",
+                            {
+                                {RPCResult::Type::OBJ, "", "",
+                                {
+                                    {RPCResult::Type::NUM, "index", "Signing-plan output index"},
+                                    {RPCResult::Type::STR, "address", /*optional=*/true, "Encoded Nito Orchard recipient, when the raw recipient has the canonical length"},
+                                    {RPCResult::Type::STR_HEX, "recipient_raw", "Raw Orchard recipient bytes"},
+                                    {RPCResult::Type::STR_AMOUNT, "amount", "Amount sent to the private recipient"},
+                                    {RPCResult::Type::BOOL, "internal", "Whether the output uses the wallet's internal outgoing viewing key"},
+                                }},
+                            }},
+                        }},
                         {RPCResult::Type::OBJ_DYN, "unknown", "The unknown global fields",
                         {
                              {RPCResult::Type::STR_HEX, "key", "(key-value pair) An unknown key-value pair"},
@@ -1103,6 +1146,45 @@ static RPCHelpMan decodepsbt()
         proprietary.push_back(this_prop);
     }
     result.pushKV("proprietary", proprietary);
+
+    if (const std::optional<uint256> intent_hash = psbtx.GetNitoPrivateIntentHash()) {
+        const NitoPrivatePSBTSigningData signing_data = psbtx.GetNitoPrivateSigningData();
+        UniValue intent(UniValue::VOBJ);
+        intent.pushKV("hash", intent_hash->GetHex());
+        intent.pushKV("anchor", signing_data.plan->anchor.GetHex());
+        intent.pushKV("value_balance", ValueFromAmount(signing_data.plan->value_balance));
+        intent.pushKV("spend_count", signing_data.plan->spend_count);
+        intent.pushKV("output_count", signing_data.plan->output_count);
+
+        UniValue spends(UniValue::VARR);
+        for (const auto& [index, material] : signing_data.spends) {
+            UniValue spend(UniValue::VOBJ);
+            spend.pushKV("index", index);
+            spend.pushKV("note_commitment", material.cmx.GetHex());
+            spend.pushKV("nullifier", material.nullifier.GetHex());
+            spend.pushKV("amount", ValueFromAmount(material.value));
+            spend.pushKV("action_index", material.action_index);
+            spends.push_back(spend);
+        }
+        intent.pushKV("spends", spends);
+
+        UniValue outputs(UniValue::VARR);
+        for (const auto& [index, material] : signing_data.outputs) {
+            UniValue output(UniValue::VOBJ);
+            output.pushKV("index", index);
+            output.pushKV("recipient_raw", HexStr(material.recipient_raw));
+            if (material.recipient_raw.size() == NITO_ORCHARD_RAW_ADDRESS_SIZE) {
+                std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> raw{};
+                std::copy(material.recipient_raw.begin(), material.recipient_raw.end(), raw.begin());
+                output.pushKV("address", wallet::EncodeNitoPrivateAddress(raw, Params()));
+            }
+            output.pushKV("amount", ValueFromAmount(material.value));
+            output.pushKV("internal", material.ovk_internal);
+            outputs.push_back(output);
+        }
+        intent.pushKV("outputs", outputs);
+        result.pushKV("nito_private_intent", intent);
+    }
 
     // Unknown data
     UniValue unknowns(UniValue::VOBJ);

@@ -8,6 +8,10 @@ from decimal import Decimal
 from itertools import product
 from random import randbytes
 
+from test_framework.address import (
+    bech32_to_bytes,
+    program_to_witness,
+)
 from test_framework.descriptors import descsum_create
 from test_framework.key import H_POINT
 from test_framework.messages import (
@@ -15,7 +19,9 @@ from test_framework.messages import (
     CTransaction,
     CTxIn,
     CTxOut,
+    COIN,
     MAX_BIP125_RBF_SEQUENCE,
+    MAX_MONEY,
     WITNESS_SCALE_FACTOR,
     ser_compact_size,
 )
@@ -48,6 +54,20 @@ from test_framework.wallet_util import (
 
 import json
 import os
+
+
+def to_nito_regtest_address(address):
+    if address.startswith("bcrt1"):
+        version, program = bech32_to_bytes(address)
+        assert version is not None
+        return program_to_witness(version, program)
+    return address
+
+
+def to_nito_regtest_outputs(outputs):
+    if isinstance(outputs, list):
+        return [{to_nito_regtest_address(address): amount for address, amount in output.items()} for output in outputs]
+    return {to_nito_regtest_address(address): amount for address, amount in outputs.items()}
 
 
 class PSBTTest(NitoTestFramework):
@@ -183,17 +203,55 @@ class PSBTTest(NitoTestFramework):
         changepos = psbtx["changepos"]
         assert_equal(decoded_psbt["tx"]["vout"][changepos]["scriptPubKey"]["type"], expected_type)
 
+    def test_nito_amount_limits(self):
+        self.log.info("Analyze individual and aggregate values at Nito's monetary limits")
+
+        def analyze(input_values, output_values):
+            tx = CTransaction()
+            tx.vin = [CTxIn(COutPoint(index + 1, 0)) for index in range(len(input_values))]
+            script = CScript([OP_TRUE])
+            tx.vout = [CTxOut(value, script) for value in output_values]
+            psbt = PSBT(
+                g=PSBTMap({PSBT_GLOBAL_UNSIGNED_TX: tx.serialize()}),
+                i=[PSBTMap({PSBT_IN_WITNESS_UTXO: CTxOut(value, script).serialize()}) for value in input_values],
+                o=[PSBTMap() for _ in output_values],
+            )
+            return self.nodes[0].analyzepsbt(psbt.to_base64())
+
+        for inputs, outputs in (([MAX_MONEY], [MAX_MONEY]), ([MAX_MONEY - 1, 1], [MAX_MONEY])):
+            result = analyze(inputs, outputs)
+            assert "error" not in result
+            assert_equal(result["fee"], Decimal("0"))
+
+        # -1 is the CTxOut null sentinel, so use -2 for an invalid negative UTXO.
+        for inputs, error_index in (([MAX_MONEY + 1], 0), ([-2], 0), ([MAX_MONEY, 1], 1)):
+            result = analyze(inputs, [COIN])
+            assert_equal(result["next"], "creator")
+            assert_equal(result["error"], f"PSBT is not valid. Input {error_index} has invalid value")
+
+        missing = analyze([-1], [COIN])
+        assert_equal(missing["next"], "updater")
+        assert_equal(missing["inputs"][0]["has_utxo"], False)
+        assert "fee" not in missing
+
+        for outputs in ([MAX_MONEY + 1], [-1], [MAX_MONEY, 1]):
+            result = analyze([MAX_MONEY], outputs)
+            assert_equal(result["next"], "creator")
+            assert_equal(result["error"], "PSBT is not valid. Output amount invalid")
+
     def run_test(self):
-        # Create and fund a raw tx for sending 10 BTC
+        self.test_nito_amount_limits()
+        # Create and fund a raw tx for sending 10 NITO
         psbtx1 = self.nodes[0].walletcreatefundedpsbt([], {self.nodes[2].getnewaddress():10})['psbt']
 
         # If inputs are specified, do not automatically add more:
         utxo1 = self.nodes[0].listunspent()[0]
+        one_more_than_utxo = utxo1["amount"] + Decimal("1")
         assert_raises_rpc_error(-4, "The preselected coins total amount does not cover the transaction target. "
                                     "Please allow other inputs to be automatically selected or include more coins manually",
-                                self.nodes[0].walletcreatefundedpsbt, [{"txid": utxo1['txid'], "vout": utxo1['vout']}], {self.nodes[2].getnewaddress():90})
+                                self.nodes[0].walletcreatefundedpsbt, [{"txid": utxo1['txid'], "vout": utxo1['vout']}], {self.nodes[2].getnewaddress(): one_more_than_utxo})
 
-        psbtx1 = self.nodes[0].walletcreatefundedpsbt([{"txid": utxo1['txid'], "vout": utxo1['vout']}], {self.nodes[2].getnewaddress():90}, 0, {"add_inputs": True})['psbt']
+        psbtx1 = self.nodes[0].walletcreatefundedpsbt([{"txid": utxo1['txid'], "vout": utxo1['vout']}], {self.nodes[2].getnewaddress(): one_more_than_utxo}, 0, {"add_inputs": True})['psbt']
         assert_equal(len(self.nodes[0].decodepsbt(psbtx1)['tx']['vin']), 2)
 
         # Inputs argument can be null
@@ -303,7 +361,7 @@ class PSBTTest(NitoTestFramework):
         assert_equal(walletprocesspsbt_out['complete'], True)
         self.nodes[1].sendrawtransaction(walletprocesspsbt_out['hex'])
 
-        self.log.info("Test walletcreatefundedpsbt fee rate of 10000 sat/vB and 0.1 BTC/kvB produces a total fee at or slightly below -maxtxfee (~0.05290000)")
+        self.log.info("Test walletcreatefundedpsbt fee rate of 10000 sat/vB and 0.1 NITO/kvB produces a total fee at or slightly below -maxtxfee (~0.05290000)")
         res1 = self.nodes[1].walletcreatefundedpsbt(inputs, outputs, 0, {"fee_rate": 10000, "add_inputs": True})
         assert_approx(res1["fee"], 0.055, 0.005)
         res2 = self.nodes[1].walletcreatefundedpsbt(inputs, outputs, 0, {"feeRate": "0.1", "add_inputs": True})
@@ -337,7 +395,7 @@ class PSBTTest(NitoTestFramework):
                 self.nodes[1].walletcreatefundedpsbt, inputs, outputs, 0, {"fee_rate": invalid_value, "add_inputs": True})
 
         self.log.info("- raises RPC error if both feeRate and fee_rate are passed")
-        assert_raises_rpc_error(-8, "Cannot specify both fee_rate (sat/vB) and feeRate (BTC/kvB)",
+        assert_raises_rpc_error(-8, "Cannot specify both fee_rate (sat/vB) and feeRate (NITO/kvB)",
             self.nodes[1].walletcreatefundedpsbt, inputs, outputs, 0, {"fee_rate": 0.1, "feeRate": 0.1, "add_inputs": True})
 
         self.log.info("- raises RPC error if both feeRate and estimate_mode passed")
@@ -381,7 +439,10 @@ class PSBTTest(NitoTestFramework):
 
         self.log.info("Test various PSBT operations")
         # partially sign multisig things with node 1
-        psbtx = wmulti.walletcreatefundedpsbt(inputs=[{"txid":txid,"vout":p2wsh_pos},{"txid":txid,"vout":p2sh_pos},{"txid":txid,"vout":p2sh_p2wsh_pos}], outputs={self.nodes[1].getnewaddress():29.99}, changeAddress=self.nodes[1].getrawchangeaddress())['psbt']
+        psbtx = wmulti.walletcreatefundedpsbt(
+            [{"txid": txid, "vout": p2wsh_pos}, {"txid": txid, "vout": p2sh_pos}, {"txid": txid, "vout": p2sh_p2wsh_pos}],
+            {self.nodes[1].getnewaddress(): 29.99},
+        )['psbt']
         walletprocesspsbt_out = self.nodes[1].walletprocesspsbt(psbtx)
         psbtx = walletprocesspsbt_out['psbt']
         assert_equal(walletprocesspsbt_out['complete'], False)
@@ -487,24 +548,37 @@ class PSBTTest(NitoTestFramework):
             assert_greater_than(tx_in["sequence"], MAX_BIP125_RBF_SEQUENCE)
             assert "bip32_derivs" in psbt_in
 
-        # Make sure change address wallet does not have P2SH innerscript access to results in success
-        # when attempting BnB coin selection
-        self.nodes[0].walletcreatefundedpsbt([], [{self.nodes[2].getnewaddress():unspent["amount"]+1}], block_height+2, {"changeAddress":self.nodes[1].getnewaddress()}, False)
+        # An explicit destination overrides automatic internal change selection.
+        change_address = self.nodes[1].getnewaddress()
+        custom_change = self.nodes[0].walletcreatefundedpsbt(
+            [],
+            [{self.nodes[2].getnewaddress(): unspent["amount"] + 1}],
+            block_height + 2,
+            {"changeAddress": change_address},
+            False,
+        )
+        custom_decoded = self.nodes[0].decodepsbt(custom_change['psbt'])
+        assert_equal(custom_decoded['tx']['vout'][custom_change['changepos']]['scriptPubKey']['address'], change_address)
 
-        # Make sure the wallet's change type is respected by default
+        # Explicit -changetype operator overrides remain honored.
         small_output = {self.nodes[0].getnewaddress():0.1}
         psbtx_native = self.nodes[0].walletcreatefundedpsbt([], [small_output])
         self.assert_change_type(psbtx_native, "witness_v0_keyhash")
         psbtx_legacy = self.nodes[1].walletcreatefundedpsbt([], [small_output])
         self.assert_change_type(psbtx_legacy, "pubkeyhash")
 
-        # Make sure the change type of the wallet can also be overwritten
-        psbtx_np2wkh = self.nodes[1].walletcreatefundedpsbt([], [small_output], 0, {"change_type":"p2sh-segwit"})
-        self.assert_change_type(psbtx_np2wkh, "scripthash")
+        # A per-call type overrides the wallet default.
+        custom_type = self.nodes[1].walletcreatefundedpsbt(
+            [],
+            [small_output],
+            0,
+            {"change_type": "p2sh-segwit"},
+        )
+        self.assert_change_type(custom_type, "scripthash")
 
         # Make sure the change type cannot be specified if a change address is given
         invalid_options = {"change_type":"legacy","changeAddress":self.nodes[0].getnewaddress()}
-        assert_raises_rpc_error(-8, "both change address and address type options", self.nodes[0].walletcreatefundedpsbt, [], [small_output], 0, invalid_options)
+        assert_raises_rpc_error(-8, "Cannot specify both change address and address type options", self.nodes[0].walletcreatefundedpsbt, [], [small_output], 0, invalid_options)
 
         # Regression test for 14473 (mishandling of already-signed witness transaction):
         psbtx_info = self.nodes[0].walletcreatefundedpsbt([{"txid":unspent["txid"], "vout":unspent["vout"]}], [{self.nodes[2].getnewaddress():unspent["amount"]+1}], 0, {"add_inputs": True})
@@ -554,7 +628,7 @@ class PSBTTest(NitoTestFramework):
 
         # Creator Tests
         for creator in creators:
-            created_tx = self.nodes[0].createpsbt(inputs=creator['inputs'], outputs=creator['outputs'], replaceable=False)
+            created_tx = self.nodes[0].createpsbt(inputs=creator['inputs'], outputs=to_nito_regtest_outputs(creator['outputs']), replaceable=False)
             assert_equal(created_tx, creator['result'])
 
         # Signer tests
@@ -688,24 +762,24 @@ class PSBTTest(NitoTestFramework):
         assert_equal(analysis['next'], 'creator')
         assert_equal(analysis['error'], 'PSBT is not valid. Input 0 spends unspendable output')
 
-        self.log.info("PSBT with invalid values should have error message and Creator as next")
+        self.log.info("Bitcoin invalid-value vector is valid under Nito's larger MAX_MONEY and still needs updating")
         analysis = self.nodes[0].analyzepsbt('cHNidP8BAHECAAAAAfA00BFgAm6tp86RowwH6BMImQNL5zXUcTT97XoLGz0BAAAAAAD/////AgD5ApUAAAAAFgAUKNw0x8HRctAgmvoevm4u1SbN7XL87QKVAAAAABYAFPck4gF7iL4NL4wtfRAKgQbghiTUAAAAAAABAR8AgIFq49AHABYAFJUDtxf2PHo641HEOBOAIvFMNTr2AAAA')
-        assert_equal(analysis['next'], 'creator')
-        assert_equal(analysis['error'], 'PSBT is not valid. Input 0 has invalid value')
+        assert_equal(analysis['next'], 'updater')
+        assert 'error' not in analysis
 
         self.log.info("PSBT with signed, but not finalized, inputs should have Finalizer as next")
         analysis = self.nodes[0].analyzepsbt('cHNidP8BAHECAAAAAZYezcxdnbXoQCmrD79t/LzDgtUo9ERqixk8wgioAobrAAAAAAD9////AlDDAAAAAAAAFgAUy/UxxZuzZswcmFnN/E9DGSiHLUsuGPUFAAAAABYAFLsH5o0R38wXx+X2cCosTMCZnQ4baAAAAAABAR8A4fUFAAAAABYAFOBI2h5thf3+Lflb2LGCsVSZwsltIgIC/i4dtVARCRWtROG0HHoGcaVklzJUcwo5homgGkSNAnJHMEQCIGx7zKcMIGr7cEES9BR4Kdt/pzPTK3fKWcGyCJXb7MVnAiALOBgqlMH4GbC1HDh/HmylmO54fyEy4lKde7/BT/PWxwEBAwQBAAAAIgYC/i4dtVARCRWtROG0HHoGcaVklzJUcwo5homgGkSNAnIYDwVpQ1QAAIABAACAAAAAgAAAAAAAAAAAAAAiAgL+CIiB59NSCssOJRGiMYQK1chahgAaaJpIXE41Cyir+xgPBWlDVAAAgAEAAIAAAACAAQAAAAAAAAAA')
         assert_equal(analysis['next'], 'finalizer')
 
         analysis = self.nodes[0].analyzepsbt('cHNidP8BAHECAAAAAfA00BFgAm6tp86RowwH6BMImQNL5zXUcTT97XoLGz0BAAAAAAD/////AgCAgWrj0AcAFgAUKNw0x8HRctAgmvoevm4u1SbN7XL87QKVAAAAABYAFPck4gF7iL4NL4wtfRAKgQbghiTUAAAAAAABAR8A8gUqAQAAABYAFJUDtxf2PHo641HEOBOAIvFMNTr2AAAA')
-        assert_equal(analysis['next'], 'creator')
-        assert_equal(analysis['error'], 'PSBT is not valid. Output amount invalid')
+        assert_equal(analysis['next'], 'updater')
+        assert 'error' not in analysis
 
-        analysis = self.nodes[0].analyzepsbt('cHNidP8BAJoCAAAAAkvEW8NnDtdNtDpsmze+Ht2LH35IJcKv00jKAlUs21RrAwAAAAD/////S8Rbw2cO1020OmybN74e3Ysffkglwq/TSMoCVSzbVGsBAAAAAP7///8CwLYClQAAAAAWABSNJKzjaUb3uOxixsvh1GGE3fW7zQD5ApUAAAAAFgAUKNw0x8HRctAgmvoevm4u1SbN7XIAAAAAAAEAnQIAAAACczMa321tVHuN4GKWKRncycI22aX3uXgwSFUKM2orjRsBAAAAAP7///9zMxrfbW1Ue43gYpYpGdzJwjbZpfe5eDBIVQozaiuNGwAAAAAA/v///wIA+QKVAAAAABl2qRT9zXUVA8Ls5iVqynLHe5/vSe1XyYisQM0ClQAAAAAWABRmWQUcjSjghQ8/uH4Bn/zkakwLtAAAAAAAAQEfQM0ClQAAAAAWABRmWQUcjSjghQ8/uH4Bn/zkakwLtAAAAA==')
-        assert_equal(analysis['next'], 'creator')
-        assert_equal(analysis['error'], 'PSBT is not valid. Input 0 specifies invalid prevout')
-
-        assert_raises_rpc_error(-25, 'Inputs missing or spent', self.nodes[0].walletprocesspsbt, 'cHNidP8BAJoCAAAAAkvEW8NnDtdNtDpsmze+Ht2LH35IJcKv00jKAlUs21RrAwAAAAD/////S8Rbw2cO1020OmybN74e3Ysffkglwq/TSMoCVSzbVGsBAAAAAP7///8CwLYClQAAAAAWABSNJKzjaUb3uOxixsvh1GGE3fW7zQD5ApUAAAAAFgAUKNw0x8HRctAgmvoevm4u1SbN7XIAAAAAAAEAnQIAAAACczMa321tVHuN4GKWKRncycI22aX3uXgwSFUKM2orjRsBAAAAAP7///9zMxrfbW1Ue43gYpYpGdzJwjbZpfe5eDBIVQozaiuNGwAAAAAA/v///wIA+QKVAAAAABl2qRT9zXUVA8Ls5iVqynLHe5/vSe1XyYisQM0ClQAAAAAWABRmWQUcjSjghQ8/uH4Bn/zkakwLtAAAAAAAAQEfQM0ClQAAAAAWABRmWQUcjSjghQ8/uH4Bn/zkakwLtAAAAA==')
+        # The parser rejects out-of-range prevouts before either RPC can
+        # analyze or sign the PSBT. Keep the same malformed regression vector.
+        invalid_prevout_psbt = 'cHNidP8BAJoCAAAAAkvEW8NnDtdNtDpsmze+Ht2LH35IJcKv00jKAlUs21RrAwAAAAD/////S8Rbw2cO1020OmybN74e3Ysffkglwq/TSMoCVSzbVGsBAAAAAP7///8CwLYClQAAAAAWABSNJKzjaUb3uOxixsvh1GGE3fW7zQD5ApUAAAAAFgAUKNw0x8HRctAgmvoevm4u1SbN7XIAAAAAAAEAnQIAAAACczMa321tVHuN4GKWKRncycI22aX3uXgwSFUKM2orjRsBAAAAAP7///9zMxrfbW1Ue43gYpYpGdzJwjbZpfe5eDBIVQozaiuNGwAAAAAA/v///wIA+QKVAAAAABl2qRT9zXUVA8Ls5iVqynLHe5/vSe1XyYisQM0ClQAAAAAWABRmWQUcjSjghQ8/uH4Bn/zkakwLtAAAAAAAAQEfQM0ClQAAAAAWABRmWQUcjSjghQ8/uH4Bn/zkakwLtAAAAA=='
+        for rpc in (self.nodes[0].analyzepsbt, self.nodes[0].walletprocesspsbt):
+            assert_raises_rpc_error(-22, 'Input specifies output index that does not exist', rpc, invalid_prevout_psbt)
 
         self.log.info("Test that we can fund psbts with external inputs specified")
 

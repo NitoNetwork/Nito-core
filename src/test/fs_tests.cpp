@@ -12,6 +12,7 @@
 #include <fstream>
 #include <ios>
 #include <string>
+#include <system_error>
 
 BOOST_FIXTURE_TEST_SUITE(fs_tests, BasicTestingSetup)
 
@@ -169,7 +170,16 @@ BOOST_AUTO_TEST_CASE(create_directories)
     BOOST_CHECK(!fs::create_directories(dir));
 
     const fs::path symlink{tmpfolder / "b"};
-    fs::create_directory_symlink(dir, symlink);
+    std::error_code ec;
+    fs::create_directory_symlink(dir, symlink, ec);
+#ifdef WIN32
+    if (ec) {
+        BOOST_TEST_MESSAGE("Skipping symlink checks because Windows refused symlink creation: " << ec.message());
+        fs::remove(dir);
+        return;
+    }
+#endif
+    BOOST_REQUIRE_MESSAGE(!ec, ec.message());
     BOOST_CHECK(fs::exists(symlink));
     BOOST_CHECK(fs::is_symlink(symlink));
     BOOST_CHECK(fs::is_directory(symlink));

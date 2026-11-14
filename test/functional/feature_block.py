@@ -463,19 +463,20 @@ class FullBlockTest(NitoTestFramework):
         #   13 (4) -> b15 (5) -> b23 (6) -> b30 (7) -> b31 (8) -> b33 (9) -> b35 (10) -> b39 (11) -> b41 (12)
         #                                                                                        \-> b40 (12)
         #
-        # b39 - create some P2SH outputs that will require 6 sigops to spend:
+        # b39 - create P2SH outputs requiring 100 sigops each, so the spending
+        # block can reach the sigop limit within Nito's smaller weight limit:
         #
-        #           redeem_script = COINBASE_PUBKEY, (OP_2DUP+OP_CHECKSIGVERIFY) * 5, OP_CHECKSIG
+        #           redeem_script = COINBASE_PUBKEY, (OP_2DUP+OP_CHECKSIGVERIFY) * 99, OP_CHECKSIG
         #           p2sh_script = OP_HASH160, ripemd160(sha256(script)), OP_EQUAL
         #
         self.log.info("Check P2SH SIGOPS are correctly counted")
         self.move_tip(35)
         self.next_block(39)
         b39_outputs = 0
-        b39_sigops_per_output = 6
+        b39_sigops_per_output = 100
 
         # Build the redeem script, hash it, use hash to create the p2sh script
-        redeem_script = CScript([self.coinbase_pubkey] + [OP_2DUP, OP_CHECKSIGVERIFY] * 5 + [OP_CHECKSIG])
+        redeem_script = CScript([self.coinbase_pubkey] + [OP_2DUP, OP_CHECKSIGVERIFY] * (b39_sigops_per_output - 1) + [OP_CHECKSIG])
         p2sh_script = script_to_p2sh_script(redeem_script)
 
         # Create a transaction that spends one satoshi to the p2sh_script, the rest to OP_TRUE
@@ -517,8 +518,8 @@ class FullBlockTest(NitoTestFramework):
 
         # Test sigops in P2SH redeem scripts
         #
-        # b40 creates 3333 tx's spending the 6-sigop P2SH outputs from b39 for a total of 19998 sigops.
-        # The first tx has one sigop and then at the end we add 2 more to put us just over the max.
+        # b40 spends enough P2SH outputs to approach the sigop limit, then adds
+        # precisely enough sigops to exceed the limit by one.
         #
         # b41 does the same, less one, so it has the maximum sigops permitted.
         #
@@ -587,7 +588,7 @@ class FullBlockTest(NitoTestFramework):
         # the first transaction be non-coinbase, etc.  The purpose of b44 is to make sure this works.
         self.log.info("Build block 44 manually")
         height = self.block_heights[self.tip.sha256] + 1
-        coinbase = create_coinbase(height, self.coinbase_pubkey)
+        coinbase = create_coinbase(height, self.coinbase_pubkey, nValue=512)
         b44 = CBlock()
         b44.nTime = self.tip.nTime + 1
         b44.hashPrevBlock = self.tip.sha256
@@ -809,7 +810,7 @@ class FullBlockTest(NitoTestFramework):
         self.log.info("Reject a block with a transaction with outputs > inputs")
         self.move_tip(57)
         self.next_block(59)
-        tx = self.create_and_sign_transaction(out[17], 51 * COIN)
+        tx = self.create_and_sign_transaction(out[17], out[17].vout[0].nValue + COIN)
         b59 = self.update_block(59, [tx])
         self.send_blocks([b59], success=False, reject_reason='bad-txns-in-belowout', reconnect=True)
 
@@ -1354,7 +1355,7 @@ class FullBlockTest(NitoTestFramework):
             block_time = self.tip.nTime + 1
         # First create the coinbase
         height = self.block_heights[base_block_hash] + 1
-        coinbase = create_coinbase(height, self.coinbase_pubkey)
+        coinbase = create_coinbase(height, self.coinbase_pubkey, nValue=512)
         coinbase.vout[0].nValue += additional_coinbase_value
         coinbase.rehash()
         if spend is None:

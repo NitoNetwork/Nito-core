@@ -2,7 +2,7 @@ Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Nito
 Upstream-Contact: Satoshi Nakamoto <satoshin@gmx.com>
  irc://#nito-core-dev@libera.chat
-Source: https://github.com/nito/nito
+Source: https://github.com/NitoNetwork/Nito-core
 
 Files: *
 Copyright: 2009-2024, Bitcoin Core Developers
@@ -69,10 +69,8 @@ Comment: Modifications of Stephen Hutchings' Typicons
 
 Files: src/qt/res/icons/nito.*
        share/pixmaps/nito*
-       src/qt/res/src/nito.svg
-Copyright: Bitboy, Jonas Schnelli
-License: public-domain
-Comment: Site: https://nitotalk.org/?topic=1756.0
+Copyright: Nito Network
+License: Expat
 
 Files: src/qt/res/icons/proxy.png
        src/qt/res/src/proxy.svg

@@ -19,7 +19,7 @@
 import sys, re, os, platform, shutil, stat, subprocess, os.path
 from argparse import ArgumentParser
 from pathlib import Path
-from subprocess import PIPE, run
+from subprocess import CalledProcessError, PIPE, run
 from typing import Optional
 
 # This is ported from the original macdeployqt with modifications
@@ -181,6 +181,109 @@ class DeploymentInfo(object):
                     return True
         return False
 
+def executablePathDirectory(binaryPath: str) -> str:
+    marker = ".app/Contents/"
+    marker_index = binaryPath.find(marker)
+    if marker_index != -1:
+        return os.path.join(binaryPath[:marker_index + len(".app/Contents")], "MacOS")
+    return os.path.dirname(binaryPath)
+
+def resolveDyldPathTokens(path: str, binaryPath: str) -> str:
+    return path.replace("@loader_path", os.path.dirname(binaryPath)).replace(
+        "@executable_path", executablePathDirectory(binaryPath)
+    )
+
+def getRPaths(binaryPath: str) -> list[str]:
+    otoolbin=os.getenv("OTOOL", "otool")
+    otool = run([otoolbin, "-l", binaryPath], stdout=PIPE, stderr=PIPE, text=True)
+    if otool.returncode != 0:
+        sys.stderr.write(otool.stderr)
+        sys.stderr.flush()
+        raise RuntimeError(f"otool failed with return code {otool.returncode}")
+
+    rpaths = []
+    lines = otool.stdout.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() != "cmd LC_RPATH":
+            continue
+        for detail in lines[i + 1:i + 5]:
+            match = re.match(r"^\s*path (.+) \(offset [0-9]+\)$", detail)
+            if match:
+                rpath = resolveDyldPathTokens(match.group(1), binaryPath)
+                if rpath not in rpaths:
+                    rpaths.append(rpath)
+                break
+    return rpaths
+
+def resolveRPathLibrary(path: str, binaryPath: str) -> str:
+    if not path.startswith("@rpath/"):
+        return path
+
+    suffix = path[len("@rpath/"):]
+    candidate_dirs = getRPaths(binaryPath)
+    candidate_dirs.append(os.path.dirname(binaryPath))
+
+    for env_name in ["QTDIR", "HOMEBREW_PREFIX"]:
+        env_path = os.getenv(env_name)
+        if env_path:
+            candidate_dirs.append(os.path.join(env_path, "lib"))
+
+    for prefix in ["/opt/homebrew", "/usr/local"]:
+        candidate_dirs.append(os.path.join(prefix, "lib"))
+
+    seen_dirs = set()
+    for directory in candidate_dirs:
+        if directory in seen_dirs:
+            continue
+        seen_dirs.add(directory)
+        candidate = os.path.join(directory, suffix)
+        if os.path.exists(candidate):
+            return candidate
+
+    for opt_root in ["/opt/homebrew/opt", "/usr/local/opt"]:
+        if not os.path.isdir(opt_root):
+            continue
+        for candidate in Path(opt_root).glob(f"*/lib/{suffix}"):
+            if candidate.exists():
+                return str(candidate)
+
+    raise RuntimeError(f"No file at {path}")
+
+def updateResolvedSourcePath(info: FrameworkInfo, sourcePath: str):
+    if info.isDylib():
+        dirname, filename = os.path.split(sourcePath)
+        info.frameworkName = filename
+        info.frameworkDirectory = dirname
+        info.frameworkPath = sourcePath
+        info.binaryDirectory = dirname
+        info.binaryName = filename
+        info.binaryPath = sourcePath
+        info.sourceFilePath = sourcePath
+        return
+
+    parts = sourcePath.split("/")
+    frameworkIndex = 0
+    for part in parts:
+        if part.endswith(".framework"):
+            break
+        frameworkIndex += 1
+    if frameworkIndex == len(parts):
+        raise RuntimeError(f"Resolved framework path lacks .framework: {sourcePath}")
+
+    info.frameworkName = parts[frameworkIndex]
+    info.frameworkDirectory = "/".join(parts[:frameworkIndex])
+    info.frameworkPath = "/".join(parts[:frameworkIndex + 1])
+    info.sourceFilePath = sourcePath
+    info.sourceResourcesDirectory = os.path.join(info.frameworkPath, "Resources")
+    info.sourceContentsDirectory = os.path.join(info.frameworkPath, "Contents")
+
+    if len(parts) >= frameworkIndex + 4 and parts[frameworkIndex + 1] == "Versions":
+        info.binaryDirectory = "/".join(parts[frameworkIndex + 1:frameworkIndex + 3])
+        info.binaryName = parts[frameworkIndex + 3]
+        info.binaryPath = os.path.join(info.binaryDirectory, info.binaryName)
+        info.version = parts[frameworkIndex + 2]
+        info.sourceVersionContentsDirectory = os.path.join(info.frameworkPath, "Versions", info.version, "Contents")
+
 def getFrameworks(binaryPath: str, verbose: int) -> list[FrameworkInfo]:
     if verbose:
         print(f"Inspecting with otool: {binaryPath}")
@@ -201,6 +304,8 @@ def getFrameworks(binaryPath: str, verbose: int) -> list[FrameworkInfo]:
         line = line.replace("@loader_path", os.path.dirname(binaryPath))
         info = FrameworkInfo.fromOtoolLibraryLine(line.strip())
         if info is not None:
+            if info.sourceFilePath.startswith("@rpath/"):
+                updateResolvedSourcePath(info, resolveRPathLibrary(info.sourceFilePath, binaryPath))
             if verbose:
                 print("Found framework:")
                 print(info)
@@ -208,9 +313,26 @@ def getFrameworks(binaryPath: str, verbose: int) -> list[FrameworkInfo]:
     
     return libraries
 
+def runMachOTool(args: list[str], filterCodeSignatureWarning: bool = False):
+    result = run(args, stdout=PIPE, stderr=PIPE, text=True)
+    if result.stdout:
+        sys.stdout.write(result.stdout)
+        sys.stdout.flush()
+    if result.stderr:
+        stderr_lines = []
+        for line in result.stderr.splitlines():
+            if filterCodeSignatureWarning and "will invalidate the code signature" in line:
+                continue
+            stderr_lines.append(line)
+        if stderr_lines:
+            sys.stderr.write("\n".join(stderr_lines) + "\n")
+            sys.stderr.flush()
+    if result.returncode != 0:
+        raise CalledProcessError(result.returncode, args)
+
 def runInstallNameTool(action: str, *args):
     installnametoolbin=os.getenv("INSTALL_NAME_TOOL", "install_name_tool")
-    run([installnametoolbin, "-"+action] + list(args), check=True)
+    runMachOTool([installnametoolbin, "-"+action] + list(args), filterCodeSignatureWarning=True)
 
 def changeInstallName(oldName: str, newName: str, binaryPath: str, verbose: int):
     if verbose:
@@ -232,7 +354,7 @@ def runStrip(binaryPath: str, verbose: int):
     if verbose:
         print("Using strip:")
         print(" stripped", binaryPath)
-    run([stripbin, "-x", binaryPath], check=True)
+    runMachOTool([stripbin, "-x", binaryPath], filterCodeSignatureWarning=True)
 
 def copyFramework(framework: FrameworkInfo, path: str, verbose: int) -> Optional[str]:
     if framework.sourceFilePath.startswith("Qt"):
@@ -332,7 +454,7 @@ def deployFrameworks(frameworks: list[FrameworkInfo], bundlePath: str, binaryPat
 def deployFrameworksForAppBundle(applicationBundle: ApplicationBundleInfo, strip: bool, verbose: int) -> DeploymentInfo:
     frameworks = getFrameworks(applicationBundle.binaryPath, verbose)
     if len(frameworks) == 0:
-        print(f"Warning: Could not find any external frameworks to deploy in {applicationBundle.path}.")
+        print(f"No external frameworks found in {applicationBundle.path}; the application binary is self-contained.")
         return DeploymentInfo()
     else:
         return deployFrameworks(frameworks, applicationBundle.path, applicationBundle.binaryPath, strip, verbose)
@@ -469,9 +591,12 @@ print("+ Adding Qt translations +")
 
 translations = Path(config.translations_dir[0])
 
-regex = re.compile('qt_[a-z]*(.qm|_[A-Z]*.qm)')
+regex = re.compile(r'qtbase_[a-z]+(?:_[A-Z]+)?\.qm')
 
-lang_files = [x for x in translations.iterdir() if regex.match(x.name)]
+lang_files = sorted(
+    (x for x in translations.iterdir() if regex.fullmatch(x.name)),
+    key=lambda path: path.name,
+)
 
 for file in lang_files:
     if verbose:
@@ -493,7 +618,7 @@ with open(os.path.join(applicationBundle.resourcesPath, "qt.conf"), "wb") as f:
 # ------------------------------------------------
 
 if platform.system() == "Darwin":
-    subprocess.check_call(f"codesign --deep --force --sign - {target}", shell=True)
+    subprocess.check_call(["codesign", "--deep", "--force", "--sign", "-", target])
 
 # ------------------------------------------------
 

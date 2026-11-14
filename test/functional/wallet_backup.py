@@ -8,7 +8,7 @@ Test case is:
 4 nodes. 1 2 and 3 send transactions between each other,
 fourth node is a miner.
 1 2 3 each mine a block to start, then
-Miner creates 100 blocks so 1 2 3 each have 50 mature
+Miner creates 100 blocks so 1 2 3 each have one mature block subsidy
 coins to spend.
 Then 5 iterations of 1/2/3 sending coins amongst
 themselves to get transactions in the wallets,
@@ -21,7 +21,7 @@ Miner then generates 101 more blocks, so any
 transaction fees paid mature.
 
 Sanity check:
-  Sum(1,2,3,4 balances) == 114*50
+  Sum(1,2,3,4 balances) == 114*Nito block subsidy
 
 1/2/3 are shutdown, and their wallets erased.
 Then restore using wallet.dat backup. And
@@ -41,6 +41,8 @@ from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
 )
+
+BLOCK_SUBSIDY = 512
 
 
 class WalletBackupTest(NitoTestFramework):
@@ -94,14 +96,15 @@ class WalletBackupTest(NitoTestFramework):
         self.generate(self.nodes[3], 1)
 
     # As above, this mirrors the original bash test.
-    def start_three(self, args=()):
+    def start_three(self, args=(), *, connect_cross=True):
         self.start_node(0, self.extra_args[0] + list(args))
         self.start_node(1, self.extra_args[1] + list(args))
         self.start_node(2, self.extra_args[2] + list(args))
         self.connect_nodes(0, 3)
         self.connect_nodes(1, 3)
         self.connect_nodes(2, 3)
-        self.connect_nodes(2, 0)
+        if connect_cross:
+            self.connect_nodes(2, 0)
 
     def stop_three(self):
         self.stop_node(0)
@@ -146,9 +149,9 @@ class WalletBackupTest(NitoTestFramework):
         self.generate(self.nodes[2], 1)
         self.generate(self.nodes[3], COINBASE_MATURITY)
 
-        assert_equal(self.nodes[0].getbalance(), 50)
-        assert_equal(self.nodes[1].getbalance(), 50)
-        assert_equal(self.nodes[2].getbalance(), 50)
+        assert_equal(self.nodes[0].getbalance(), BLOCK_SUBSIDY)
+        assert_equal(self.nodes[1].getbalance(), BLOCK_SUBSIDY)
+        assert_equal(self.nodes[2].getbalance(), BLOCK_SUBSIDY)
         assert_equal(self.nodes[3].getbalance(), 0)
 
         self.log.info("Creating transactions")
@@ -179,8 +182,8 @@ class WalletBackupTest(NitoTestFramework):
         total = balance0 + balance1 + balance2 + balance3
 
         # At this point, there are 214 blocks (103 for setup, then 10 rounds, then 101.)
-        # 114 are mature, so the sum of all wallets should be 114 * 50 = 5700.
-        assert_equal(total, 5700)
+        # 114 are mature, so the sum of all wallets must equal 114 Nito subsidies.
+        assert_equal(total, 114 * BLOCK_SUBSIDY)
 
         ##
         # Test restoring spender wallets from backups
@@ -216,8 +219,11 @@ class WalletBackupTest(NitoTestFramework):
             #start node2 with no chain
             shutil.rmtree(self.nodes[2].blocks_path)
             shutil.rmtree(self.nodes[2].chain_path / 'chainstate')
+            shutil.rmtree(self.nodes[2].chain_path / 'indexes', ignore_errors=True)
 
-            self.start_three(["-nowallet"])
+            # Node 2 has no chain and already syncs from the miner (node 3).
+            # Avoid a redundant cross-connection while its headers are catching up.
+            self.start_three(["-nowallet"], connect_cross=False)
             # Create new wallets for the three nodes.
             # We will use this empty wallets to test the 'importwallet()' RPC command below.
             for node_num in range(3):
@@ -240,6 +246,42 @@ class WalletBackupTest(NitoTestFramework):
 
         for sourcePath in sourcePaths:
             assert_raises_rpc_error(-4, "backup failed", self.nodes[0].backupwallet, sourcePath)
+
+        if self.options.descriptors:
+            self.log.info("Encrypted backup restores BIP39-derived authority without re-entering its passphrase")
+            node = self.nodes[3]
+            node.createwallet(wallet_name='bip39_backup_source', descriptors=True,
+                              passphrase='backup file password', bip39_passphrase='backup BIP39 passphrase')
+            source = node.get_wallet_rpc('bip39_backup_source')
+            source.walletpassphrase('backup file password', 600)
+            mnemonic = source.dumpmnemonic()['mnemonic']
+            source.walletlock()
+            backup_file = node.datadir_path / 'bip39_encrypted.bak'
+            source.backupwallet(backup_file)
+            node.restorewallet('bip39_backup_restored', backup_file)
+            restored = node.get_wallet_rpc('bip39_backup_restored')
+            assert_equal(restored.getwalletinfo()['bip39_passphrase_enabled'], True)
+            assert_raises_rpc_error(-13, 'Please enter the wallet passphrase', restored.dumpmnemonic)
+
+            self.restart_node(3)
+            node = self.nodes[3]
+            node.loadwallet('bip39_backup_source')
+            node.loadwallet('bip39_backup_restored')
+            source = node.get_wallet_rpc('bip39_backup_source')
+            restored = node.get_wallet_rpc('bip39_backup_restored')
+            for wallet in (source, restored):
+                assert_equal(wallet.getwalletinfo()['bip39_passphrase_enabled'], True)
+                wallet.walletpassphrase('backup file password', 600)
+                info = wallet.dumpmnemonic()
+                assert_equal(info['mnemonic'], mnemonic)
+                assert_equal(info['scope'], 'full_wallet')
+                assert_equal(info['bip39_passphrase_required'], True)
+            # Go beyond the default 100 cached keys so restored derivation
+            # must use persisted authority, rather than only backed-up keys.
+            for _ in range(101):
+                assert_equal(restored.getnewaddress(), source.getnewaddress())
+                assert_equal(restored.getrawchangeaddress(), source.getrawchangeaddress())
+            assert_equal(restored.getnewaddress('', 'bech32x'), source.getnewaddress('', 'bech32x'))
 
 
 if __name__ == '__main__':

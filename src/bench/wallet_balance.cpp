@@ -5,6 +5,8 @@
 
 #include <bench/bench.h>
 #include <interfaces/chain.h>
+#include <key.h>
+#include <key_io.h>
 #include <node/chainstate.h>
 #include <node/context.h>
 #include <test/util/mining.h>
@@ -19,9 +21,7 @@
 namespace wallet {
 static void WalletBalance(benchmark::Bench& bench, const bool set_dirty, const bool add_mine)
 {
-    const auto test_setup = MakeNoLogFileContext<const TestingSetup>();
-
-    const auto& ADDRESS_WATCHONLY = ADDRESS_BCRT1_UNSPENDABLE;
+    const auto test_setup = MakeNoLogFileContext<const TestingSetup>(ChainType::REGTEST);
 
     // Set clock to genesis block, so the descriptors/keys creation time don't interfere with the blocks scanning process.
     // The reason is 'generatetoaddress', which creates a chain with deterministic timestamps in the past.
@@ -34,11 +34,14 @@ static void WalletBalance(benchmark::Bench& bench, const bool set_dirty, const b
     }
     auto handler = test_setup->m_node.chain->handleNotifications({&wallet, [](CWallet*) {}});
 
+    CKey watch_key;
+    watch_key.MakeNewKey(/*fCompressedIn=*/true);
+    const std::string address_watchonly{EncodeDestination(PKHash(watch_key.GetPubKey()))};
     const std::optional<std::string> address_mine{add_mine ? std::optional<std::string>{getnewaddress(wallet)} : std::nullopt};
 
     for (int i = 0; i < 100; ++i) {
-        generatetoaddress(test_setup->m_node, address_mine.value_or(ADDRESS_WATCHONLY));
-        generatetoaddress(test_setup->m_node, ADDRESS_WATCHONLY);
+        generatetoaddress(test_setup->m_node, address_mine.value_or(address_watchonly));
+        generatetoaddress(test_setup->m_node, address_watchonly);
     }
     SyncWithValidationInterfaceQueue();
 

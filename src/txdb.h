@@ -34,7 +34,7 @@ static const int64_t nMinDbCache = 4;
 static const int64_t nMaxBlockDBCache = 2;
 //! Max memory allocated to block tree DB specific cache, if -txindex (MiB)
 // Unlike for the UTXO database, for the txindex scenario the leveldb cache make
-// a meaningful difference: https://github.com/nito/nito/pull/8273#issuecomment-229601991
+// a meaningful difference: https://github.com/bitcoin/bitcoin/pull/8273#issuecomment-229601991
 static const int64_t nMaxTxIndexCache = 1024;
 //! Max memory allocated to all block filter index caches combined in MiB.
 static const int64_t max_filter_index_cache = 1024;
@@ -64,8 +64,16 @@ public:
     bool HaveCoin(const COutPoint &outpoint) const override;
     uint256 GetBestBlock() const override;
     std::vector<uint256> GetHeadBlocks() const override;
-    bool BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase = true) override;
+    bool BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock, bool erase = true, CPrivateStateCache* private_cache = nullptr) override;
     std::unique_ptr<CCoinsViewCursor> Cursor() const override;
+    bool HavePrivateNullifier(const uint256& nullifier) const override;
+    bool HavePrivateAnchor(const uint256& anchor) const override;
+    bool GetPrivateRoot(uint256& root) const override;
+    bool GetPrivateCommitmentCount(uint64_t& count) const override;
+    bool GetPrivateCommitment(uint64_t index, uint256& cmx) const override;
+    bool GetPrivateFrontier(std::vector<unsigned char>& frontier) const override;
+    bool GetPrivateValuePool(CAmount& value_pool) const override;
+    bool GetPrivateBlockUndo(const uint256& block_hash, CPrivateBlockUndo& undo) const override;
 
     //! Whether an unsupported database format is used.
     bool NeedsUpgrade();

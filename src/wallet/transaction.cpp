@@ -6,10 +6,49 @@
 #include <wallet/transaction.h>
 
 #include <interfaces/chain.h>
+#include <hash.h>
+#include <key_io.h>
+#include <streams.h>
 
 using interfaces::FoundBlock;
 
 namespace wallet {
+std::string CWalletTx::SerializeInputAddresses() const
+{
+    DataStream stream;
+    stream << m_input_addresses;
+    HashWriter checksum;
+    checksum << tx->GetHash() << m_input_addresses;
+    stream << checksum.GetHash();
+    return HexStr(stream);
+}
+
+void CWalletTx::DeserializeInputAddresses(const std::string& encoded)
+{
+    m_input_addresses.clear();
+    // This cache is optional. Invalid or obsolete cache data must not prevent
+    // loading the actual wallet transaction or affect its validity/accounting.
+    if (!tx || tx->IsCoinBase() || tx->HasPrivateBundle() ||
+        encoded.size() > tx->vin.size() * 280 + 84 || !IsHex(encoded)) return;
+    try {
+        DataStream stream{ParseHex(encoded)};
+        std::map<uint32_t, std::string> addresses;
+        uint256 stored_checksum;
+        stream >> addresses >> stored_checksum;
+        if (!stream.empty() || addresses.size() > tx->vin.size()) return;
+        HashWriter checksum;
+        checksum << tx->GetHash() << addresses;
+        if (stored_checksum != checksum.GetHash()) return;
+        for (const auto& [index, address] : addresses) {
+            if (index >= tx->vin.size() || address.size() > 128 ||
+                (!address.empty() && !IsValidDestination(DecodeDestination(address)))) return;
+        }
+        m_input_addresses = std::move(addresses);
+    } catch (const std::ios_base::failure&) {
+        // A later local prevout lookup can rebuild this nonessential cache.
+    }
+}
+
 bool CWalletTx::IsEquivalentTo(const CWalletTx& _tx) const
 {
         CMutableTransaction tx1 {*this->tx};

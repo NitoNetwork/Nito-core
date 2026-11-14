@@ -2,15 +2,18 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
   <PropertyGroup Label="QtGlobals">
-    <QtBaseDir Condition="'$(QTBASEDIR)' == ''">C:\Qt_static</QtBaseDir>
+    <QtBaseDir Condition="'$(QTBASEDIR)' == ''">C:\Qt6_static</QtBaseDir>
     <QtPluginsLibraryDir>$(QtBaseDir)\plugins</QtPluginsLibraryDir>
     <QtLibraryDir>$(QtBaseDir)\lib</QtLibraryDir>
     <QtIncludeDir>$(QtBaseDir)\include</QtIncludeDir>
     <QtIncludes>$(QtIncludeDir);$(QtIncludeDir)\QtNetwork;$(QtIncludeDir)\QtCore;$(QtIncludeDir)\QtWidgets;$(QtIncludeDir)\QtGui;</QtIncludes>
     <GeneratedFilesOutDir>.\QtGeneratedFiles\qt</GeneratedFilesOutDir>
     <QtToolsDir>$(QtBaseDir)\bin</QtToolsDir>
-    <QtReleaseLibraries>$(QtPluginsLibraryDir)\platforms\qminimal.lib;$(QtPluginsLibraryDir)\platforms\qwindows.lib;$(QtPluginsLibraryDir)\styles\qwindowsvistastyle.lib;$(QtLibraryDir)\Qt5WindowsUIAutomationSupport.lib;$(QtLibraryDir)\qtfreetype.lib;$(QtLibraryDir)\qtharfbuzz.lib;$(QtLibraryDir)\qtlibpng.lib;$(QtLibraryDir)\qtpcre2.lib;$(QtLibraryDir)\Qt5AccessibilitySupport.lib;$(QtLibraryDir)\Qt5Core.lib;$(QtLibraryDir)\Qt5Concurrent.lib;$(QtLibraryDir)\Qt5EventDispatcherSupport.lib;$(QtLibraryDir)\Qt5FontDatabaseSupport.lib;$(QtLibraryDir)\Qt5Gui.lib;$(QtLibraryDir)\Qt5Network.lib;$(QtLibraryDir)\Qt5PlatformCompositorSupport.lib;$(QtLibraryDir)\Qt5ThemeSupport.lib;$(QtLibraryDir)\Qt5Widgets.lib;$(QtLibraryDir)\Qt5WinExtras.lib;$(QtLibraryDir)\qtmain.lib;Wtsapi32.lib;userenv.lib;netapi32.lib;imm32.lib;Dwmapi.lib;version.lib;winmm.lib;UxTheme.lib</QtReleaseLibraries>
-    <QtDebugLibraries>$(QtPluginsLibraryDir)\platforms\qwindowsd.lib;$(QtPluginsLibraryDir)\platforms\qminimald.lib;$(QtPluginsLibraryDir)\styles\qwindowsvistastyled.lib;$(QtLibraryDir)\*d.lib;Wtsapi32.lib;crypt32.lib;userenv.lib;netapi32.lib;imm32.lib;Dwmapi.lib;version.lib;winmm.lib;UxTheme.lib</QtDebugLibraries>
+    <QtSystemLibraries>Version.lib;Winmm.lib;Ws2_32.lib;Dwmapi.lib;Imm32.lib;Ole32.lib;OleAut32.lib;Uuid.lib;UxTheme.lib;Gdi32.lib;User32.lib;Shell32.lib;Advapi32.lib;Setupapi.lib;Comdlg32.lib;Shlwapi.lib;Shcore.lib;Crypt32.lib;Iphlpapi.lib;Netapi32.lib;Wtsapi32.lib;Winspool.lib;Bcrypt.lib;Dnsapi.lib;Dwrite.lib;D2d1.lib;D3d9.lib;D3d11.lib;D3d12.lib;Dxgi.lib;Dxguid.lib;Synchronization.lib;Authz.lib;Userenv.lib;RuntimeObject.lib;Secur32.lib;Winhttp.lib;Mpr.lib;Uiautomationcore.lib</QtSystemLibraries>
+    <QtStaticResourceObjects>$(QtLibraryDir)\objects-Release\QWindowsIntegrationPlugin_resources_1\.qt\rcc\qrc_openglblacklists_init.cpp.obj;$(QtLibraryDir)\objects-Release\QWindowsIntegrationPlugin_resources_2\.qt\rcc\qrc_cursors_init.cpp.obj;$(QtLibraryDir)\objects-Release\Widgets_resources_1\.qt\rcc\qrc_qstyle_init.cpp.obj;$(QtLibraryDir)\objects-Release\Widgets_resources_2\.qt\rcc\qrc_qstyle1_init.cpp.obj;$(QtLibraryDir)\objects-Release\Widgets_resources_3\.qt\rcc\qrc_qstyle_fusion_init.cpp.obj;$(QtLibraryDir)\objects-Release\Widgets_resources_4\.qt\rcc\qrc_qmessagebox_init.cpp.obj;$(QtLibraryDir)\objects-Release\Gui_resources_1\.qt\rcc\qrc_qpdf_init.cpp.obj;$(QtLibraryDir)\objects-Release\Gui_resources_2\.qt\rcc\qrc_gui_shaders_init.cpp.obj</QtStaticResourceObjects>
+    <QtBundledLibraries>$(QtLibraryDir)\Qt6BundledPcre2.lib;$(QtLibraryDir)\Qt6BundledHarfbuzz.lib;$(QtLibraryDir)\Qt6BundledFreetype.lib;$(QtLibraryDir)\Qt6BundledLibpng.lib;$(QtLibraryDir)\Qt6BundledZLIB.lib</QtBundledLibraries>
+    <QtReleaseLibraries>$(QtStaticResourceObjects);$(QtPluginsLibraryDir)\platforms\qminimal.lib;$(QtPluginsLibraryDir)\platforms\qwindows.lib;$(QtPluginsLibraryDir)\styles\qmodernwindowsstyle.lib;$(QtLibraryDir)\Qt6Concurrent.lib;$(QtLibraryDir)\Qt6Core.lib;$(QtLibraryDir)\Qt6EntryPoint.lib;$(QtLibraryDir)\Qt6Gui.lib;$(QtLibraryDir)\Qt6Network.lib;$(QtLibraryDir)\Qt6Widgets.lib;$(QtBundledLibraries);$(QtSystemLibraries)</QtReleaseLibraries>
+    <QtDebugLibraries>$(QtPluginsLibraryDir)\platforms\qwindowsd.lib;$(QtPluginsLibraryDir)\platforms\qminimald.lib;$(QtPluginsLibraryDir)\styles\qmodernwindowsstyled.lib;$(QtLibraryDir)\*d.lib;$(QtSystemLibraries)</QtDebugLibraries>
   </PropertyGroup>
 
   <ItemDefinitionGroup>

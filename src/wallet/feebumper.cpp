@@ -4,12 +4,22 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <common/system.h>
+#include <chainparams.h>
+#include <consensus/private_tx_verify.h>
 #include <consensus/validation.h>
+#include <core_io.h>
+#include <crypto/hmac_sha256.h>
+#include <hash.h>
 #include <interfaces/chain.h>
+#include <key_io.h>
 #include <policy/fees.h>
 #include <policy/policy.h>
+#include <private/private_address.h>
+#include <streams.h>
+#include <support/cleanse.h>
 #include <util/moneystr.h>
 #include <util/rbf.h>
+#include <util/strencodings.h>
 #include <util/translation.h>
 #include <wallet/coincontrol.h>
 #include <wallet/feebumper.h>
@@ -18,7 +28,347 @@
 #include <wallet/spend.h>
 #include <wallet/wallet.h>
 
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <string_view>
+#include <uint256.h>
+
 namespace wallet {
+namespace {
+constexpr std::string_view PRIVATE_BUMP_RECIPE_KEY{"nito_private_bump_recipe"};
+constexpr std::string_view PRIVATE_BUMP_SOURCE_KEY{"nito_private_bump_source"};
+constexpr std::string_view PRIVATE_BUMP_RECIPIENTS_KEY{"nito_private_bump_recipients"};
+constexpr std::string_view PRIVATE_BUMP_NOTES_KEY{"nito_private_bump_notes"};
+constexpr uint8_t PRIVATE_BUMP_ENVELOPE_VERSION{1};
+constexpr uint8_t PRIVATE_BUMP_RECIPE_VERSION{1};
+constexpr uint8_t PRIVATE_BUMP_PLAINTEXT{0};
+constexpr uint8_t PRIVATE_BUMP_ENCRYPTED{1};
+constexpr uint8_t PRIVATE_BUMP_TRANSPARENT_RECIPIENT{0};
+constexpr uint8_t PRIVATE_BUMP_ORCHARD_RECIPIENT{1};
+constexpr size_t PRIVATE_BUMP_TAG_SIZE{32};
+constexpr size_t MAX_PRIVATE_BUMP_ENVELOPE_SIZE{256 * 1024};
+constexpr size_t MAX_PRIVATE_BUMP_RECIPIENTS{1000};
+constexpr size_t MAX_PRIVATE_BUMP_DESTINATION_SIZE{128};
+
+struct PrivateBumpWireRecipient
+{
+    uint8_t kind{PRIVATE_BUMP_TRANSPARENT_RECIPIENT};
+    std::vector<unsigned char> destination;
+    CAmount amount{0};
+    uint8_t subtract_fee{0};
+
+    SERIALIZE_METHODS(PrivateBumpWireRecipient, obj)
+    {
+        READWRITE(obj.kind, obj.destination, obj.amount, obj.subtract_fee);
+    }
+};
+
+struct PrivateBumpWireRecipe
+{
+    uint8_t version{PRIVATE_BUMP_RECIPE_VERSION};
+    uint256 txid;
+    uint8_t source{0};
+    std::vector<PrivateBumpWireRecipient> recipients;
+    std::vector<uint256> private_note_ids;
+
+    SERIALIZE_METHODS(PrivateBumpWireRecipe, obj)
+    {
+        READWRITE(obj.version, obj.txid, obj.source, obj.recipients, obj.private_note_ids);
+    }
+};
+
+struct PrivateBumpEnvelope
+{
+    uint8_t version{PRIVATE_BUMP_ENVELOPE_VERSION};
+    uint8_t protection{PRIVATE_BUMP_PLAINTEXT};
+    std::vector<unsigned char> payload;
+    std::array<unsigned char, PRIVATE_BUMP_TAG_SIZE> tag{};
+};
+
+struct PrivateBumpRecipe
+{
+    CCoinControl::PrivateTxSource source{CCoinControl::PrivateTxSource::AUTO};
+    std::vector<CRecipient> recipients;
+    std::vector<uint256> private_note_ids;
+};
+
+template <typename ByteVector>
+void Cleanse(ByteVector& value)
+{
+    if (!value.empty()) memory_cleanse(value.data(), value.size());
+    value.clear();
+}
+
+void EraseUnsupportedPrivateBumpMetadata(mapValue_t& map_value)
+{
+    map_value.erase(std::string{PRIVATE_BUMP_SOURCE_KEY});
+    map_value.erase(std::string{PRIVATE_BUMP_RECIPIENTS_KEY});
+    map_value.erase(std::string{PRIVATE_BUMP_NOTES_KEY});
+}
+
+uint256 PrivateBumpEncryptionIV(const uint256& txid)
+{
+    HashWriter writer;
+    writer << std::string{"nito/private-bump/encryption-iv/v1"} << txid;
+    return writer.GetHash();
+}
+
+std::array<unsigned char, PRIVATE_BUMP_TAG_SIZE> PrivateBumpMacKey(const CKeyingMaterial& master_key)
+{
+    static constexpr std::string_view domain{"nito/private-bump/mac-key/v1"};
+    std::array<unsigned char, PRIVATE_BUMP_TAG_SIZE> key{};
+    CHMAC_SHA256(master_key.data(), master_key.size())
+        .Write(reinterpret_cast<const unsigned char*>(domain.data()), domain.size())
+        .Finalize(key.data());
+    return key;
+}
+
+std::array<unsigned char, PRIVATE_BUMP_TAG_SIZE> PrivateBumpTag(const CKeyingMaterial& master_key,
+                                                               const uint256& txid,
+                                                               Span<const unsigned char> ciphertext)
+{
+    static constexpr std::string_view domain{"nito/private-bump/envelope/v1"};
+    std::array<unsigned char, PRIVATE_BUMP_TAG_SIZE> mac_key{PrivateBumpMacKey(master_key)};
+    std::array<unsigned char, PRIVATE_BUMP_TAG_SIZE> tag{};
+    const uint8_t version{PRIVATE_BUMP_ENVELOPE_VERSION};
+    CHMAC_SHA256(mac_key.data(), mac_key.size())
+        .Write(reinterpret_cast<const unsigned char*>(domain.data()), domain.size())
+        .Write(&version, sizeof(version))
+        .Write(txid.begin(), txid.size())
+        .Write(ciphertext.data(), ciphertext.size())
+        .Finalize(tag.data());
+    memory_cleanse(mac_key.data(), mac_key.size());
+    return tag;
+}
+
+std::string EncodePrivateBumpEnvelope(const PrivateBumpEnvelope& envelope)
+{
+    DataStream stream;
+    stream << envelope.version << envelope.protection << envelope.payload;
+    if (envelope.protection == PRIVATE_BUMP_ENCRYPTED) stream << envelope.tag;
+    return EncodeBase64(stream);
+}
+
+util::Result<PrivateBumpEnvelope> DecodePrivateBumpEnvelope(std::string_view encoded)
+{
+    if (encoded.empty() || encoded.size() > MAX_PRIVATE_BUMP_ENVELOPE_SIZE * 2) {
+        return util::Error{Untranslated("Private-bundle fee-bump recipe envelope is malformed.")};
+    }
+    const auto decoded{DecodeBase64(encoded)};
+    if (!decoded || decoded->empty() || decoded->size() > MAX_PRIVATE_BUMP_ENVELOPE_SIZE) {
+        return util::Error{Untranslated("Private-bundle fee-bump recipe envelope is malformed.")};
+    }
+    try {
+        SpanReader stream{Span<const uint8_t>{*decoded}};
+        PrivateBumpEnvelope envelope;
+        stream >> envelope.version >> envelope.protection;
+        const uint64_t payload_size{ReadCompactSize(stream)};
+        if (envelope.version != PRIVATE_BUMP_ENVELOPE_VERSION ||
+            (envelope.protection != PRIVATE_BUMP_PLAINTEXT && envelope.protection != PRIVATE_BUMP_ENCRYPTED) ||
+            payload_size == 0 || payload_size > MAX_PRIVATE_BUMP_ENVELOPE_SIZE) {
+            return util::Error{Untranslated("Private-bundle fee-bump recipe envelope is malformed.")};
+        }
+        const size_t tag_size{envelope.protection == PRIVATE_BUMP_ENCRYPTED ? PRIVATE_BUMP_TAG_SIZE : 0};
+        if (payload_size > stream.size() || stream.size() - payload_size != tag_size) {
+            return util::Error{Untranslated("Private-bundle fee-bump recipe envelope is malformed.")};
+        }
+        envelope.payload.resize(payload_size);
+        stream.read(MakeWritableByteSpan(envelope.payload));
+        if (envelope.protection == PRIVATE_BUMP_ENCRYPTED) stream >> envelope.tag;
+        if (!stream.empty()) {
+            return util::Error{Untranslated("Private-bundle fee-bump recipe envelope is malformed.")};
+        }
+        return envelope;
+    } catch (...) {
+        return util::Error{Untranslated("Private-bundle fee-bump recipe envelope is malformed.")};
+    }
+}
+
+util::Result<std::vector<unsigned char>> EncryptPrivateBumpPayload(const CKeyingMaterial& master_key,
+                                                                  const uint256& txid,
+                                                                  Span<const unsigned char> payload,
+                                                                  std::array<unsigned char, PRIVATE_BUMP_TAG_SIZE>& tag)
+{
+    if (master_key.empty() || payload.empty() || payload.size() > MAX_PRIVATE_BUMP_ENVELOPE_SIZE) {
+        return util::Error{Untranslated("Unable to encrypt private-bundle fee-bump metadata.")};
+    }
+    CKeyingMaterial plaintext(payload.begin(), payload.end());
+    std::vector<unsigned char> ciphertext;
+    const bool encrypted{EncryptSecret(master_key, plaintext, PrivateBumpEncryptionIV(txid), ciphertext)};
+    Cleanse(plaintext);
+    if (!encrypted || ciphertext.empty() || ciphertext.size() > MAX_PRIVATE_BUMP_ENVELOPE_SIZE) {
+        Cleanse(ciphertext);
+        return util::Error{Untranslated("Unable to encrypt private-bundle fee-bump metadata.")};
+    }
+    tag = PrivateBumpTag(master_key, txid, ciphertext);
+    return ciphertext;
+}
+
+util::Result<std::vector<unsigned char>> DecryptPrivateBumpPayload(const CKeyingMaterial& master_key,
+                                                                  const uint256& txid,
+                                                                  const PrivateBumpEnvelope& envelope)
+{
+    if (master_key.empty() || envelope.protection != PRIVATE_BUMP_ENCRYPTED) {
+        return util::Error{Untranslated("Wallet is locked; private fee-bump metadata is unavailable.")};
+    }
+    const auto expected_tag{PrivateBumpTag(master_key, txid, envelope.payload)};
+    if (!TimingResistantEqual(expected_tag, envelope.tag)) {
+        return util::Error{Untranslated("Private-bundle fee-bump recipe authentication failed.")};
+    }
+    CKeyingMaterial plaintext;
+    if (!DecryptSecret(master_key, envelope.payload, PrivateBumpEncryptionIV(txid), plaintext) ||
+        plaintext.empty() || plaintext.size() > MAX_PRIVATE_BUMP_ENVELOPE_SIZE) {
+        Cleanse(plaintext);
+        return util::Error{Untranslated("Private-bundle fee-bump recipe decryption failed.")};
+    }
+    std::vector<unsigned char> result(plaintext.begin(), plaintext.end());
+    Cleanse(plaintext);
+    return result;
+}
+
+util::Result<PrivateBumpRecipe> DecodePrivateBumpRecipe(Span<const unsigned char> payload, const uint256& expected_txid)
+{
+    if (payload.empty() || payload.size() > MAX_PRIVATE_BUMP_ENVELOPE_SIZE) {
+        return util::Error{Untranslated("Private-bundle fee-bump recipe is malformed.")};
+    }
+    try {
+        SpanReader stream{payload};
+        uint8_t version;
+        uint256 txid;
+        uint8_t source;
+        stream >> version >> txid >> source;
+        if (version != PRIVATE_BUMP_RECIPE_VERSION || txid != expected_txid) {
+            return util::Error{Untranslated("Private-bundle fee-bump recipe is malformed.")};
+        }
+
+        PrivateBumpRecipe recipe;
+        if (source == static_cast<uint8_t>(CCoinControl::PrivateTxSource::TRANSPARENT_COINS)) {
+            recipe.source = CCoinControl::PrivateTxSource::TRANSPARENT_COINS;
+        } else if (source == static_cast<uint8_t>(CCoinControl::PrivateTxSource::PRIVATE_NOTES)) {
+            recipe.source = CCoinControl::PrivateTxSource::PRIVATE_NOTES;
+        } else {
+            return util::Error{Untranslated("Private-bundle fee-bump recipe has an unknown source policy.")};
+        }
+
+        const uint64_t recipient_count{ReadCompactSize(stream)};
+        if (recipient_count == 0 || recipient_count > MAX_PRIVATE_BUMP_RECIPIENTS) {
+            return util::Error{Untranslated("Private-bundle fee-bump recipe is malformed.")};
+        }
+        recipe.recipients.reserve(recipient_count);
+        CAmount total{0};
+        for (uint64_t i{0}; i < recipient_count; ++i) {
+            uint8_t kind;
+            stream >> kind;
+            const uint64_t destination_size{ReadCompactSize(stream)};
+            if (destination_size == 0 || destination_size > MAX_PRIVATE_BUMP_DESTINATION_SIZE || destination_size > stream.size()) {
+                return util::Error{Untranslated("Private-bundle fee-bump recipe contains an invalid address.")};
+            }
+            std::vector<unsigned char> destination(destination_size);
+            stream.read(MakeWritableByteSpan(destination));
+            CAmount amount;
+            uint8_t subtract_fee;
+            stream >> amount >> subtract_fee;
+            if (!MoneyRange(amount) || amount <= 0 || subtract_fee > 1 || !MoneyRange(total + amount)) {
+                return util::Error{Untranslated("Private-bundle fee-bump recipe contains an invalid recipient amount.")};
+            }
+            total += amount;
+            if (kind == PRIVATE_BUMP_ORCHARD_RECIPIENT) {
+                if (destination.size() != NITO_ORCHARD_RAW_ADDRESS_SIZE) {
+                    return util::Error{Untranslated("Private-bundle fee-bump recipe contains an invalid private address.")};
+                }
+                std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> raw{};
+                std::memcpy(raw.data(), destination.data(), raw.size());
+                recipe.recipients.emplace_back(CRecipient{CNoDestination{}, amount, subtract_fee != 0, raw});
+            } else if (kind == PRIVATE_BUMP_TRANSPARENT_RECIPIENT) {
+                const std::string address{destination.begin(), destination.end()};
+                CTxDestination dest{DecodeDestination(address)};
+                if (!IsValidDestination(dest)) {
+                    return util::Error{Untranslated("Private-bundle fee-bump recipe contains an invalid transparent address.")};
+                }
+                recipe.recipients.emplace_back(CRecipient{dest, amount, subtract_fee != 0});
+            } else {
+                return util::Error{Untranslated("Private-bundle fee-bump recipe contains an unknown recipient type.")};
+            }
+        }
+        const uint64_t note_count{ReadCompactSize(stream)};
+        if (note_count > MAX_PRIVATE_ORCHARD_ACTIONS || note_count > stream.size() / uint256::size()) {
+            return util::Error{Untranslated("Private-bundle fee-bump recipe contains too many private note ids.")};
+        }
+        recipe.private_note_ids.reserve(note_count);
+        for (uint64_t i{0}; i < note_count; ++i) {
+            uint256 cmx;
+            stream >> cmx;
+            if (cmx.IsNull() || std::find(recipe.private_note_ids.begin(), recipe.private_note_ids.end(), cmx) != recipe.private_note_ids.end()) {
+                return util::Error{Untranslated("Private-bundle fee-bump recipe contains an invalid or duplicate private note id.")};
+            }
+            recipe.private_note_ids.push_back(cmx);
+        }
+        if (!stream.empty()) {
+            return util::Error{Untranslated("Private-bundle fee-bump recipe is malformed.")};
+        }
+        return recipe;
+    } catch (...) {
+        return util::Error{Untranslated("Private-bundle fee-bump recipe is malformed.")};
+    }
+}
+
+std::vector<unsigned char> EncodePrivateBumpRecipe(const uint256& txid, const PrivateBumpRecipe& recipe)
+{
+    PrivateBumpWireRecipe wire;
+    wire.txid = txid;
+    wire.source = static_cast<uint8_t>(recipe.source);
+    wire.private_note_ids = recipe.private_note_ids;
+    for (const CRecipient& recipient : recipe.recipients) {
+        PrivateBumpWireRecipient wire_recipient;
+        wire_recipient.amount = recipient.nAmount;
+        wire_recipient.subtract_fee = recipient.fSubtractFeeFromAmount ? 1 : 0;
+        if (recipient.IsPrivate()) {
+            wire_recipient.kind = PRIVATE_BUMP_ORCHARD_RECIPIENT;
+            wire_recipient.destination.assign(recipient.private_raw_address->begin(), recipient.private_raw_address->end());
+        } else {
+            wire_recipient.kind = PRIVATE_BUMP_TRANSPARENT_RECIPIENT;
+            const std::string address{EncodeDestination(recipient.dest)};
+            wire_recipient.destination.assign(address.begin(), address.end());
+        }
+        wire.recipients.push_back(std::move(wire_recipient));
+    }
+    DataStream stream;
+    stream << wire;
+    std::vector<unsigned char> encoded{UCharCast(stream.data()), UCharCast(stream.data()) + stream.size()};
+    if (!stream.empty()) memory_cleanse(stream.data(), stream.size());
+    return encoded;
+}
+
+util::Result<void> StorePrivateBumpRecipe(const CWallet& wallet,
+                                          const uint256& txid,
+                                          mapValue_t& map_value,
+                                          const PrivateBumpRecipe& recipe)
+{
+    PrivateBumpEnvelope envelope;
+    envelope.payload = EncodePrivateBumpRecipe(txid, recipe);
+    if (wallet.IsCrypted()) {
+        if (wallet.IsLocked()) {
+            Cleanse(envelope.payload);
+            return util::Error{Untranslated("Wallet is locked; private fee-bump metadata cannot be saved.")};
+        }
+        envelope.protection = PRIVATE_BUMP_ENCRYPTED;
+        util::Result<std::vector<unsigned char>> encrypted{util::Error{Untranslated("Unable to access the wallet encryption key.")}};
+        wallet.WithEncryptionKey([&](const CKeyingMaterial& master_key) {
+            encrypted = EncryptPrivateBumpPayload(master_key, txid, envelope.payload, envelope.tag);
+            return static_cast<bool>(encrypted);
+        });
+        Cleanse(envelope.payload);
+        if (!encrypted) return util::Error{util::ErrorString(encrypted)};
+        envelope.payload = std::move(*encrypted);
+    }
+    EraseUnsupportedPrivateBumpMetadata(map_value);
+    map_value[std::string{PRIVATE_BUMP_RECIPE_KEY}] = EncodePrivateBumpEnvelope(envelope);
+    Cleanse(envelope.payload);
+    return {};
+}
+} // namespace
+
 //! Check whether transaction has descendant in wallet or mempool, or has been
 //! mined, or conflicts with a mined transaction. Return a feebumper::Result.
 static feebumper::Result PreconditionChecks(const CWallet& wallet, const CWalletTx& wtx, bool require_mine, std::vector<bilingual_str>& errors) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
@@ -40,7 +390,7 @@ static feebumper::Result PreconditionChecks(const CWallet& wallet, const CWallet
         return feebumper::Result::WALLET_ERROR;
     }
 
-    if (!SignalsOptInRBF(*wtx.tx)) {
+    if (!SignalsOptInRBF(*wtx.tx) && wtx.tx->nVersion != 3) {
         errors.push_back(Untranslated("Transaction is not BIP 125 replaceable"));
         return feebumper::Result::WALLET_ERROR;
     }
@@ -149,6 +499,273 @@ static CFeeRate EstimateFeeRate(const CWallet& wallet, const CWalletTx& wtx, con
     return std::max(feerate, min_feerate);
 }
 
+static util::Result<PrivateBumpRecipe> LoadPrivateBumpRecipe(const CWallet& wallet, const CWalletTx& wtx)
+{
+    const auto recipe_it = wtx.mapValue.find(std::string{PRIVATE_BUMP_RECIPE_KEY});
+    if (recipe_it == wtx.mapValue.end()) {
+        return util::Error{Untranslated("This private-bundle transaction does not contain wallet-local recipient metadata required for fee bumping.")};
+    }
+    auto envelope{DecodePrivateBumpEnvelope(recipe_it->second)};
+    if (!envelope) return util::Error{util::ErrorString(envelope)};
+
+    std::vector<unsigned char> plaintext;
+    if (wallet.IsCrypted()) {
+        if (envelope->protection != PRIVATE_BUMP_ENCRYPTED || wallet.IsLocked()) {
+            return util::Error{Untranslated("Wallet is locked or private fee-bump metadata is not encrypted.")};
+        }
+        util::Result<std::vector<unsigned char>> decrypted{util::Error{Untranslated("Unable to access the wallet encryption key.")}};
+        wallet.WithEncryptionKey([&](const CKeyingMaterial& master_key) {
+            decrypted = DecryptPrivateBumpPayload(master_key, wtx.GetHash(), *envelope);
+            return static_cast<bool>(decrypted);
+        });
+        if (!decrypted) return util::Error{util::ErrorString(decrypted)};
+        plaintext = std::move(*decrypted);
+    } else {
+        if (envelope->protection != PRIVATE_BUMP_PLAINTEXT) {
+            return util::Error{Untranslated("Private-bundle fee-bump metadata uses an unavailable encryption key.")};
+        }
+        plaintext = envelope->payload;
+    }
+
+    auto recipe{DecodePrivateBumpRecipe(plaintext, wtx.GetHash())};
+    Cleanse(plaintext);
+    if (!recipe) return util::Error{util::ErrorString(recipe)};
+
+    if (recipe->source == CCoinControl::PrivateTxSource::PRIVATE_NOTES && !recipe->private_note_ids.empty()) {
+        if (!wtx.tx->m_private_bundle) {
+            return util::Error{Untranslated("Private-bundle fee-bump recipe references notes without a private bundle.")};
+        }
+        std::vector<uint256> original_note_ids;
+        for (const auto& action : wtx.tx->m_private_bundle->effects.actions) {
+            const auto note_it{std::find_if(wallet.mapPrivateNotes.begin(), wallet.mapPrivateNotes.end(),
+                [&](const auto& item) { return !item.second.nullifier.IsNull() && item.second.nullifier == action.nullifier; })};
+            if (note_it != wallet.mapPrivateNotes.end()) {
+                original_note_ids.push_back(note_it->first);
+            }
+        }
+        if (original_note_ids.size() != recipe->private_note_ids.size() ||
+            std::any_of(recipe->private_note_ids.begin(), recipe->private_note_ids.end(), [&](const uint256& cmx) {
+                return std::find(original_note_ids.begin(), original_note_ids.end(), cmx) == original_note_ids.end();
+            })) {
+            return util::Error{Untranslated("Private-bundle fee-bump recipe does not match the notes spent by the original transaction.")};
+        }
+    }
+    return recipe;
+}
+
+util::Result<void> feebumper::AddPrivateBumpMetadata(const CWallet& wallet,
+                                                     const uint256& txid,
+                                                     mapValue_t& map_value,
+                                                     const CCoinControl& coin_control,
+                                                     const std::vector<CRecipient>& recipients,
+                                                     const std::vector<uint256>& private_note_ids)
+{
+    LOCK(wallet.cs_wallet);
+    PrivateBumpRecipe recipe;
+    switch (coin_control.m_private_tx_source) {
+    case CCoinControl::PrivateTxSource::TRANSPARENT_COINS:
+        recipe.source = CCoinControl::PrivateTxSource::TRANSPARENT_COINS;
+        break;
+    case CCoinControl::PrivateTxSource::PRIVATE_NOTES:
+        recipe.source = CCoinControl::PrivateTxSource::PRIVATE_NOTES;
+        break;
+    case CCoinControl::PrivateTxSource::AUTO:
+        recipe.source = std::any_of(recipients.begin(), recipients.end(), [](const CRecipient& recipient) {
+            return recipient.IsPrivate();
+        }) ? CCoinControl::PrivateTxSource::TRANSPARENT_COINS : CCoinControl::PrivateTxSource::PRIVATE_NOTES;
+        break;
+    }
+    recipe.recipients = recipients;
+    recipe.private_note_ids = private_note_ids;
+    std::vector<unsigned char> payload{EncodePrivateBumpRecipe(txid, recipe)};
+    auto valid{DecodePrivateBumpRecipe(payload, txid)};
+    Cleanse(payload);
+    if (!valid) return util::Error{util::ErrorString(valid)};
+    return StorePrivateBumpRecipe(wallet, txid, map_value, recipe);
+}
+
+util::Result<bool> feebumper::EncryptPrivateBumpMetadata(const CKeyingMaterial& master_key,
+                                                         const uint256& txid,
+                                                         mapValue_t& map_value)
+{
+    mapValue_t updated{map_value};
+    bool changed{false};
+    for (const std::string_view key : {PRIVATE_BUMP_SOURCE_KEY, PRIVATE_BUMP_RECIPIENTS_KEY, PRIVATE_BUMP_NOTES_KEY}) {
+        changed |= updated.erase(std::string{key}) != 0;
+    }
+    const auto recipe_it{updated.find(std::string{PRIVATE_BUMP_RECIPE_KEY})};
+    if (recipe_it == updated.end()) {
+        if (changed) map_value = std::move(updated);
+        return changed;
+    }
+
+    auto envelope{DecodePrivateBumpEnvelope(recipe_it->second)};
+    if (!envelope || envelope->protection != PRIVATE_BUMP_PLAINTEXT) {
+        updated.erase(recipe_it);
+        map_value = std::move(updated);
+        return true;
+    }
+    auto recipe{DecodePrivateBumpRecipe(envelope->payload, txid)};
+    if (!recipe) {
+        Cleanse(envelope->payload);
+        updated.erase(recipe_it);
+        map_value = std::move(updated);
+        return true;
+    }
+    PrivateBumpEnvelope protected_envelope;
+    protected_envelope.protection = PRIVATE_BUMP_ENCRYPTED;
+    auto encrypted{EncryptPrivateBumpPayload(master_key, txid, envelope->payload, protected_envelope.tag)};
+    Cleanse(envelope->payload);
+    if (!encrypted) return util::Error{util::ErrorString(encrypted)};
+    protected_envelope.payload = std::move(*encrypted);
+    recipe_it->second = EncodePrivateBumpEnvelope(protected_envelope);
+    Cleanse(protected_envelope.payload);
+    map_value = std::move(updated);
+    return true;
+}
+
+util::Result<void> feebumper::RebindPrivateBumpMetadata(const CWallet& wallet,
+                                                        const CWalletTx& old_wtx,
+                                                        const uint256& replacement_txid,
+                                                        mapValue_t& map_value)
+{
+    LOCK(wallet.cs_wallet);
+    auto recipe{LoadPrivateBumpRecipe(wallet, old_wtx)};
+    if (!recipe) return util::Error{util::ErrorString(recipe)};
+    mapValue_t rebound{map_value};
+    rebound.erase(std::string{PRIVATE_BUMP_RECIPE_KEY});
+    auto stored{StorePrivateBumpRecipe(wallet, replacement_txid, rebound, *recipe)};
+    if (!stored) return util::Error{util::ErrorString(stored)};
+    map_value = std::move(rebound);
+    return {};
+}
+
+static feebumper::Result CreatePrivateRateBumpTransaction(CWallet& wallet,
+                                                          const CWalletTx& wtx,
+                                                          const CCoinControl& coin_control,
+                                                          std::vector<bilingual_str>& errors,
+                                                          CAmount& old_fee,
+                                                          CAmount& new_fee,
+                                                          CMutableTransaction& mtx,
+                                                          bool require_mine,
+                                                          const std::vector<CTxOut>& outputs,
+                                                          std::optional<uint32_t> original_change_index,
+                                                          std::vector<PSBTProprietary>* private_psbt_records) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    if (!outputs.empty() || original_change_index.has_value()) {
+        errors.push_back(Untranslated("Private-bundle fee bumping rebuilds the original private recipient set; custom replacement outputs and original_change_index are not supported."));
+        return feebumper::Result::INVALID_PARAMETER;
+    }
+
+    const auto recipe_res = LoadPrivateBumpRecipe(wallet, wtx);
+    if (!recipe_res) {
+        errors.push_back(util::ErrorString(recipe_res));
+        return feebumper::Result::WALLET_ERROR;
+    }
+    const PrivateBumpRecipe& recipe = *recipe_res;
+
+    feebumper::Result result = PreconditionChecks(wallet, wtx, /*require_mine=*/false, errors);
+    if (result != feebumper::Result::OK) {
+        return result;
+    }
+
+    old_fee = CachedTxGetFee(wallet, wtx, ISMINE_SPENDABLE);
+
+    CCoinControl new_coin_control(coin_control);
+    new_coin_control.m_private_tx_source = recipe.source;
+    new_coin_control.m_min_depth = 1;
+    new_coin_control.m_signal_bip125_rbf = true;
+    if (!new_coin_control.m_feerate) {
+        new_coin_control.m_feerate = EstimateFeeRate(wallet, wtx, old_fee, new_coin_control);
+    }
+
+    if (recipe.source == CCoinControl::PrivateTxSource::PRIVATE_NOTES) {
+        if (!wtx.tx->m_private_bundle) {
+            errors.push_back(Untranslated("Private-bundle fee-bump metadata requests private-note funding but the transaction has no private bundle."));
+            return feebumper::Result::WALLET_ERROR;
+        }
+        size_t selected_notes{0};
+        if (!recipe.private_note_ids.empty()) {
+            for (const uint256& cmx : recipe.private_note_ids) {
+                if (!wallet.mapPrivateNotes.contains(cmx)) {
+                    errors.push_back(Untranslated("The wallet cannot find the private note spent by the transaction being bumped."));
+                    return feebumper::Result::WALLET_ERROR;
+                }
+                new_coin_control.SelectPrivateNote(cmx);
+                ++selected_notes;
+            }
+        } else {
+            for (const auto& action : wtx.tx->m_private_bundle->effects.actions) {
+                if (action.nullifier.IsNull()) continue;
+                bool selected{false};
+                for (const auto& [cmx, note] : wallet.mapPrivateNotes) {
+                    if (note.nullifier == action.nullifier) {
+                        new_coin_control.SelectPrivateNote(cmx);
+                        selected = true;
+                        ++selected_notes;
+                        break;
+                    }
+                }
+                if (!selected) {
+                    errors.push_back(Untranslated("The wallet cannot find the private note spent by the transaction being bumped."));
+                    return feebumper::Result::WALLET_ERROR;
+                }
+            }
+        }
+        if (selected_notes == 0) {
+            errors.push_back(Untranslated("Private-bundle fee-bump metadata requests private-note funding but the transaction spends no private note."));
+            return feebumper::Result::WALLET_ERROR;
+        }
+        new_coin_control.m_allow_other_inputs = false;
+        new_coin_control.m_allow_spent_private_note_replacement = true;
+    } else {
+        std::map<COutPoint, Coin> coins;
+        for (const CTxIn& txin : wtx.tx->vin) {
+            coins[txin.prevout];
+        }
+        wallet.chain().findCoins(coins);
+        for (const CTxIn& txin : wtx.tx->vin) {
+            const Coin& coin = coins.at(txin.prevout);
+            if (coin.out.IsNull()) {
+                errors.push_back(Untranslated(strprintf("%s:%u is already spent", txin.prevout.hash.GetHex(), txin.prevout.n)));
+                return feebumper::Result::MISC_ERROR;
+            }
+            PreselectedInput& preset_txin = new_coin_control.Select(txin.prevout);
+            if (!wallet.IsMine(txin.prevout)) {
+                preset_txin.SetTxOut(coin.out);
+            }
+        }
+        new_coin_control.m_allow_other_inputs = true;
+    }
+
+    auto txr_res = CreateTransaction(wallet, recipe.recipients, /*change_pos=*/std::nullopt, new_coin_control, require_mine);
+    if (!txr_res) {
+        errors.push_back(Untranslated("Unable to create private fee-bump transaction.") + Untranslated(" ") + util::ErrorString(txr_res));
+        return feebumper::Result::WALLET_ERROR;
+    }
+    const CreatedTransactionResult& txr = *txr_res;
+    new_fee = txr.fee;
+
+    const CFeeRate incrementalRelayFee = std::max(wallet.chain().relayIncrementalFee(), CFeeRate(WALLET_INCREMENTAL_RELAY_FEE));
+    const CAmount min_total_fee = old_fee + incrementalRelayFee.GetFee(GetVirtualTransactionSize(*txr.tx));
+    if (new_fee < min_total_fee) {
+        errors.push_back(strprintf(Untranslated("Insufficient total fee %s, must be at least %s (oldFee %s + incrementalFee %s)"),
+            FormatMoney(new_fee), FormatMoney(min_total_fee), FormatMoney(old_fee), FormatMoney(incrementalRelayFee.GetFee(GetVirtualTransactionSize(*txr.tx)))));
+        return feebumper::Result::INVALID_PARAMETER;
+    }
+    if (new_fee > wallet.m_default_max_tx_fee) {
+        errors.push_back(strprintf(Untranslated("Specified or calculated fee %s is too high (cannot be higher than -maxtxfee %s)"),
+            FormatMoney(new_fee), FormatMoney(wallet.m_default_max_tx_fee)));
+        return feebumper::Result::WALLET_ERROR;
+    }
+
+    mtx = CMutableTransaction(*txr.tx);
+    if (private_psbt_records) {
+        *private_psbt_records = txr.private_psbt_records;
+    }
+    return feebumper::Result::OK;
+}
+
 namespace feebumper {
 
 bool TransactionCanBeBumped(const CWallet& wallet, const uint256& txid)
@@ -158,12 +775,25 @@ bool TransactionCanBeBumped(const CWallet& wallet, const uint256& txid)
     if (wtx == nullptr) return false;
 
     std::vector<bilingual_str> errors_dummy;
-    feebumper::Result res = PreconditionChecks(wallet, *wtx, /* require_mine=*/ true, errors_dummy);
+    if (wtx->tx->HasPrivateBundle()) {
+        if (wallet.IsLocked()) {
+            // Eligibility can be displayed while locked. Replacement creation
+            // authenticates and decrypts the recipe after the wallet is unlocked.
+            const auto metadata = wtx->mapValue.find(std::string{PRIVATE_BUMP_RECIPE_KEY});
+            if (metadata == wtx->mapValue.end()) return false;
+            const auto envelope = DecodePrivateBumpEnvelope(metadata->second);
+            if (!envelope || envelope->protection != PRIVATE_BUMP_ENCRYPTED) return false;
+        } else if (!LoadPrivateBumpRecipe(wallet, *wtx)) {
+            return false;
+        }
+    }
+    feebumper::Result res = PreconditionChecks(wallet, *wtx, /*require_mine=*/!wtx->tx->HasPrivateBundle(), errors_dummy);
     return res == feebumper::Result::OK;
 }
 
 Result CreateRateBumpTransaction(CWallet& wallet, const uint256& txid, const CCoinControl& coin_control, std::vector<bilingual_str>& errors,
-                                 CAmount& old_fee, CAmount& new_fee, CMutableTransaction& mtx, bool require_mine, const std::vector<CTxOut>& outputs, std::optional<uint32_t> original_change_index)
+                                 CAmount& old_fee, CAmount& new_fee, CMutableTransaction& mtx, bool require_mine, const std::vector<CTxOut>& outputs,
+                                 std::optional<uint32_t> original_change_index, std::vector<PSBTProprietary>* private_psbt_records)
 {
     // For now, cannot specify both new outputs to use and an output index to send change
     if (!outputs.empty() && original_change_index.has_value()) {
@@ -182,6 +812,9 @@ Result CreateRateBumpTransaction(CWallet& wallet, const uint256& txid, const CCo
         return Result::INVALID_ADDRESS_OR_KEY;
     }
     const CWalletTx& wtx = it->second;
+    if (wtx.tx->HasPrivateBundle()) {
+        return CreatePrivateRateBumpTransaction(wallet, wtx, coin_control, errors, old_fee, new_fee, mtx, require_mine, outputs, original_change_index, private_psbt_records);
+    }
 
     // Make sure that original_change_index is valid
     if (original_change_index.has_value() && original_change_index.value() >= wtx.tx->vout.size()) {
@@ -375,9 +1008,20 @@ Result CommitTransaction(CWallet& wallet, const uint256& txid, CMutableTransacti
     // commit/broadcast the tx
     CTransactionRef tx = MakeTransactionRef(std::move(mtx));
     mapValue_t mapValue = oldWtx.mapValue;
+    if (oldWtx.tx->HasPrivateBundle()) {
+        auto rebound{RebindPrivateBumpMetadata(wallet, oldWtx, tx->GetHash(), mapValue)};
+        if (!rebound) {
+            errors.push_back(util::ErrorString(rebound));
+            return Result::WALLET_ERROR;
+        }
+    }
     mapValue["replaces_txid"] = oldWtx.GetHash().ToString();
 
-    wallet.CommitTransaction(tx, std::move(mapValue), oldWtx.vOrderForm);
+    auto commit_result = wallet.CommitTransaction(tx, std::move(mapValue), oldWtx.vOrderForm);
+    if (!commit_result) {
+        errors.push_back(util::ErrorString(commit_result));
+        return Result::MISC_ERROR;
+    }
 
     // mark the original tx as bumped
     bumped_txid = tx->GetHash();

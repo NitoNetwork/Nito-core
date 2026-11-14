@@ -1,0 +1,9 @@
+--- a/qtbase/src/network/access/qhttpheaders.cpp
++++ b/qtbase/src/network/access/qhttpheaders.cpp
+@@ -719,1 +719,1 @@ struct HeaderName
+-        if (result != indexesEnd && name == headerNames[*result])
++        if (result != indexesEnd && name == headerNames.viewAt(*result))
+@@ -1447,1 +1447,2 @@ QByteArrayView QHttpHeaders::wellKnownHeaderName(WellKnownHeader name) noexcept
+-    return headerNames[qToUnderlying(name)];
++    const int index = qBound(0, int(qToUnderlying(name)), headerNames.count());
++    return index < headerNames.count() ? headerNames.viewAt(index) : QByteArrayView{};

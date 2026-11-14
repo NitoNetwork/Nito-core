@@ -5,13 +5,29 @@
 
 #include <qt/test/uritests.h>
 
+#include <chainparams.h>
+#include <private/private_address.h>
 #include <qt/guiutil.h>
+#include <qt/nitoaddressvalidator.h>
 #include <qt/walletmodel.h>
+
+#include <array>
 
 #include <QUrl>
 
 void URITests::uriTests()
 {
+    {
+        std::array<unsigned char, NITO_ORCHARD_RAW_ADDRESS_SIZE> raw_private{};
+        raw_private.fill(0x42);
+        QString private_address = QString::fromStdString(wallet::EncodeNitoPrivateAddress(raw_private, Params()));
+        int pos = 0;
+        NitoAddressCheckValidator validator(nullptr);
+        QVERIFY(validator.validate(private_address, pos) == QValidator::Acceptable);
+        private_address.replace(private_address.size() - 1, 1, private_address.endsWith("q") ? "p" : "q");
+        QVERIFY(validator.validate(private_address, pos) == QValidator::Invalid);
+    }
+
     SendCoinsRecipient rv;
     QUrl uri;
     uri.setUrl(QString("nito:175tWpb8K1S7NmH4Zx6rewF9WQrcZv245W?req-dontexist="));

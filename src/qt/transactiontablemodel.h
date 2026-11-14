@@ -75,6 +75,8 @@ public:
         StatusRole,
         /** Unprocessed icon */
         RawDecorationRole,
+        /** Transaction details with the transparent input address list expanded. */
+        ExpandedInputAddressesRole,
     };
 
     int rowCount(const QModelIndex &parent) const override;
@@ -83,6 +85,10 @@ public:
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
     QModelIndex index(int row, int column, const QModelIndex & parent = QModelIndex()) const override;
     bool processingQueuedTransactions() const { return fProcessingQueuedTransactions; }
+
+Q_SIGNALS:
+    /** Emitted when a wallet transaction is first inserted, but not when existing rows are rebuilt. */
+    void transactionInserted(const QModelIndex& parent, int start, int end);
 
 private:
     WalletModel *walletModel;
@@ -111,6 +117,7 @@ private:
 public Q_SLOTS:
     /* New transaction, or transaction changed status */
     void updateTransaction(const QString &hash, int status, bool showTransaction);
+    void refreshWallet();
     void updateConfirmations();
     void updateDisplayUnit();
     /** Updates the column title to "Amount (DisplayUnit)" and emits headerDataChanged() signal for table headers to react. */

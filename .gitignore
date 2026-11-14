@@ -1,5 +1,7 @@
 *.tar.gz
 
+src/private/orchard_ffi/target/
+
 *.exe
 *.pdb
 src/nito
@@ -81,6 +83,7 @@ src/qt/nito-qt.includes
 
 # Only ignore unexpected patches
 *.patch
+!build_msvc/vcpkg-ports/**/*.patch
 !contrib/guix/patches/*.patch
 !depends/patches/**/*.patch
 
@@ -92,6 +95,9 @@ src/qt/nito-qt.includes
 *.qm
 Makefile
 !depends/Makefile
+!src/qt/Makefile
+!src/qt/test/Makefile
+!src/test/Makefile
 src/qt/nito-qt
 Nito-Qt.app
 
@@ -150,3 +156,11 @@ dist/
 /guix-build-*
 
 /ci/scratch/
+
+# Local runtime and build artifacts.
+/%TEMP%/
+*.pid
+/address
+/test_temp_b2_red/
+_diagnostics_macos/
+/src/*.exe

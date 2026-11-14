@@ -9,11 +9,14 @@
 #include <blockfilter.h>
 #include <common/settings.h>
 #include <primitives/transaction.h> // For CTransactionRef
+#include <script/script.h>
 #include <util/result.h>
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stddef.h>
 #include <stdint.h>
 #include <string>
@@ -46,6 +49,24 @@ class Wallet;
 struct BlockKey {
     uint256 hash;
     int height = -1;
+};
+
+//! Compact private-bundle transaction data found by the local Orchard index.
+struct OrchardIndexedTransaction {
+    int block_position{-1};
+    uint256 txid;
+    uint256 effects_hash;
+    CPrivateCompactEffects effects;
+};
+
+//! Public transparent script history event found by the local transparent history index.
+struct TransparentHistoryEntry {
+    int block_position{-1};
+    uint32_t io_index{0};
+    bool spend{false};
+    CAmount amount{0};
+    uint256 txid;
+    BlockKey block;
 };
 
 //! Helper for findBlock to selectively return pieces of block data. If block is
@@ -108,7 +129,7 @@ struct BlockInfo {
 //! * The initMessages() and showProgress() methods which the wallet uses to send
 //!   notifications to the GUI should go away when GUI and wallet can directly
 //!   communicate with each other without going through the node
-//!   (https://github.com/nito/nito/pull/15288#discussion_r253321096).
+//!   (https://github.com/bitcoin/bitcoin/pull/15288#discussion_r253321096).
 //!
 //! * The handleRpc, registerRpcs, rpcEnableDeprecated methods and other RPC
 //!   methods can go away if wallets listen for HTTP requests on their own
@@ -120,7 +141,7 @@ struct BlockInfo {
 //!
 //! * `guessVerificationProgress` and similar methods can go away if rescan
 //!   logic moves out of the wallet, and the wallet just requests scans from the
-//!   node (https://github.com/nito/nito/issues/11756)
+//!   node (https://github.com/bitcoin/bitcoin/issues/11756)
 class Chain
 {
 public:
@@ -133,6 +154,18 @@ public:
 
     //! Get block hash. Height must be valid or this function will abort.
     virtual uint256 getBlockHash(int height) = 0;
+
+    //! Return the current v4 private commitment tree root and commitment count.
+    virtual bool getPrivateChainState(uint256& root, uint64_t& commitment_count) = 0;
+
+    //! Return the current v4 private commitment tree position for one note commitment.
+    virtual bool getPrivateCommitmentIndex(const uint256& commitment, uint64_t& commitment_index) = 0;
+
+    //! Return the current v4 private Merkle auth path for a commitment index.
+    virtual bool getPrivateAuthPath(uint64_t commitment_index, std::vector<uint256>& auth_path, uint256& root) = 0;
+
+    //! Return current v4 private Merkle auth paths for a non-empty set of commitment indexes.
+    virtual bool getPrivateAuthPaths(const std::vector<uint64_t>& commitment_indices, std::vector<std::vector<uint256>>& auth_paths, uint256& root) = 0;
 
     //! Check that the block is available on disk (i.e. has not been
     //! pruned), and contains transactions.
@@ -153,9 +186,58 @@ public:
     //! Returns whether a block filter index is available.
     virtual bool hasBlockFilterIndex(BlockFilterType filter_type) = 0;
 
+    //! Block until the block filter index has processed the current chain tip.
+    //! Returns false if the index is unavailable, disabled, or still catching up
+    //! from far behind.
+    virtual bool waitForBlockFilterIndexSynced(BlockFilterType filter_type) = 0;
+
+    //! Return the best height covered by a synced block filter index.
+    virtual std::optional<int> getSyncedBlockFilterIndexHeight(BlockFilterType filter_type) = 0;
+
     //! Returns whether any of the elements match the block via a BIP 157 block filter
     //! or std::nullopt if the block filter for this block couldn't be found.
     virtual std::optional<bool> blockFilterMatchesAny(BlockFilterType filter_type, const uint256& block_hash, const GCSFilter::ElementSet& filter_set) = 0;
+
+    //! Return active-chain blocks whose compact filters match any element in the
+    //! provided set, or std::nullopt if the filter index is unavailable or the
+    //! requested range is not fully indexed.
+    virtual std::optional<std::vector<BlockKey>> findBlockFilterMatches(BlockFilterType filter_type, int start_height, int stop_height, const GCSFilter::ElementSet& filter_set) = 0;
+
+    //! Return private-bundle transactions for a block from the local Orchard index,
+    //! or std::nullopt if the index is unavailable or has not reached the block.
+    virtual std::optional<std::vector<OrchardIndexedTransaction>> getOrchardBlockTransactions(const uint256& block_hash) = 0;
+    //! Hydrate an indexed Orchard transaction without relying on block files.
+    virtual CTransactionRef getOrchardTransaction(const uint256& block_hash, int32_t position) = 0;
+
+    //! Return transparent history events for scripts from the local transparent
+    //! history index, or std::nullopt if the index is unavailable or not synced
+    //! through stop_height.
+    virtual std::optional<std::vector<TransparentHistoryEntry>> getTransparentHistory(const std::set<CScript>& scripts, int start_height, int stop_height) = 0;
+
+    //! Returns whether the local transparent history index is available.
+    virtual bool hasTransparentHistoryIndex() = 0;
+
+    //! Return the best height currently covered by the transparent history
+    //! index, even if the index is still catching up.
+    virtual std::optional<int> getTransparentHistoryIndexHeight() = 0;
+
+    //! Return the best height covered by a synced transparent history index.
+    virtual std::optional<int> getSyncedTransparentHistoryIndexHeight() = 0;
+
+    //! Returns whether the local Orchard index is available.
+    virtual bool hasOrchardIndex() = 0;
+
+    //! Return the best height currently covered by the Orchard index, even if
+    //! the index is still catching up.
+    virtual std::optional<int> getOrchardIndexHeight() = 0;
+
+    //! Block until the Orchard index has processed the current chain tip.
+    //! Returns false if the index is unavailable, disabled, or still catching up
+    //! from far behind.
+    virtual bool waitForOrchardIndexSynced() = 0;
+
+    //! Return the best height covered by a synced Orchard index.
+    virtual std::optional<int> getSyncedOrchardIndexHeight() = 0;
 
     //! Return whether node has the block and optionally return block metadata
     //! or contents.
@@ -189,6 +271,17 @@ public:
     //! the current chain UTXO set. Iterates through all the keys in the map and
     //! populates the values.
     virtual void findCoins(std::map<COutPoint, Coin>& coins) = 0;
+
+    //! Resolve the inputs of a transaction from its locally stored block and
+    //! undo data. The block position and transaction ID are checked together.
+    //! Returns false when the data is unavailable (for example after pruning).
+    virtual bool findConfirmedTransactionInputs(const CTransaction& tx, const uint256& block_hash,
+                                               int position, std::vector<CTxOut>& inputs) = 0;
+
+    //! Scan the current chain UTXO set for exact scriptPubKey matches.
+    //! This is intentionally balance/current-coin discovery, not historical
+    //! transaction discovery. Matching coins are confirmed chain UTXOs.
+    virtual bool findCoinsByScriptPubKeys(const std::set<CScript>& scripts, std::map<COutPoint, Coin>& coins) = 0;
 
     //! Estimate fraction of total transactions verified if blocks up to
     //! the specified block hash are verified.

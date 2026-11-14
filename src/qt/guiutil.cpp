@@ -45,6 +45,7 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QDoubleValidator>
 #include <QFileDialog>
 #include <QFont>
@@ -61,7 +62,10 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPluginLoader>
+#include <QPoint>
 #include <QProgressDialog>
+#include <QPushButton>
+#include <QRect>
 #include <QRegularExpression>
 #include <QScreen>
 #include <QSettings>
@@ -72,6 +76,7 @@
 #include <QTextDocument> // for Qt::mightBeRichText
 #include <QThread>
 #include <QUrlQuery>
+#include <QWidget>
 #include <QtGlobal>
 
 #include <cassert>
@@ -135,7 +140,7 @@ void setupAddressWidget(QValidatedLineEdit *widget, QWidget *parent)
     widget->setFont(fixedPitchFont());
     // We don't want translators to use own addresses in translations
     // and this is the only place, where this address is supplied.
-    widget->setPlaceholderText(QObject::tr("Enter a Nito address (e.g. nito1qsd3slhjrfpks6twytesgj04vxecg5du0a83xdj)").arg(
+    widget->setPlaceholderText(QObject::tr("Enter a Nito address (e.g. %1)").arg(
         QString::fromStdString(DummyAddress(Params()))));
     widget->setValidator(new NitoAddressEntryValidator(parent));
     widget->setCheckValidator(new NitoAddressCheckValidator(parent));
@@ -905,6 +910,74 @@ void PolishProgressDialog(QProgressDialog* dialog)
     dialog->setMinimumDuration(0);
 }
 
+static QString StandardButtonText(QDialogButtonBox::StandardButton button)
+{
+    switch (button) {
+    case QDialogButtonBox::Ok:
+        return QCoreApplication::translate("GUIUtil", "OK");
+    case QDialogButtonBox::Cancel:
+        return QCoreApplication::translate("GUIUtil", "Cancel");
+    case QDialogButtonBox::Close:
+        return QCoreApplication::translate("GUIUtil", "Close");
+    case QDialogButtonBox::Yes:
+        return QCoreApplication::translate("GUIUtil", "Yes");
+    case QDialogButtonBox::No:
+        return QCoreApplication::translate("GUIUtil", "No");
+    default:
+        return {};
+    }
+}
+
+void PolishDialogButtonBox(QDialogButtonBox* button_box)
+{
+    if (!button_box) return;
+
+    for (const auto button : {
+             QDialogButtonBox::Ok,
+             QDialogButtonBox::Cancel,
+             QDialogButtonBox::Close,
+             QDialogButtonBox::Yes,
+             QDialogButtonBox::No,
+         }) {
+        if (QAbstractButton* widget = button_box->button(button)) {
+            const QString text = StandardButtonText(button);
+            if (!text.isEmpty()) widget->setText(text);
+        }
+    }
+}
+
+void PolishMessageBox(QMessageBox* message_box)
+{
+    if (!message_box) return;
+
+    auto set_button_text = [&](QMessageBox::StandardButton button, QDialogButtonBox::StandardButton dialog_button) {
+        if (QAbstractButton* widget = message_box->button(button)) {
+            const QString text = StandardButtonText(dialog_button);
+            if (!text.isEmpty()) widget->setText(text);
+        }
+    };
+
+    set_button_text(QMessageBox::Ok, QDialogButtonBox::Ok);
+    set_button_text(QMessageBox::Cancel, QDialogButtonBox::Cancel);
+    set_button_text(QMessageBox::Close, QDialogButtonBox::Close);
+    set_button_text(QMessageBox::Yes, QDialogButtonBox::Yes);
+    set_button_text(QMessageBox::No, QDialogButtonBox::No);
+}
+
+void CenterDialogOnParent(QWidget* dialog, QWidget* parent)
+{
+    if (!dialog || !parent) return;
+
+    QWidget* top_level_parent{parent->window()};
+    if (!top_level_parent) return;
+
+    dialog->adjustSize();
+    const QRect parent_geometry{top_level_parent->frameGeometry()};
+    const QRect dialog_geometry{dialog->frameGeometry()};
+    dialog->move(parent_geometry.center() -
+                 QPoint(dialog_geometry.width() / 2, dialog_geometry.height() / 2));
+}
+
 int TextWidth(const QFontMetrics& fm, const QString& text)
 {
     return fm.horizontalAdvance(text);
@@ -952,20 +1025,12 @@ void PopupMenu(QMenu* menu, const QPoint& point, QAction* at_action)
 
 QDateTime StartOfDay(const QDate& date)
 {
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
     return date.startOfDay();
-#else
-    return QDateTime(date);
-#endif
 }
 
 bool HasPixmap(const QLabel* label)
 {
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
     return !label->pixmap(Qt::ReturnByValue).isNull();
-#else
-    return label->pixmap() != nullptr;
-#endif
 }
 
 QImage GetImage(const QLabel* label)
@@ -974,11 +1039,7 @@ QImage GetImage(const QLabel* label)
         return QImage();
     }
 
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
     return label->pixmap(Qt::ReturnByValue).toImage();
-#else
-    return label->pixmap()->toImage();
-#endif
 }
 
 QString MakeHtmlLink(const QString& source, const QString& link)

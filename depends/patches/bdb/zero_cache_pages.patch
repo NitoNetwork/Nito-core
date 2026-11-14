@@ -1,0 +1,26 @@
+Clear complete newly allocated B-tree and hash pages. Header-only clearing
+can copy data from a previously used cache buffer into database slack space,
+including while rewriting an encrypted wallet.
+
+--- a/db/db.c
++++ b/db/db.c
+@@ -546,15 +546,13 @@
+ 	case DB_RECNO:
+ 		ftype = F_ISSET(dbp, DB_AM_SWAP | DB_AM_ENCRYPT | DB_AM_CHKSUM)
+ 		    ? DB_FTYPE_SET : DB_FTYPE_NOTSET;
+-		clear_len = CRYPTO_ON(env) ?
+-		    (dbp->pgsize != 0 ? dbp->pgsize : DB_CLEARLEN_NOTSET) :
+-		    DB_PAGE_DB_LEN;
++		clear_len = dbp->pgsize != 0 ?
++		    dbp->pgsize : DB_CLEARLEN_NOTSET;
+ 		break;
+ 	case DB_HASH:
+ 		ftype = DB_FTYPE_SET;
+-		clear_len = CRYPTO_ON(env) ?
+-		    (dbp->pgsize != 0 ? dbp->pgsize : DB_CLEARLEN_NOTSET) :
+-		    DB_PAGE_DB_LEN;
++		clear_len = dbp->pgsize != 0 ?
++		    dbp->pgsize : DB_CLEARLEN_NOTSET;
+ 		break;
+ 	case DB_QUEUE:
+ 		ftype = F_ISSET(dbp,

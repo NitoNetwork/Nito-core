@@ -19,6 +19,7 @@ from test_framework.authproxy import JSONRPCException
 class RpcMiscTest(NitoTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
+        self.extra_args = [["-txindex=0", "-coinstatsindex=0", "-blockfilterindex=0", "-orchardindex=0", "-transparenthistoryindex=0"]]
         self.supports_cli = False
 
     def run_test(self):
@@ -79,8 +80,9 @@ class RpcMiscTest(NitoTestFramework):
         # Without any indices running the RPC returns an empty object
         assert_equal(node.getindexinfo(), {})
 
-        # Restart the node with indices and wait for them to sync
-        self.restart_node(0, ["-txindex", "-blockfilterindex", "-coinstatsindex"])
+        # Restart the node with the default txindex, an explicit coinstats index,
+        # and an explicit block filter index, then wait for them to sync.
+        self.restart_node(0, ["-blockfilterindex", "-coinstatsindex=1", "-orchardindex=0"])
         self.wait_until(lambda: all(i["synced"] for i in node.getindexinfo().values()))
 
         # Returns a list of all running indices by default
@@ -91,10 +93,11 @@ class RpcMiscTest(NitoTestFramework):
                 "txindex": values,
                 "basic block filter index": values,
                 "coinstatsindex": values,
+                "transparenthistoryindex": values,
             }
         )
         # Specifying an index by name returns only the status of that index
-        for i in {"txindex", "basic block filter index", "coinstatsindex"}:
+        for i in {"txindex", "basic block filter index", "coinstatsindex", "transparenthistoryindex"}:
             assert_equal(node.getindexinfo(i), {i: values})
 
         # Specifying an unknown index name returns an empty result

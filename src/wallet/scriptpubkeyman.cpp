@@ -735,6 +735,12 @@ bool LegacyScriptPubKeyMan::AddKeyPubKeyWithDB(WalletBatch& batch, const CKey& s
     // Make sure we aren't adding private keys to private key disabled wallets
     assert(!m_storage.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS));
 
+    // A failed write must not leave an apparently usable key in the cache.
+    if (!m_storage.HasEncryptionKeys() &&
+        !batch.WriteKey(pubkey, secret.GetPrivKey(), mapKeyMetadata[pubkey.GetID()])) {
+        return false;
+    }
+
     // FillableSigningProvider has no concept of wallet databases, but calls AddCryptedKey
     // which is overridden below.  To avoid flushes, the database handle is
     // tunneled through to it.
@@ -760,11 +766,6 @@ bool LegacyScriptPubKeyMan::AddKeyPubKeyWithDB(WalletBatch& batch, const CKey& s
     }
 
     m_storage.UnsetBlankWalletFlag(batch);
-    if (!m_storage.HasEncryptionKeys()) {
-        return batch.WriteKey(pubkey,
-                                                 secret.GetPrivKey(),
-                                                 mapKeyMetadata[pubkey.GetID()]);
-    }
     return true;
 }
 
@@ -845,19 +846,15 @@ bool LegacyScriptPubKeyMan::AddCryptedKeyInner(const CPubKey &vchPubKey, const s
 bool LegacyScriptPubKeyMan::AddCryptedKey(const CPubKey &vchPubKey,
                             const std::vector<unsigned char> &vchCryptedSecret)
 {
-    if (!AddCryptedKeyInner(vchPubKey, vchCryptedSecret))
+    LOCK(cs_KeyStore);
+    const auto& metadata = mapKeyMetadata[vchPubKey.GetID()];
+    const bool stored = encrypted_batch
+        ? encrypted_batch->WriteCryptedKey(vchPubKey, vchCryptedSecret, metadata)
+        : WalletBatch(m_storage.GetDatabase()).WriteCryptedKey(vchPubKey, vchCryptedSecret, metadata);
+    if (!stored) {
         return false;
-    {
-        LOCK(cs_KeyStore);
-        if (encrypted_batch)
-            return encrypted_batch->WriteCryptedKey(vchPubKey,
-                                                        vchCryptedSecret,
-                                                        mapKeyMetadata[vchPubKey.GetID()]);
-        else
-            return WalletBatch(m_storage.GetDatabase()).WriteCryptedKey(vchPubKey,
-                                                            vchCryptedSecret,
-                                                            mapKeyMetadata[vchPubKey.GetID()]);
     }
+    return AddCryptedKeyInner(vchPubKey, vchCryptedSecret);
 }
 
 bool LegacyScriptPubKeyMan::HaveWatchOnly(const CScript &dest) const
@@ -1180,7 +1177,10 @@ bool LegacyScriptPubKeyMan::CanGenerateKeys() const
 {
     // A wallet can generate keys if it has an HD seed (IsHDEnabled) or it is a non-HD wallet (pre FEATURE_HD)
     LOCK(cs_KeyStore);
-    return IsHDEnabled() || !m_storage.CanSupportFeature(FEATURE_HD);
+    // Watch-only wallets may reserve imported public keys, but must never
+    // generate private keys, including when their version predates HD wallets.
+    return !m_storage.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS) &&
+           (IsHDEnabled() || !m_storage.CanSupportFeature(FEATURE_HD));
 }
 
 CPubKey LegacyScriptPubKeyMan::GenerateNewSeed()
@@ -2279,15 +2279,20 @@ bool DescriptorScriptPubKeyMan::AddDescriptorKeyWithDB(WalletBatch& batch, const
             return false;
         }
 
+        if (!batch.WriteCryptedDescriptorKey(GetID(), pubkey, crypted_secret)) {
+            return false;
+        }
         m_map_crypted_keys[pubkey.GetID()] = make_pair(pubkey, crypted_secret);
-        return batch.WriteCryptedDescriptorKey(GetID(), pubkey, crypted_secret);
     } else {
+        if (!batch.WriteDescriptorKey(GetID(), pubkey, key.GetPrivKey())) {
+            return false;
+        }
         m_map_keys[pubkey.GetID()] = key;
-        return batch.WriteDescriptorKey(GetID(), pubkey, key.GetPrivKey());
     }
+    return true;
 }
 
-bool DescriptorScriptPubKeyMan::SetupDescriptorGeneration(WalletBatch& batch, const CExtKey& master_key, OutputType addr_type, bool internal)
+bool DescriptorScriptPubKeyMan::SetupDescriptorGeneration(WalletBatch& batch, const CExtKey& master_key, OutputType addr_type, bool internal, std::optional<int64_t> creation_time)
 {
     LOCK(cs_desc_man);
     assert(m_storage.IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS));
@@ -2297,7 +2302,7 @@ bool DescriptorScriptPubKeyMan::SetupDescriptorGeneration(WalletBatch& batch, co
         return false;
     }
 
-    int64_t creation_time = GetTime();
+    const int64_t descriptor_creation_time = creation_time.value_or(GetTime());
 
     std::string xpub = EncodeExtPubKey(master_key.Neuter());
 
@@ -2344,7 +2349,7 @@ bool DescriptorScriptPubKeyMan::SetupDescriptorGeneration(WalletBatch& batch, co
     FlatSigningProvider keys;
     std::string error;
     std::unique_ptr<Descriptor> desc = Parse(desc_str, keys, error, false);
-    WalletDescriptor w_desc(std::move(desc), creation_time, 0, 0, 0);
+    WalletDescriptor w_desc(std::move(desc), descriptor_creation_time, 0, 0, 0);
     m_wallet_descriptor = w_desc;
 
     // Store the master private key, and descriptor
@@ -2382,6 +2387,19 @@ bool DescriptorScriptPubKeyMan::HavePrivateKeys() const
 {
     LOCK(cs_desc_man);
     return m_map_keys.size() > 0 || m_map_crypted_keys.size() > 0;
+}
+
+bool DescriptorScriptPubKeyMan::GetPrivateKey(const CKeyID& key_id, CKey& key) const
+{
+    LOCK(cs_desc_man);
+    if (!HavePrivateKeys()) return false;
+
+    const KeyMap keys = GetKeys();
+    const auto it = keys.find(key_id);
+    if (it == keys.end()) return false;
+
+    key = it->second;
+    return key.IsValid();
 }
 
 std::optional<int64_t> DescriptorScriptPubKeyMan::GetOldestKeyPoolTime() const
@@ -2716,6 +2734,12 @@ std::unordered_set<CScript, SaltedSipHasher> DescriptorScriptPubKeyMan::GetScrip
 int32_t DescriptorScriptPubKeyMan::GetEndRange() const
 {
     return m_max_cached_index + 1;
+}
+
+int32_t DescriptorScriptPubKeyMan::GetNextIndex() const
+{
+    LOCK(cs_desc_man);
+    return m_wallet_descriptor.next_index;
 }
 
 bool DescriptorScriptPubKeyMan::GetDescriptorString(std::string& out, const bool priv) const

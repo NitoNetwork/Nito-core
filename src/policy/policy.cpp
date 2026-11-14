@@ -8,6 +8,7 @@
 
 #include <policy/policy.h>
 
+#include <consensus/private_tx_verify.h>
 #include <coins.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
@@ -21,8 +22,38 @@
 #include <span.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <vector>
+
+PrivateOrchardProofRateLimiter::PrivateOrchardProofRateLimiter(
+    std::chrono::microseconds now,
+    int64_t refill_per_second,
+    int64_t capacity)
+    : m_refill_per_second{std::max<int64_t>(refill_per_second, 0)},
+      m_capacity{std::max<int64_t>(capacity, 0)},
+      m_available{static_cast<double>(m_capacity)},
+      m_last_update{now}
+{
+}
+
+bool PrivateOrchardProofRateLimiter::TryAcquire(int64_t cost, std::chrono::microseconds now)
+{
+    if (cost <= 0) return true;
+    if (cost > m_capacity) return false;
+
+    if (now > m_last_update) {
+        const double elapsed_seconds{std::chrono::duration<double>{now - m_last_update}.count()};
+        m_available = std::min<double>(
+            m_capacity,
+            m_available + elapsed_seconds * m_refill_per_second);
+        m_last_update = now;
+    }
+
+    if (m_available < cost) return false;
+    m_available -= cost;
+    return true;
+}
 
 CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
 {
@@ -51,7 +82,7 @@ CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
     // public key + an ECDSA signature). For Segwit v1 Taproot outputs the minimum
     // satisfaction is lower (a single BIP340 signature) but this computation was
     // kept to not further reduce the dust level.
-    // See discussion in https://github.com/nito/nito/pull/22779 for details.
+    // See discussion in https://github.com/bitcoin/bitcoin/pull/22779 for details.
     if (txout.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram)) {
         // sum the sizes of the parts of a transaction input
         // with 75% segwit discount applied to the script size.
@@ -94,7 +125,9 @@ bool IsStandard(const CScript& scriptPubKey, const std::optional<unsigned>& max_
 
 bool IsStandardTx(const CTransaction& tx, const std::optional<unsigned>& max_datacarrier_bytes, bool permit_bare_multisig, const CFeeRate& dust_relay_fee, std::string& reason)
 {
-    if (tx.nVersion > TX_MAX_STANDARD_VERSION || tx.nVersion < 1) {
+    const bool private_rbf_version{
+        tx.nVersion == NITO_PRIVATE_RBF_TX_VERSION && tx.HasPrivateBundle()};
+    if ((tx.nVersion > TX_MAX_STANDARD_VERSION && !private_rbf_version) || tx.nVersion < 1) {
         reason = "version";
         return false;
     }
@@ -293,14 +326,46 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
     return true;
 }
 
+bool SpendsWitnessProgram(const CTransaction& tx, const CCoinsViewCache& prevouts)
+{
+    if (tx.IsCoinBase()) return false;
+
+    int version;
+    std::vector<unsigned char> program;
+    for (const auto& txin : tx.vin) {
+        const CScript& prev_script{prevouts.AccessCoin(txin.prevout).out.scriptPubKey};
+        if (prev_script.IsWitnessProgram(version, program)) return true;
+
+        if (prev_script.IsPayToScriptHash()) {
+            std::vector<std::vector<unsigned char>> stack;
+            if (!EvalScript(stack, txin.scriptSig, SCRIPT_VERIFY_NONE, BaseSignatureChecker{}, SigVersion::BASE) || stack.empty()) {
+                continue;
+            }
+            const CScript redeem_script{stack.back().begin(), stack.back().end()};
+            if (redeem_script.IsWitnessProgram(version, program)) return true;
+        }
+    }
+    return false;
+}
+
 int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost, unsigned int bytes_per_sigop)
 {
-    return (std::max(nWeight, nSigOpCost * bytes_per_sigop) + WITNESS_SCALE_FACTOR - 1) / WITNESS_SCALE_FACTOR;
+    return GetVirtualTransactionSize(nWeight, nSigOpCost, bytes_per_sigop, /*private_orchard_verify_cost=*/0);
+}
+
+int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost, unsigned int bytes_per_sigop, int64_t private_orchard_verify_cost)
+{
+    const int64_t serialized_vsize{
+        (std::max(nWeight, nSigOpCost * bytes_per_sigop) + WITNESS_SCALE_FACTOR - 1) / WITNESS_SCALE_FACTOR};
+    return std::max(serialized_vsize, private_orchard_verify_cost);
 }
 
 int64_t GetVirtualTransactionSize(const CTransaction& tx, int64_t nSigOpCost, unsigned int bytes_per_sigop)
 {
-    return GetVirtualTransactionSize(GetTransactionWeight(tx), nSigOpCost, bytes_per_sigop);
+    const int64_t private_cost{tx.HasPrivateBundle()
+        ? GetPrivateOrchardVerificationCost(tx.m_private_bundle->effects.actions.size())
+        : 0};
+    return GetVirtualTransactionSize(GetTransactionWeight(tx), nSigOpCost, bytes_per_sigop, private_cost);
 }
 
 int64_t GetVirtualTransactionInputSize(const CTxIn& txin, int64_t nSigOpCost, unsigned int bytes_per_sigop)

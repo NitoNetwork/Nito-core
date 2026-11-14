@@ -1,0 +1,426 @@
+Backport the Qt upstream macOS API updates required by the Xcode 15 SDK.
+
+Sources:
+- qt/qtbase 5e6308b0f5d1 (system tray notification diagnostic)
+- qt/qtbase ee78c173e9cb (current drawing appearance)
+- qt/qtbase 1e367f2f8ccb (textured background compatibility, adapted to Qt 6.8.3)
+- qt/qtbase 006329964d45 (allowed content types)
+- qt/qtbase 4280d97719fa (SecureTransport diagnostic)
+diff --git a/qtbase/src/gui/CMakeLists.txt b/qtbase/src/gui/CMakeLists.txt
+index 2cc7262513117ac955e727938d715b7eab3960f2..dbc860732d164859217a2c655059001232c20473 100644
+--- a/qtbase/src/gui/CMakeLists.txt
++++ b/qtbase/src/gui/CMakeLists.txt
+@@ -388,6 +388,7 @@ qt_internal_extend_target(Gui CONDITION QT_FEATURE_opengl
+ qt_internal_extend_target(Gui CONDITION MACOS
+     SOURCES
+         platform/macos/qcocoanativeinterface.mm
++        platform/macos/qmacstyle_p.h
+     LIBRARIES
+         ${FWAppKit}
+         ${FWCarbon}
+diff --git a/qtbase/src/gui/platform/macos/qmacstyle_p.h b/qtbase/src/gui/platform/macos/qmacstyle_p.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..bbfbc1a06e3490d1da910cfdf246933ea89f9cdd
+--- /dev/null
++++ b/qtbase/src/gui/platform/macos/qmacstyle_p.h
+@@ -0,0 +1,81 @@
++// Copyright (C) 2025 The Qt Company Ltd.
++// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++#ifndef QMACSTYLE_P_H
++#define QMACSTYLE_P_H
++
++//
++//  W A R N I N G
++//  -------------
++//
++// This file is not part of the Qt API.  It exists purely as an
++// implementation detail.  This header file may change from version to
++// version without notice, or even be removed.
++//
++// We mean it.
++//
++
++#include <QtGui/qtguiglobal.h>
++
++#if defined(QT_WIDGETS_LIB) && defined(QT_QUICK_LIB)
++#  error "Cannot use QtGui Mac style with both Widgets and Quick"
++#endif
++
++#if defined(QT_WIDGETS_LIB)
++#  define OPTIONAL_WIDGET_ARGUMENT , const QWidget *w = nullptr
++#  define FORWARD_OPTIONAL_WIDGET_ARGUMENT , w
++# else
++#  define OPTIONAL_WIDGET_ARGUMENT
++#  define FORWARD_OPTIONAL_WIDGET_ARGUMENT
++#endif
++
++#include <AppKit/NSApplication.h>
++
++QT_BEGIN_NAMESPACE
++
++/*
++    Helper class to ensure that the Mac style in Widgets and Quick
++    draw their NSViews and NSCells with the correct appearance,
++    as the native controls use NSAppearance.currentDrawingAppearance
++    instead of NSApp.effectiveAppearance when drawing.
++
++    Due to the duplicated class hierarchies between Widgets and Quick
++    for the styles, with the Quick styles missing the QWidget pointer
++    in the function parameters, we have to opt for an awkward macro
++    to solve this.
++*/
++template <typename Style>
++class QMacApperanceStyle : public Style
++{
++public:
++    void drawPrimitive(typename Style::PrimitiveElement pe, const QStyleOption *opt, QPainter *p
++                       OPTIONAL_WIDGET_ARGUMENT) const override
++    {
++        [NSApp.effectiveAppearance performAsCurrentDrawingAppearance:^{
++            Style::drawPrimitive(pe, opt, p
++                FORWARD_OPTIONAL_WIDGET_ARGUMENT);
++        }];
++    }
++
++    void drawControl(typename Style::ControlElement element, const QStyleOption *opt, QPainter *p
++                     OPTIONAL_WIDGET_ARGUMENT) const override
++    {
++        [NSApp.effectiveAppearance performAsCurrentDrawingAppearance:^{
++            Style::drawControl(element, opt, p
++                FORWARD_OPTIONAL_WIDGET_ARGUMENT);
++        }];
++    }
++
++    void drawComplexControl(typename Style::ComplexControl cc, const QStyleOptionComplex *opt, QPainter *p
++                            OPTIONAL_WIDGET_ARGUMENT) const override
++    {
++        [NSApp.effectiveAppearance performAsCurrentDrawingAppearance:^{
++            Style::drawComplexControl(cc, opt, p
++                FORWARD_OPTIONAL_WIDGET_ARGUMENT);
++        }];
++    }
++};
++
++QT_END_NAMESPACE
++
++#endif // QMACSTYLE_P_H
+diff --git a/qtbase/src/plugins/platforms/cocoa/qcocoafiledialoghelper.mm b/qtbase/src/plugins/platforms/cocoa/qcocoafiledialoghelper.mm
+index 26e67f8354cff5728ed23db7b38610f0536b419c..17cd59cb34cce33d758899b890269eaa0fe3a06e 100644
+--- a/qtbase/src/plugins/platforms/cocoa/qcocoafiledialoghelper.mm
++++ b/qtbase/src/plugins/platforms/cocoa/qcocoafiledialoghelper.mm
+@@ -275,10 +275,10 @@ typedef QSharedPointer<QFileDialogOptions> SharedPointerFileDialogOptions;
+ {
+     Q_ASSERT(sender == m_panel);
+ 
+-    if (!m_panel.allowedFileTypes && !m_selectedNameFilter.isEmpty()) {
++    if (![m_panel.allowedContentTypes count] && !m_selectedNameFilter.isEmpty()) {
+         // The save panel hasn't done filtering on our behalf,
+         // either because we couldn't represent the filter via
+-        // allowedFileTypes, or we opted out due to a multi part
++        // allowedContentTypes, or we opted out due to a multi part
+         // extension, so do the filtering/validation ourselves.
+         QFileInfo fileInfo(QString::fromNSString(url.path).normalized(QString::NormalizationForm_C));
+ 
+@@ -447,9 +447,9 @@ typedef QSharedPointer<QFileDialogOptions> SharedPointerFileDialogOptions;
+ 
+     m_popupButton.hidden = chooseDirsOnly;    // TODO hide the whole sunken pane instead?
+ 
+-    m_panel.allowedFileTypes = [self computeAllowedFileTypes];
++    m_panel.allowedContentTypes = [self computeAllowedContentTypes];
+ 
+-    // Setting allowedFileTypes to nil is not enough to reset any
++    // Setting allowedContentTypes to @[] is not enough to reset any
+     // automatically added extension based on a previous filter.
+     // This is problematic because extensions can in some cases
+     // be hidden from the user, resulting in confusion when the
+@@ -458,10 +458,10 @@ typedef QSharedPointer<QFileDialogOptions> SharedPointerFileDialogOptions;
+     // content type to one without an extension, which forces
+     // the save panel to update and remove the extension.
+     const bool nameFieldHasExtension = m_panel.nameFieldStringValue.pathExtension.length > 0;
+-    if (!m_panel.allowedFileTypes && !nameFieldHasExtension && !openpanel_cast(m_panel)) {
++    if (![m_panel.allowedContentTypes count] && !nameFieldHasExtension && !openpanel_cast(m_panel)) {
+         if (!UTTypeDirectory.preferredFilenameExtension) {
+             m_panel.allowedContentTypes = @[ UTTypeDirectory ];
+-            m_panel.allowedFileTypes = nil;
++            m_panel.allowedContentTypes = @[];
+         } else {
+             qWarning() << "UTTypeDirectory unexpectedly reported an extension";
+         }
+@@ -508,20 +508,20 @@ typedef QSharedPointer<QFileDialogOptions> SharedPointerFileDialogOptions;
+ }
+ 
+ /*
+-    Computes a list of extensions (e.g. "png", "jpg", "gif")
+-    for the current name filter, and updates the save panel.
++    Computes a list of UTTypes ("public.plain-text" e.g.)
++    for the current name filter.
+ 
+     If a filter do not conform to the format *.xyz or * or *.*,
+     or contains an extensions with more than one part (e.g. "tar.gz")
+     we treat that as allowing all file types, and do our own
+     validation in panel:validateURL:error.
+ */
+-- (NSArray<NSString*>*)computeAllowedFileTypes
++- (NSArray<UTType*>*)computeAllowedContentTypes
+ {
+     if (m_options->acceptMode() != QFileDialogOptions::AcceptSave)
+-        return nil; // panel:shouldEnableURL: does the file filtering for NSOpenPanel
++        return @[]; // panel:shouldEnableURL: does the file filtering for NSOpenPanel
+ 
+-    QStringList fileTypes;
++    auto *types = [[NSMutableArray<UTType*> new] autorelease];
+     for (const QString &filter : std::as_const(m_selectedNameFilter)) {
+         if (!filter.startsWith("*."_L1))
+             continue;
+@@ -534,12 +534,13 @@ typedef QSharedPointer<QFileDialogOptions> SharedPointerFileDialogOptions;
+ 
+         auto extensions = filter.split('.', Qt::SkipEmptyParts);
+         if (extensions.count() > 2)
+-            return nil;
++            return @[];
+ 
+-        fileTypes += extensions.last();
++        auto *utType = [UTType typeWithFilenameExtension:extensions.last().toNSString()];
++        [types addObject:utType];
+     }
+ 
+-    return fileTypes.isEmpty() ? nil : qt_mac_QStringListToNSMutableArray(fileTypes);
++    return types;
+ }
+ 
+ - (QString)removeExtensions:(const QString &)filter
+diff --git a/qtbase/src/plugins/platforms/cocoa/qcocoasystemtrayicon.mm b/qtbase/src/plugins/platforms/cocoa/qcocoasystemtrayicon.mm
+index 05e3c67528e17648a4195f108db93e671f524c66..ddd97f9a1af6cf8b75adf8bcb2eb9409684eda39 100644
+--- a/qtbase/src/plugins/platforms/cocoa/qcocoasystemtrayicon.mm
++++ b/qtbase/src/plugins/platforms/cocoa/qcocoasystemtrayicon.mm
+@@ -23,9 +23,9 @@
+ #include "qcocoascreen.h"
+ #include <QtGui/private/qcoregraphics_p.h>
+ 
+-#warning NSUserNotification was deprecated in macOS 11. \
+-We should be using UserNotifications.framework instead. \
+-See QTBUG-110998 for more information.
++// NSUserNotification was deprecated in macOS 11.
++// We should be using UserNotifications.framework instead.
++// See QTBUG-110998 for more information.
+ #define NSUserNotificationCenter QT_IGNORE_DEPRECATIONS(NSUserNotificationCenter)
+ #define NSUserNotification QT_IGNORE_DEPRECATIONS(NSUserNotification)
+ 
+diff --git a/qtbase/src/plugins/platforms/cocoa/qcocoatheme.mm b/qtbase/src/plugins/platforms/cocoa/qcocoatheme.mm
+index 6d15e8e5d2c8a33b459c11193ca72637cfda9a0b..39c2ff75e9ca953a111b363e50c8e0c9c3481816 100644
+--- a/qtbase/src/plugins/platforms/cocoa/qcocoatheme.mm
++++ b/qtbase/src/plugins/platforms/cocoa/qcocoatheme.mm
+@@ -214,7 +214,6 @@ QCocoaTheme::QCocoaTheme()
+     : m_systemPalette(nullptr)
+ {
+     m_appearanceObserver = QMacKeyValueObserver(NSApp, @"effectiveAppearance", [this] {
+-        NSAppearance.currentAppearance = NSApp.effectiveAppearance;
+         handleSystemThemeChange();
+     });
+ 
+@@ -294,13 +293,23 @@ QPlatformSystemTrayIcon *QCocoaTheme::createPlatformSystemTrayIcon() const
+ 
+ const QPalette *QCocoaTheme::palette(Palette type) const
+ {
++    // Note: NSColor resolves its RGB values based on the current
++    // drawing appearance, so we need to propagate the effective
++    // appearance when (re)creating the palettes.
++
+     if (type == SystemPalette) {
+-        if (!m_systemPalette)
+-            m_systemPalette = qt_mac_createSystemPalette();
++        if (!m_systemPalette) {
++            [NSApp.effectiveAppearance performAsCurrentDrawingAppearance:^{
++                m_systemPalette = qt_mac_createSystemPalette();
++            }];
++        }
+         return m_systemPalette;
+     } else {
+-        if (m_palettes.isEmpty())
+-            m_palettes = qt_mac_createRolePalettes();
++        if (m_palettes.isEmpty()) {
++            [NSApp.effectiveAppearance performAsCurrentDrawingAppearance:^{
++                m_palettes = qt_mac_createRolePalettes();
++            }];
++        }
+         return m_palettes.value(type, nullptr);
+     }
+     return nullptr;
+diff --git a/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm b/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm
+index 85f7bbb5c1f287881b5f828e0dcc147965536104..bfda7773cc02cf9f11995dc598a508af115fea60 100644
+--- a/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm
++++ b/qtbase/src/plugins/platforms/cocoa/qcocoawindow.mm
+@@ -620,9 +620,9 @@ NSUInteger QCocoaWindow::windowStyleMask(Qt::WindowFlags flags)
+     if (type == Qt::Tool)
+         styleMask |= NSWindowStyleMaskUtilityWindow;
+ 
+-    // FIXME: Remove use of deprecated style mask
++    // FIXME (QTBUG-138829)
+     if (m_drawContentBorderGradient)
+-        styleMask |= NSWindowStyleMaskTexturedBackground;
++        styleMask |= QT_IGNORE_DEPRECATIONS(NSWindowStyleMaskTexturedBackground);
+ 
+     // Don't wipe existing states
+     if (m_view.window.styleMask & NSWindowStyleMaskFullScreen)
+@@ -2019,7 +2019,9 @@ void QCocoaWindow::applyContentBorderThickness(NSWindow *window)
+         return;
+ 
+     if (!m_drawContentBorderGradient) {
+-        window.styleMask = window.styleMask & ~NSWindowStyleMaskTexturedBackground;
++        // FIXME (QTBUG-138829)
++        window.styleMask = window.styleMask
++            & QT_IGNORE_DEPRECATIONS(~NSWindowStyleMaskTexturedBackground);
+         [window.contentView.superview setNeedsDisplay:YES];
+         window.titlebarAppearsTransparent = NO;
+         return;
+@@ -2045,7 +2047,9 @@ void QCocoaWindow::applyContentBorderThickness(NSWindow *window)
+ 
+     int effectiveBottomContentBorderThickness = 0;
+ 
+-    [window setStyleMask:[window styleMask] | NSWindowStyleMaskTexturedBackground];
++    // FIXME (QTBUG-138829)
++    [window setStyleMask:[window styleMask]
++        | QT_IGNORE_DEPRECATIONS(NSWindowStyleMaskTexturedBackground)];
+     window.titlebarAppearsTransparent = YES;
+ 
+     // Setting titlebarAppearsTransparent to YES means that the border thickness has to account
+diff --git a/qtbase/src/plugins/styles/mac/main.mm b/qtbase/src/plugins/styles/mac/main.mm
+index 5f4fbd9eb8efc95c09a5abaf5cf6a6d5da9421ed..ef6ca46045da85cb091e57013b23de7f16b26342 100644
+--- a/qtbase/src/plugins/styles/mac/main.mm
++++ b/qtbase/src/plugins/styles/mac/main.mm
+@@ -20,7 +20,7 @@ QStyle *QMacStylePlugin::create(const QString &key)
+ {
+     QMacAutoReleasePool pool;
+     if (key.compare(QLatin1String("macos"), Qt::CaseInsensitive) == 0)
+-        return new QMacStyle();
++        return QMacStyle::create();
+ 
+     return 0;
+ }
+diff --git a/qtbase/src/plugins/styles/mac/qmacstyle_mac.mm b/qtbase/src/plugins/styles/mac/qmacstyle_mac.mm
+index 353fd68adfa4623e41a035a96f984ed2ff9904dd..a8d9dfb430d307456c1af5059f45397ab297eb26 100644
+--- a/qtbase/src/plugins/styles/mac/qmacstyle_mac.mm
++++ b/qtbase/src/plugins/styles/mac/qmacstyle_mac.mm
+@@ -41,6 +41,8 @@
+ #include <QtWidgets/qwizard.h>
+ #endif
+ 
++#include <QtGui/private/qmacstyle_p.h>
++
+ #include <cmath>
+ 
+ QT_USE_NAMESPACE
+@@ -338,40 +340,6 @@ static const int toolButtonArrowMargin = 2;
+ 
+ static const qreal focusRingWidth = 3.5;
+ 
+-// An application can force 'Aqua' theme while the system theme is one of
+-// the 'Dark' variants. Since in Qt we sometimes use NSControls and even
+-// NSCells directly without attaching them to any view hierarchy, we have
+-// to set NSAppearance.currentAppearance to 'Aqua' manually, to make sure
+-// the correct rendering path is triggered. Apple recommends us to un-set
+-// the current appearance back after we finished with drawing. This is what
+-// AppearanceSync is for.
+-
+-class AppearanceSync {
+-public:
+-    AppearanceSync()
+-    {
+-        if (QOperatingSystemVersion::current() >= QOperatingSystemVersion::MacOSMojave
+-            && !isDarkMode()) {
+-            auto requiredAppearanceName = NSApplication.sharedApplication.effectiveAppearance.name;
+-            if (![NSAppearance.currentAppearance.name isEqualToString:requiredAppearanceName]) {
+-                previous = NSAppearance.currentAppearance;
+-                NSAppearance.currentAppearance = [NSAppearance appearanceNamed:requiredAppearanceName];
+-            }
+-        }
+-    }
+-
+-    ~AppearanceSync()
+-    {
+-        if (previous)
+-            NSAppearance.currentAppearance = previous;
+-    }
+-
+-private:
+-    NSAppearance *previous = nil;
+-
+-    Q_DISABLE_COPY(AppearanceSync)
+-};
+-
+ static bool setupScroller(NSScroller *scroller, const QStyleOptionSlider *sb)
+ {
+     const qreal length = sb->maximum - sb->minimum + sb->pageStep;
+@@ -1995,6 +1963,11 @@ void QMacStylePrivate::resolveCurrentNSView(QWindow *window) const
+     backingStoreNSView = window ? (NSView *)window->winId() : nil;
+ }
+ 
++QMacStyle *QMacStyle::create()
++{
++    return new QMacApperanceStyle<QMacStyle>;
++}
++
+ QMacStyle::QMacStyle()
+     : QCommonStyle(*new QMacStylePrivate)
+ {
+@@ -2889,7 +2862,6 @@ void QMacStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt, QPai
+                               const QWidget *w) const
+ {
+     Q_D(const QMacStyle);
+-    const AppearanceSync appSync;
+     QMacCGContext cg(p);
+     QWindow *window = w && w->window() ? w->window()->windowHandle() : nullptr;
+     d->resolveCurrentNSView(window);
+@@ -3417,7 +3389,6 @@ void QMacStyle::drawControl(ControlElement ce, const QStyleOption *opt, QPainter
+                             const QWidget *w) const
+ {
+     Q_D(const QMacStyle);
+-    const AppearanceSync sync;
+     const QMacAutoReleasePool pool;
+     QMacCGContext cg(p);
+     QWindow *window = w && w->window() ? w->window()->windowHandle() : nullptr;
+@@ -5084,7 +5055,6 @@ void QMacStyle::drawComplexControl(ComplexControl cc, const QStyleOptionComplex
+                                    const QWidget *widget) const
+ {
+     Q_D(const QMacStyle);
+-    const AppearanceSync sync;
+     QMacCGContext cg(p);
+     QWindow *window = widget && widget->window() ? widget->window()->windowHandle() : nullptr;
+     d->resolveCurrentNSView(window);
+diff --git a/qtbase/src/plugins/styles/mac/qmacstyle_mac_p.h b/qtbase/src/plugins/styles/mac/qmacstyle_mac_p.h
+index 99c8d1fec426b922ac7d05ae17ffd65f8328591e..15ced48e21da78898ecea08a3dcd0e776b4ac850 100644
+--- a/qtbase/src/plugins/styles/mac/qmacstyle_mac_p.h
++++ b/qtbase/src/plugins/styles/mac/qmacstyle_mac_p.h
+@@ -28,10 +28,13 @@ class QMacStylePrivate;
+ class QMacStyle : public QCommonStyle
+ {
+     Q_OBJECT
+-public:
++protected:
+     QMacStyle();
++public:
+     virtual ~QMacStyle();
+ 
++    static QMacStyle *create();
++
+     void polish(QWidget *w);
+     void unpolish(QWidget *w);
+ 
+diff --git a/qtbase/src/plugins/tls/securetransport/qtls_st_p.h b/qtbase/src/plugins/tls/securetransport/qtls_st_p.h
+index 2903ef4815684fa6d20e01a2dea79e26d261f062..5171f4135324962273341a863ad34397595d7e92 100644
+--- a/qtbase/src/plugins/tls/securetransport/qtls_st_p.h
++++ b/qtbase/src/plugins/tls/securetransport/qtls_st_p.h
+@@ -27,9 +27,9 @@
+ #include <QtNetwork/qabstractsocket.h>
+ #include <QtNetwork/private/qsslsocket_p.h>
+ 
+-#warning SecureTransport was deprecated in macOS 10.15 and iOS 13, \
+-and is no longer supported. We should be using Network.framework instead. \
+-See QTBUG-85231 for more information.
++// SecureTransport was deprecated in macOS 10.15 and iOS 13, and is no
++// longer supported. We should be using Network.framework instead.
++// See QTBUG-119171 for more information.
+ QT_WARNING_DISABLE_DEPRECATED
+ 
+ #include <Security/Security.h>

@@ -295,13 +295,14 @@ enum ServiceFlags : uint64_t {
     // NODE_P2P_V2 means the node supports BIP324 transport
     NODE_P2P_V2 = (1 << 11),
 
-    // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
-    // isn't getting used, or one not being used much, and notify the
-    // nito-development mailing list. Remember that service bits are just
-    // unauthenticated advertisements, so your code must be robust against
-    // collisions and other cases where nodes may be advertising a service they
-    // do not actually support. Other service bits should be allocated via the
-    // BIP process.
+    // NODE_NITO_PRIVATE means the node supports Nito v4 private transactions
+    // and can validate/relay blocks after private activation.
+    NODE_NITO_PRIVATE = (1 << 24),
+
+    // Bits 25-31 remain available for temporary experiments. Remember that
+    // service bits are unauthenticated advertisements, so your code must be
+    // robust against collisions and other cases where nodes may advertise a
+    // service they do not actually support.
 };
 
 /**
@@ -317,7 +318,7 @@ std::vector<std::string> serviceFlagsToStr(uint64_t flags);
  * should be updated appropriately to filter for nodes with
  * desired service flags (compatible with our new flags).
  */
-constexpr ServiceFlags SeedsServiceFlags() { return ServiceFlags(NODE_NETWORK | NODE_WITNESS); }
+constexpr ServiceFlags SeedsServiceFlags() { return ServiceFlags(NODE_NETWORK | NODE_WITNESS | NODE_NITO_PRIVATE); }
 
 /**
  * Checks if a peer with the given service flags may be capable of having a

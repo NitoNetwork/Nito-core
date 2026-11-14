@@ -12,12 +12,24 @@
 
 #include <stdint.h>
 
+#include <algorithm>
+#include <limits>
+
 #include <QDateTime>
 
 using wallet::ISMINE_NO;
 using wallet::ISMINE_SPENDABLE;
 using wallet::ISMINE_WATCH_ONLY;
 using wallet::isminetype;
+
+namespace {
+constexpr const char* AVAILABLE_BALANCE_CURRENT_TX_KEY{"nito_available_balance_current"};
+
+bool IsUserVisibleRecipientOutput(const CTxOut& txout)
+{
+    return txout.nValue > 0 && !txout.scriptPubKey.IsUnspendable();
+}
+} // namespace
 
 /* Return positive answer if transaction should be shown in list.
  */
@@ -46,6 +58,8 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const interface
     bool any_from_me = false;
     if (wtx.is_coinbase) {
         fAllFromMe = ISMINE_NO;
+    } else if (wtx.txin_is_mine.empty()) {
+        fAllFromMe = ISMINE_NO;
     } else {
         for (const isminetype mine : wtx.txin_is_mine)
         {
@@ -55,22 +69,199 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const interface
         }
     }
 
+    if (mapValue.count(AVAILABLE_BALANCE_CURRENT_TX_KEY) != 0) {
+        for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+            const CTxOut& txout = wtx.tx->vout[i];
+            const isminetype mine = wtx.txout_is_mine[i];
+            if (!(mine & (ISMINE_SPENDABLE | ISMINE_WATCH_ONLY)) || !IsUserVisibleRecipientOutput(txout)) continue;
+
+            TransactionRecord sub(hash, nTime);
+            sub.idx = i;
+            sub.credit = txout.nValue;
+            sub.involvesWatchAddress = mine & ISMINE_WATCH_ONLY;
+            if (!std::get_if<CNoDestination>(&wtx.txout_address[i])) {
+                sub.type = TransactionRecord::RecvWithAddress;
+                sub.address = EncodeDestination(wtx.txout_address[i]);
+            } else {
+                sub.type = TransactionRecord::RecvFromOther;
+                sub.address = mapValue["from"];
+            }
+            if (wtx.is_coinbase) {
+                sub.type = TransactionRecord::Generated;
+            }
+            parts.append(sub);
+        }
+        if (!parts.empty()) {
+            return parts;
+        }
+    }
+
+    if (wtx.has_private_bundle) {
+        const std::string private_label = "bech32x";
+        const bool transparent_from_me = nDebit > 0;
+        const bool private_from_me = wtx.private_debit > 0;
+        const bool shield_from_transparent = transparent_from_me && wtx.private_value_balance < 0;
+        const bool unshield_to_transparent = private_from_me && !transparent_from_me && wtx.private_value_balance > 0 && !wtx.tx->vout.empty();
+        const CAmount private_receive_credit = wtx.private_external_credit;
+        const CAmount private_change_credit = wtx.private_internal_credit;
+
+        CAmount public_sent{0};
+        CAmount public_received{0};
+        std::string public_address;
+        bool has_external_public_output{false};
+        for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+            if (!wtx.txout_is_change[i] && IsUserVisibleRecipientOutput(wtx.tx->vout[i])) {
+                public_sent += wtx.tx->vout[i].nValue;
+                if (!wtx.txout_is_mine[i]) {
+                    has_external_public_output = true;
+                }
+            }
+            if (wtx.txout_is_mine[i]) {
+                public_received += wtx.tx->vout[i].nValue;
+                if (public_address.empty() && !std::get_if<CNoDestination>(&wtx.txout_address[i])) {
+                    public_address = EncodeDestination(wtx.txout_address[i]);
+                }
+            }
+            if (public_address.empty() && !std::get_if<CNoDestination>(&wtx.txout_address[i])) {
+                public_address = EncodeDestination(wtx.txout_address[i]);
+            }
+        }
+
+        const CAmount private_sent = private_from_me ? wtx.private_debit - private_change_credit - wtx.fee - public_sent : 0;
+        const bool mixed_payment = private_sent > 0 && public_sent > 0;
+        if (unshield_to_transparent && public_received > 0 && !has_external_public_output && !mixed_payment && private_receive_credit == 0) {
+            TransactionRecord sub(hash, nTime);
+            sub.involvesWatchAddress = involvesWatchAddress;
+            sub.is_private = true;
+            sub.type = TransactionRecord::PrivateUnshield;
+            sub.address = public_address.empty() ? private_label : public_address;
+            sub.debit = -public_received;
+            sub.credit = public_received;
+            parts.append(sub);
+            return parts;
+        }
+
+        if (private_from_me || shield_from_transparent) {
+            CAmount private_debit{0};
+            if (private_from_me) {
+                private_debit = wtx.private_debit - private_change_credit - wtx.fee;
+            } else {
+                private_debit = -wtx.private_value_balance;
+            }
+            if (private_debit > 0) {
+                TransactionRecord sub(hash, nTime);
+                sub.involvesWatchAddress = involvesWatchAddress;
+                sub.is_private = true;
+                if (private_from_me && !mixed_payment && private_receive_credit == 0 && public_sent > 0 && !public_address.empty()) {
+                    sub.type = TransactionRecord::PrivateUnshield;
+                    sub.address = public_address;
+                } else {
+                    sub.type = TransactionRecord::SendToOther;
+                    sub.address = private_label;
+                }
+                sub.debit = -private_debit;
+                sub.is_multi_recipient = mixed_payment;
+                parts.append(sub);
+            }
+        }
+        if (private_receive_credit > 0) {
+            TransactionRecord sub(hash, nTime);
+            sub.involvesWatchAddress = involvesWatchAddress;
+            sub.is_private = true;
+            sub.type = TransactionRecord::RecvFromOther;
+            sub.address = private_label;
+            sub.credit = private_receive_credit;
+            parts.append(sub);
+        }
+        if (!parts.empty() && public_sent == 0) {
+            return parts;
+        }
+    }
+
     if (fAllFromMe || !any_from_me) {
         for (const isminetype mine : wtx.txout_is_mine)
         {
             if(mine & ISMINE_WATCH_ONLY) involvesWatchAddress = true;
         }
 
-        CAmount nTxFee = nDebit - wtx.tx->GetValueOut();
+        CAmount nTxFee = wtx.fee;
+
+        if (fAllFromMe && parts.empty() && nDebit > 0 && nCredit > 0) {
+            bool has_external_value_output{false};
+            CAmount internal_credit{0};
+            int internal_output_index{0};
+            int internal_output_count{0};
+            std::string internal_output_address;
+            for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+                const CTxOut& txout = wtx.tx->vout[i];
+                const isminetype mine = wtx.txout_is_mine[i];
+                if (mine) {
+                    internal_credit += txout.nValue;
+                    if (IsUserVisibleRecipientOutput(txout)) {
+                        ++internal_output_count;
+                    }
+                    if (internal_output_address.empty() && !std::get_if<CNoDestination>(&wtx.txout_address[i])) {
+                        internal_output_index = i;
+                        internal_output_address = EncodeDestination(wtx.txout_address[i]);
+                    }
+                } else if (IsUserVisibleRecipientOutput(txout)) {
+                    has_external_value_output = true;
+                }
+            }
+            if (!has_external_value_output && internal_credit > 0) {
+                TransactionRecord sub(hash, nTime);
+                sub.idx = internal_output_index;
+                sub.type = TransactionRecord::InternalTransfer;
+                sub.address = internal_output_address;
+                sub.credit = internal_credit;
+                sub.involvesWatchAddress = involvesWatchAddress;
+                sub.is_multi_recipient = internal_output_count > 1;
+                parts.append(sub);
+                return parts;
+            }
+        }
+
+        if (fAllFromMe && parts.empty()) {
+            CAmount recipient_total{0};
+            int recipient_outputs{0};
+            int first_recipient_index{0};
+
+            for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+                if (wtx.txout_is_change[i] ||
+                    (wtx.txout_is_mine[i] & ISMINE_SPENDABLE) ||
+                    !IsUserVisibleRecipientOutput(wtx.tx->vout[i])) {
+                    continue;
+                }
+                if (recipient_outputs == 0) {
+                    first_recipient_index = i;
+                }
+                recipient_total += wtx.tx->vout[i].nValue;
+                ++recipient_outputs;
+            }
+
+            if (recipient_outputs > 1) {
+                TransactionRecord sub(hash, nTime);
+                sub.idx = first_recipient_index;
+                sub.involvesWatchAddress = involvesWatchAddress;
+                sub.type = TransactionRecord::SendToOther;
+                sub.is_multi_recipient = true;
+                sub.debit = -(recipient_total + nTxFee);
+                parts.append(sub);
+                return parts;
+            }
+        }
 
         for(unsigned int i = 0; i < wtx.tx->vout.size(); i++)
         {
             const CTxOut& txout = wtx.tx->vout[i];
+            const isminetype mine = wtx.txout_is_mine[i];
 
             if (fAllFromMe) {
                 // Change is only really possible if we're the sender
-                // Otherwise, someone just sent nitos to a change address, which should be shown
-                if (wtx.txout_is_change[i]) {
+                // Otherwise, someone just sent NITO to a change address, which should be shown
+                if (wtx.txout_is_change[i] ||
+                    (mine & ISMINE_SPENDABLE) ||
+                    !IsUserVisibleRecipientOutput(txout)) {
                     continue;
                 }
 
@@ -107,7 +298,6 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const interface
                 parts.append(sub);
             }
 
-            isminetype mine = wtx.txout_is_mine[i];
             if(mine)
             {
                 //
@@ -139,6 +329,16 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const interface
                 parts.append(sub);
             }
         }
+
+        if (fAllFromMe && parts.empty() && nTxFee > 0) {
+            TransactionRecord sub(hash, nTime);
+            sub.idx = 0;
+            sub.involvesWatchAddress = involvesWatchAddress;
+            sub.type = TransactionRecord::SendToOther;
+            sub.address = mapValue["to"];
+            sub.debit = -nTxFee;
+            parts.append(sub);
+        }
     } else {
         //
         // Mixed debit transaction, can't break down payees
@@ -150,6 +350,32 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const interface
     return parts;
 }
 
+TransactionRecord TransactionRecord::decomposePrivateNote(const interfaces::WalletPrivateNote& note)
+{
+    TransactionRecord sub(note.txid, note.time, TransactionRecord::RecvFromOther, "bech32x", 0, note.amount);
+    sub.idx = static_cast<int>(note.action_index);
+    sub.is_private = true;
+    sub.is_private_note_only = true;
+    sub.private_note_cmx = note.cmx;
+
+    interfaces::WalletTxStatus status{};
+    status.block_height = note.block_height >= 0 ? note.block_height : std::numeric_limits<int>::max();
+    status.blocks_to_maturity = 0;
+    status.depth_in_main_chain = note.depth_in_main_chain;
+    status.time_received =
+        note.time > 0 && note.time <= std::numeric_limits<unsigned int>::max()
+            ? static_cast<unsigned int>(note.time)
+            : 0;
+    status.lock_time = 0;
+    status.is_trusted = note.spendable && note.depth_in_main_chain > 0;
+    status.is_abandoned = false;
+    status.is_coinbase = false;
+    status.is_in_main_chain = note.depth_in_main_chain > 0;
+    sub.updateStatus(status, note.block_hash, 0, note.time);
+    sub.status.needsUpdate = true;
+    return sub;
+}
+
 void TransactionRecord::updateStatus(const interfaces::WalletTxStatus& wtx, const uint256& block_hash, int numBlocks, int64_t block_time)
 {
     // Determine transaction status
@@ -157,7 +383,7 @@ void TransactionRecord::updateStatus(const interfaces::WalletTxStatus& wtx, cons
     // Sort order, unrecorded transactions sort to the top
     int typesort;
     switch (type) {
-    case SendToAddress: case SendToOther:
+    case SendToAddress: case SendToOther: case PrivateUnshield:
         typesort = 2; break;
     case RecvWithAddress: case RecvFromOther:
         typesort = 3; break;

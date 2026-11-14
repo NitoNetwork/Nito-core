@@ -6,8 +6,13 @@
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <wallet/receive.h>
+#include <wallet/private_notes.h>
 #include <wallet/transaction.h>
 #include <wallet/wallet.h>
+
+#include <optional>
+#include <set>
+#include <vector>
 
 namespace wallet {
 isminetype InputIsMine(const CWallet& wallet, const CTxIn& txin)
@@ -137,11 +142,159 @@ CAmount CachedTxGetDebit(const CWallet& wallet, const CWalletTx& wtx, const ismi
     return debit;
 }
 
+static bool CachedPrivateNoteIsChange(const CWallet& wallet, const CWalletTx& wtx, const CPrivateWalletNote& note)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (!note.m_is_change.has_value()) {
+        const auto& chain = wallet.GetPrivateChain();
+        if (!wallet.CanViewPrivateData() || !chain.HasFullViewingKey(false) || !chain.HasFullViewingKey(true)) {
+            throw std::runtime_error("Private history requires unlocked Orchard viewing keys");
+        }
+        std::vector<unsigned char> change;
+        std::string error;
+        const auto& bundle = *wtx.tx->m_private_bundle;
+        if (ClassifyPrivateOrchardChangeOutputs(chain.FullViewingKey(false), chain.FullViewingKey(true), bundle, change, error) != PrivateOrchardBuildResult::OK) {
+            throw std::runtime_error("Unable to classify private change: " + error);
+        }
+        // Classify the whole bundle once, including change sent to a reused
+        // external address. The cache disappears with decrypted notes on lock.
+        for (size_t i = 0; i < bundle.effects.actions.size(); ++i) {
+            const auto found = wallet.mapPrivateNotes.find(bundle.effects.actions[i].cmx);
+            if (found != wallet.mapPrivateNotes.end() && found->second.txid == wtx.GetHash()) {
+                found->second.m_is_change = change[i] != 0;
+            }
+        }
+    }
+    return note.m_is_change.value();
+}
+
+static CAmount CachedTxGetPrivateCreditByChange(const CWallet& wallet, const CWalletTx& wtx, const std::optional<bool>& change)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (!wtx.tx->HasPrivateBundle()) return 0;
+
+    CAmount credit{0};
+    const uint256 txid = wtx.GetHash();
+    const bool from_wallet = change.has_value() && CachedTxGetPrivateDebit(wallet, wtx) > 0;
+    std::set<uint256> credited_notes;
+    for (const auto& action : wtx.tx->m_private_bundle->effects.actions) {
+        const auto found = wallet.mapPrivateNotes.find(action.cmx);
+        if (found == wallet.mapPrivateNotes.end() || !credited_notes.insert(action.cmx).second) continue;
+        const auto& note = found->second;
+        if (note.txid != txid || note.value <= 0) continue;
+        if (change.has_value()) {
+            const bool is_private_change = from_wallet && CachedPrivateNoteIsChange(wallet, wtx, note);
+            if (is_private_change != *change) continue;
+        }
+        if (!MoneyAddSigned(credit, note.value, credit)) {
+            throw std::runtime_error(std::string(__func__) + ": value out of range");
+        }
+    }
+    return credit;
+}
+
+CAmount CachedTxGetPrivateCredit(const CWallet& wallet, const CWalletTx& wtx)
+{
+    return CachedTxGetPrivateCreditByChange(wallet, wtx, std::nullopt);
+}
+
+CAmount CachedTxGetPrivateExternalCredit(const CWallet& wallet, const CWalletTx& wtx)
+{
+    return CachedTxGetPrivateCreditByChange(wallet, wtx, false);
+}
+
+CAmount CachedTxGetPrivateInternalCredit(const CWallet& wallet, const CWalletTx& wtx)
+{
+    return CachedTxGetPrivateCreditByChange(wallet, wtx, true);
+}
+
+CAmount CachedTxGetPrivateDebit(const CWallet& wallet, const CWalletTx& wtx)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (!wtx.tx->HasPrivateBundle()) return 0;
+
+    std::set<uint256> spent_notes;
+    CAmount debit{0};
+    for (const auto& action : wtx.tx->m_private_bundle->effects.actions) {
+        if (action.nullifier.IsNull()) continue;
+        const auto nf = wallet.mapPrivateNoteNullifiers.find(action.nullifier);
+        if (nf == wallet.mapPrivateNoteNullifiers.end()) continue;
+        const auto found = wallet.mapPrivateNotes.find(nf->second);
+        if (found == wallet.mapPrivateNotes.end()) continue;
+        const auto& note = found->second;
+        if (note.nullifier != action.nullifier || !spent_notes.insert(found->first).second) continue;
+        if (!MoneyAddSigned(debit, note.value, debit)) {
+            throw std::runtime_error(std::string(__func__) + ": value out of range");
+        }
+    }
+    return debit;
+}
+
+CAmount CachedTxGetPrivateValueBalance(const CWalletTx& wtx)
+{
+    return wtx.tx->HasPrivateBundle() ? wtx.tx->m_private_bundle->GetValueBalance() : 0;
+}
+
+CAmount CachedTxGetFee(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter)
+{
+    AssertLockHeld(wallet.cs_wallet);
+
+    const CAmount transparent_debit = CachedTxGetDebit(wallet, wtx, filter);
+    const CAmount private_debit = CachedTxGetPrivateDebit(wallet, wtx);
+    if (transparent_debit <= 0 && private_debit <= 0) return 0;
+
+    if (wtx.tx->HasPrivateBundle()) {
+        const CAmount private_value_balance = wtx.tx->m_private_bundle->GetValueBalance();
+
+        CAmount wallet_visible_effective_in = transparent_debit;
+        if (!MoneyAddSigned(wallet_visible_effective_in, private_value_balance, wallet_visible_effective_in)) {
+            throw std::runtime_error(std::string(__func__) + ": value out of range");
+        }
+
+        CAmount wallet_visible_fee = wallet_visible_effective_in - wtx.tx->GetValueOut();
+        if (wallet_visible_fee >= 0 && MoneyRange(wallet_visible_fee)) {
+            return wallet_visible_fee;
+        }
+
+        if (private_debit > 0) {
+            CAmount private_fee = private_value_balance - wtx.tx->GetValueOut();
+            if (private_fee >= 0 && MoneyRange(private_fee)) {
+                return private_fee;
+            }
+        }
+
+        wallet.WalletLogPrintf("Unable to infer wallet fee for private transaction %s from wallet-visible inputs; reporting fee as unknown\n",
+                               wtx.GetHash().ToString());
+        return 0;
+    }
+
+    CAmount value_in_effective = transparent_debit;
+
+    const CAmount fee = value_in_effective - wtx.tx->GetValueOut();
+    if (fee < 0 || !MoneyRange(fee)) {
+        wallet.WalletLogPrintf("Unable to infer wallet fee for transaction %s from wallet-visible inputs; reporting fee as unknown\n",
+                               wtx.GetHash().ToString());
+        return 0;
+    }
+    return fee;
+}
+
 CAmount CachedTxGetChange(const CWallet& wallet, const CWalletTx& wtx)
 {
     if (wtx.fChangeCached)
         return wtx.nChangeCached;
-    wtx.nChangeCached = TxGetChange(wallet, *wtx.tx);
+    LOCK(wallet.cs_wallet);
+    CAmount nChange{0};
+    for (const CTxOut& txout : wtx.tx->vout) {
+        if (OutputIsChange(wallet, txout)) {
+            if (!MoneyAddSigned(nChange, txout.nValue, nChange)) {
+                throw std::runtime_error(std::string(__func__) + ": value out of range");
+            }
+        }
+    }
+    wtx.nChangeCached = nChange;
     wtx.fChangeCached = true;
     return wtx.nChangeCached;
 }
@@ -201,15 +354,15 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
     listReceived.clear();
     listSent.clear();
 
+    LOCK(wallet.cs_wallet);
+
     // Compute fee:
     CAmount nDebit = CachedTxGetDebit(wallet, wtx, filter);
-    if (nDebit > 0) // debit>0 means we signed/sent this transaction
-    {
-        CAmount nValueOut = wtx.tx->GetValueOut();
-        nFee = nDebit - nValueOut;
-    }
+    const CAmount nPrivateDebit = CachedTxGetPrivateDebit(wallet, wtx);
+    const bool fFromMe = nDebit > 0 || nPrivateDebit > 0;
+    if (fFromMe) // debit>0 means we signed/sent this transaction
+        nFee = CachedTxGetFee(wallet, wtx, filter);
 
-    LOCK(wallet.cs_wallet);
     // Sent/received.
     for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i)
     {
@@ -218,7 +371,7 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
         // Only need to handle txouts if AT LEAST one of these is true:
         //   1) they debit from us (sent)
         //   2) the output is to us (received)
-        if (nDebit > 0)
+        if (fFromMe)
         {
             if (!include_change && OutputIsChange(wallet, txout))
                 continue;
@@ -239,7 +392,7 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
         COutputEntry output = {address, txout.nValue, (int)i};
 
         // If we are debited by the transaction, add the output as a "sent" entry
-        if (nDebit > 0)
+        if (fFromMe)
             listSent.push_back(output);
 
         // If we are receiving the output, add it as a "received" entry
@@ -251,7 +404,8 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
 
 bool CachedTxIsFromMe(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter)
 {
-    return (CachedTxGetDebit(wallet, wtx, filter) > 0);
+    LOCK(wallet.cs_wallet);
+    return CachedTxGetDebit(wallet, wtx, filter) > 0 || CachedTxGetPrivateDebit(wallet, wtx) > 0;
 }
 
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uint256>& trusted_parents)

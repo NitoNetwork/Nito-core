@@ -6,6 +6,8 @@
 #ifndef BITCOIN_QT_CREATEWALLETDIALOG_H
 #define BITCOIN_QT_CREATEWALLETDIALOG_H
 
+#include <support/allocators/secure.h>
+
 #include <QDialog>
 
 #include <memory>
@@ -37,8 +39,21 @@ public:
     bool isDisablePrivateKeysChecked() const;
     bool isMakeBlankWalletChecked() const;
     bool isExternalSignerChecked() const;
+    bool isRestoreMnemonicChecked() const;
+    bool isRestoreFileChecked() const;
+    bool isBIP39PassphraseChecked() const;
+    SecureString recoveryPhrase() const;
+    SecureString bip39Passphrase() const;
+    void clearSensitiveFields();
 
 private:
+    void clearBIP39Passphrase();
+    int recoveryPhraseWordCount() const;
+    bool validateBIP39Passphrase(QString& error) const;
+    void updateCreateButtonState();
+    void updateRecoveryPhraseState();
+    void updateBIP39PassphraseState();
+
     Ui::CreateWalletDialog *ui;
     bool m_has_signers = false;
 };

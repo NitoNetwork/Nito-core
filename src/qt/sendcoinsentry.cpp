@@ -91,7 +91,7 @@ void SendCoinsEntry::clear()
     ui->messageTextLabel->hide();
     ui->messageLabel->hide();
 
-    // update the display unit, to not use the default ("BTC")
+    // update the display unit, to not use the default ("NITO")
     updateDisplayUnit();
 }
 
@@ -136,8 +136,8 @@ bool SendCoinsEntry::validate(interfaces::Node& node)
         retval = false;
     }
 
-    // Reject dust outputs:
-    if (retval && GUIUtil::isDust(node, ui->payTo->text(), ui->payAmount->value())) {
+    // Private recipients are encoded in the Orchard bundle, not as transparent txouts.
+    if (retval && !model->isPrivateAddress(ui->payTo->text()) && GUIUtil::isDust(node, ui->payTo->text(), ui->payAmount->value())) {
         ui->payAmount->setValid(false);
         retval = false;
     }
@@ -159,13 +159,14 @@ SendCoinsRecipient SendCoinsEntry::getValue()
 QWidget *SendCoinsEntry::setupTabChain(QWidget *prev)
 {
     QWidget::setTabOrder(prev, ui->payTo);
-    QWidget::setTabOrder(ui->payTo, ui->addAsLabel);
-    QWidget *w = ui->payAmount->setupTabChain(ui->addAsLabel);
-    QWidget::setTabOrder(w, ui->checkboxSubtractFeeFromAmount);
-    QWidget::setTabOrder(ui->checkboxSubtractFeeFromAmount, ui->addressBookButton);
+    QWidget::setTabOrder(ui->payTo, ui->addressBookButton);
     QWidget::setTabOrder(ui->addressBookButton, ui->pasteButton);
     QWidget::setTabOrder(ui->pasteButton, ui->deleteButton);
-    return ui->deleteButton;
+    QWidget *w = ui->payAmount->setupTabChain(ui->deleteButton);
+    QWidget::setTabOrder(w, ui->checkboxSubtractFeeFromAmount);
+    QWidget::setTabOrder(ui->checkboxSubtractFeeFromAmount, ui->useAvailableBalanceButton);
+    QWidget::setTabOrder(ui->useAvailableBalanceButton, ui->addAsLabel);
+    return ui->addAsLabel;
 }
 
 void SendCoinsEntry::setValue(const SendCoinsRecipient &value)

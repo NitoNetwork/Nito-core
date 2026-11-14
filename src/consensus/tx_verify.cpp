@@ -9,6 +9,7 @@
 #include <coins.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
+#include <consensus/private_tx_verify.h>
 #include <consensus/validation.h>
 #include <primitives/transaction.h>
 #include <script/interpreter.h>
@@ -166,7 +167,7 @@ int64_t GetTransactionSigOpCost(const CTransaction& tx, const CCoinsViewCache& i
     return nSigOps;
 }
 
-bool Consensus::CheckTxInputs(const CTransaction& tx, TxValidationState& state, const CCoinsViewCache& inputs, int nSpendHeight, CAmount& txfee)
+bool Consensus::CheckTxInputs(const CTransaction& tx, TxValidationState& state, const CCoinsViewCache& inputs, int nSpendHeight, CAmount& txfee, bool check_private_proofs, PrivateProofCacheMode private_proof_cache_mode)
 {
     // are the actual inputs available?
     if (!inputs.HaveInputs(tx)) {
@@ -193,14 +194,24 @@ bool Consensus::CheckTxInputs(const CTransaction& tx, TxValidationState& state, 
         }
     }
 
+    CAmount value_in_effective = nValueIn;
+    if (tx.HasPrivateBundle()) {
+        if (check_private_proofs && !CheckPrivateBundleProofs(tx, state, private_proof_cache_mode)) {
+            return false;
+        }
+        if (!MoneyAddSigned(value_in_effective, tx.m_private_bundle->GetValueBalance(), value_in_effective)) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-private-valuebalance-outofrange");
+        }
+    }
+
     const CAmount value_out = tx.GetValueOut();
-    if (nValueIn < value_out) {
+    if (value_in_effective < value_out) {
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-in-belowout",
-            strprintf("value in (%s) < value out (%s)", FormatMoney(nValueIn), FormatMoney(value_out)));
+            strprintf("value in (%s) < value out (%s)", FormatMoney(value_in_effective), FormatMoney(value_out)));
     }
 
     // Tally transaction fees
-    const CAmount txfee_aux = nValueIn - value_out;
+    const CAmount txfee_aux = value_in_effective - value_out;
     if (!MoneyRange(txfee_aux)) {
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-fee-outofrange");
     }

@@ -15,7 +15,6 @@ from test_framework.blocktools import (
     create_coinbase,
     get_witness_script,
     NORMAL_GBT_REQUEST_PARAMS,
-    TIME_GENESIS_BLOCK,
 )
 from test_framework.messages import (
     BLOCK_HEADER_SIZE,
@@ -58,7 +57,8 @@ class MiningTest(NitoTestFramework):
 
     def mine_chain(self):
         self.log.info('Create some old blocks')
-        for t in range(TIME_GENESIS_BLOCK, TIME_GENESIS_BLOCK + 200 * 600, 600):
+        for _ in range(200):
+            t = self.nodes[0].getblockheader(self.nodes[0].getbestblockhash())['time'] + 121
             self.nodes[0].setmocktime(t)
             self.generate(self.wallet, 1, sync_fun=self.no_op)
         mining_info = self.nodes[0].getmininginfo()
@@ -133,7 +133,7 @@ class MiningTest(NitoTestFramework):
         assert 'currentblocktx' not in mining_info
         assert 'currentblockweight' not in mining_info
         assert_equal(mining_info['difficulty'], Decimal('4.656542373906925E-10'))
-        assert_equal(mining_info['networkhashps'], Decimal('0.003333333333333334'))
+        assert_equal(mining_info['networkhashps'], Decimal('0.01652892561983471'))
         assert_equal(mining_info['pooledtx'], 0)
 
         self.log.info("getblocktemplate: Test default witness commitment")
@@ -243,7 +243,7 @@ class MiningTest(NitoTestFramework):
 
         self.log.info("getblocktemplate: Test bad timestamps")
         bad_block = copy.deepcopy(block)
-        bad_block.nTime = 2**32 - 1
+        bad_block.nTime = tmpl["curtime"] + 2 * 60 * 60 + 1
         assert_template(node, bad_block, 'time-too-new')
         assert_submitblock(bad_block, 'time-too-new', 'time-too-new')
         bad_block.nTime = 0

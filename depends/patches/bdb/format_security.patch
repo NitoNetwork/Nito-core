@@ -1,0 +1,18 @@
+--- a/txn/txn.c
++++ b/txn/txn.c
+@@ -169,6 +169,6 @@ __txn_begin(env, ip, parent, txnpp, flags)
+ 	*txnpp = NULL;
+ 	if ((ret = __os_calloc(env, 1, sizeof(DB_TXN), &txn)) != 0) {
+-		__db_errx(env, TxnAlloc);
++		__db_errx(env, "%s", TxnAlloc);
+ 		return (ret);
+ 	}
+ 
+@@ -316,6 +316,6 @@ __txn_compensate_begin(env, txnpp)
+ 
+ 	if ((ret = __os_calloc(env, 1, sizeof(DB_TXN), &txn)) != 0) {
+-		__db_errx(env, TxnAlloc);
++		__db_errx(env, "%s", TxnAlloc);
+ 		return (ret);
+ 	}
+ 

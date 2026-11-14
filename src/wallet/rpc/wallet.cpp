@@ -9,10 +9,15 @@
 #endif
 
 #include <core_io.h>
+#include <chainparams.h>
+#include <interfaces/wallet.h>
 #include <key_io.h>
 #include <rpc/server.h>
 #include <rpc/util.h>
+#include <util/fs.h>
+#include <util/time.h>
 #include <util/translation.h>
+#include <wallet/bip39.h>
 #include <wallet/context.h>
 #include <wallet/receive.h>
 #include <wallet/rpc/wallet.h>
@@ -20,7 +25,9 @@
 #include <wallet/wallet.h>
 #include <wallet/walletutil.h>
 
+#include <algorithm>
 #include <optional>
+#include <utility>
 
 #include <univalue.h>
 
@@ -40,6 +47,54 @@ bool HaveKey(const SigningProvider& wallet, const CKey& key)
     CKey key2;
     key2.Set(key.begin(), key.end(), !key.IsCompressed());
     return wallet.HaveKey(key.GetPubKey().GetID()) || wallet.HaveKey(key2.GetPubKey().GetID());
+}
+
+struct HDSeedInput
+{
+    CKey key;
+    bool bip39_mnemonic{false};
+    bool generated_random{false};
+};
+
+static SecureString GetBIP39PassphraseFromRPCArgument(const UniValue& value)
+{
+    if (value.isNull()) return {};
+
+    const std::string& raw_passphrase{value.get_str()};
+    if (raw_passphrase.size() > MAX_BIP39_PASSPHRASE_SIZE) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf(
+            "BIP39 passphrase exceeds the maximum of %u UTF-8 bytes",
+            static_cast<unsigned>(MAX_BIP39_PASSPHRASE_SIZE)));
+    }
+
+    SecureString passphrase;
+    passphrase.reserve(raw_passphrase.size());
+    passphrase.assign(raw_passphrase.begin(), raw_passphrase.end());
+    auto normalized = NormalizeBIP39Passphrase(passphrase);
+    if (!normalized) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, util::ErrorString(normalized).original);
+    }
+    return std::move(*normalized);
+}
+
+HDSeedInput GetSeedKeyFromRPCArgument(const UniValue& value)
+{
+    if (value.isNull()) {
+        return {GenerateRandomKey(), /*bip39_mnemonic=*/false, /*generated_random=*/true};
+    }
+
+    const std::string seed{value.get_str()};
+    CKey key = DecodeSecret(seed);
+    if (key.IsValid()) {
+        return {key, /*bip39_mnemonic=*/false, /*generated_random=*/false};
+    }
+
+    auto mnemonic_key = DecodeBIP39Mnemonic(seed);
+    if (!mnemonic_key) {
+        const std::string error = LooksLikeBIP39Mnemonic(seed) ? util::ErrorString(mnemonic_key).original : "Invalid private key or BIP39 mnemonic";
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, error);
+    }
+    return {std::move(*mnemonic_key), /*bip39_mnemonic=*/true, /*generated_random=*/false};
 }
 
 static RPCHelpMan getwalletinfo()
@@ -64,6 +119,7 @@ static RPCHelpMan getwalletinfo()
                         {RPCResult::Type::NUM_TIME, "unlocked_until", /*optional=*/true, "the " + UNIX_EPOCH_TIME + " until which the wallet is unlocked for transfers, or 0 if the wallet is locked (only present for passphrase-encrypted wallets)"},
                         {RPCResult::Type::STR_AMOUNT, "paytxfee", "the transaction fee configuration, set in " + CURRENCY_UNIT + "/kvB"},
                         {RPCResult::Type::STR_HEX, "hdseedid", /*optional=*/true, "the Hash160 of the HD seed (only present when HD is enabled)"},
+                        {RPCResult::Type::BOOL, "bip39_passphrase_enabled", /*optional=*/true, "true when restoring this recovery phrase also requires its BIP39 passphrase"},
                         {RPCResult::Type::BOOL, "private_keys_enabled", "false if privatekeys are disabled for this wallet (enforced watch-only wallet)"},
                         {RPCResult::Type::BOOL, "avoid_reuse", "whether this wallet tracks clean/dirty coins in terms of reuse"},
                         {RPCResult::Type::OBJ, "scanning", "current scanning details, or false if no scan is in progress",
@@ -74,6 +130,16 @@ static RPCHelpMan getwalletinfo()
                         {RPCResult::Type::BOOL, "descriptors", "whether this wallet uses descriptors for scriptPubKey management"},
                         {RPCResult::Type::BOOL, "external_signer", "whether this wallet is configured to use an external signer such as a hardware wallet"},
                         {RPCResult::Type::BOOL, "blank", "Whether this wallet intentionally does not contain any keys, scripts, or descriptors"},
+                        {RPCResult::Type::OBJ, "seed_history", "Nito recovery-phrase history status",
+                        {
+                            {RPCResult::Type::STR, "mode", "\"unknown\", \"available_balance\", or \"full_history\""},
+                            {RPCResult::Type::BOOL, "sync_pending", "true when automatic recovery is still catching up with chain synchronization"},
+                            {RPCResult::Type::NUM, "full_history_height", "Last block height covered by a full-history scan, or -1 if never completed"},
+                            {RPCResult::Type::STR_HEX, "full_history_block", "Last block hash covered by a full-history scan, or null hash if never completed"},
+                            {RPCResult::Type::OBJ, "transparent", "Transparent recovery obligations", {}, /*skip_type_check=*/true},
+                            {RPCResult::Type::OBJ, "orchard", "Orchard recovery obligations", {}, /*skip_type_check=*/true},
+                            {RPCResult::Type::OBJ, "locked_live", "Deferred Orchard live scan received while the wallet was locked", {}, /*skip_type_check=*/true},
+                        }},
                         {RPCResult::Type::NUM_TIME, "birthtime", /*optional=*/true, "The start time for blocks scanning. It could be modified by (re)importing any descriptor with an earlier timestamp."},
                         RESULT_LAST_PROCESSED_BLOCK,
                     }},
@@ -96,6 +162,9 @@ static RPCHelpMan getwalletinfo()
     UniValue obj(UniValue::VOBJ);
 
     size_t kpExternalSize = pwallet->KeypoolCountExternalKeys();
+    const bool available_balance_sync_pending{pwallet->IsAvailableBalanceSyncPending()};
+    const SeedHistoryState seed_history{pwallet->GetSeedHistoryState()};
+    const CPrivateWalletChain private_chain{pwallet->GetOrchardKeyMan().GetChain()};
     const auto bal = GetBalance(*pwallet);
     obj.pushKV("walletname", pwallet->GetName());
     obj.pushKV("walletversion", pwallet->GetVersion());
@@ -103,7 +172,14 @@ static RPCHelpMan getwalletinfo()
     obj.pushKV("balance", ValueFromAmount(bal.m_mine_trusted));
     obj.pushKV("unconfirmed_balance", ValueFromAmount(bal.m_mine_untrusted_pending));
     obj.pushKV("immature_balance", ValueFromAmount(bal.m_mine_immature));
-    obj.pushKV("txcount",       (int)pwallet->mapWallet.size());
+    int tx_count{static_cast<int>(pwallet->mapWallet.size())};
+    if (seed_history.m_mode == SeedHistoryMode::AVAILABLE_BALANCE) {
+        tx_count = 0;
+        for (const auto& entry : pwallet->mapWallet) {
+            if (pwallet->ShouldShowTransaction(entry.second)) ++tx_count;
+        }
+    }
+    obj.pushKV("txcount", tx_count);
     const auto kp_oldest = pwallet->GetOldestKeyPoolTime();
     if (kp_oldest.has_value()) {
         obj.pushKV("keypoololdest", kp_oldest.value());
@@ -125,6 +201,9 @@ static RPCHelpMan getwalletinfo()
         obj.pushKV("unlocked_until", pwallet->nRelockTime);
     }
     obj.pushKV("paytxfee", ValueFromAmount(pwallet->m_pay_tx_fee.GetFeePerK()));
+    if (!private_chain.hd_seed_id.IsNull()) {
+        obj.pushKV("bip39_passphrase_enabled", pwallet->IsBIP39PassphraseEnabled());
+    }
     obj.pushKV("private_keys_enabled", !pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS));
     obj.pushKV("avoid_reuse", pwallet->IsWalletFlagSet(WALLET_FLAG_AVOID_REUSE));
     if (pwallet->IsScanning()) {
@@ -138,6 +217,41 @@ static RPCHelpMan getwalletinfo()
     obj.pushKV("descriptors", pwallet->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS));
     obj.pushKV("external_signer", pwallet->IsWalletFlagSet(WALLET_FLAG_EXTERNAL_SIGNER));
     obj.pushKV("blank", pwallet->IsWalletFlagSet(WALLET_FLAG_BLANK_WALLET));
+    UniValue seed_history_obj(UniValue::VOBJ);
+    seed_history_obj.pushKV("mode", seed_history.ModeString());
+    seed_history_obj.pushKV("sync_pending", available_balance_sync_pending);
+    seed_history_obj.pushKV("full_history_height", seed_history.m_full_history_height);
+    seed_history_obj.pushKV("full_history_block", seed_history.m_full_history_block.GetHex());
+    auto recovery_progress_json = [](const SeedRecoveryProgress& progress) {
+        UniValue value(UniValue::VOBJ);
+        value.pushKV("status", progress.StatusString());
+        value.pushKV("target_height", progress.m_height);
+        value.pushKV("target_block", progress.m_block.GetHex());
+        return value;
+    };
+    auto recovery_domain_json = [&](const SeedRecoveryDomainState& domain) {
+        UniValue value(UniValue::VOBJ);
+        value.pushKV("restore_funds", recovery_progress_json(domain.m_restore_funds));
+        value.pushKV("explicit_history", recovery_progress_json(domain.m_explicit_history));
+        return value;
+    };
+    seed_history_obj.pushKV("transparent", recovery_domain_json(seed_history.m_transparent));
+    seed_history_obj.pushKV("orchard", recovery_domain_json(seed_history.m_orchard));
+    UniValue locked_live(UniValue::VOBJ);
+    if (private_chain.hd_seed_id.IsNull()) {
+        locked_live.pushKV("status", "not_applicable");
+    } else if (private_chain.private_locked_live_scan.IsPending()) {
+        locked_live.pushKV("status", "pending");
+    } else {
+        locked_live.pushKV("status", "complete");
+    }
+    locked_live.pushKV("start_height", private_chain.private_locked_live_scan.start_height);
+    locked_live.pushKV("start_block", private_chain.private_locked_live_scan.start_block.GetHex());
+    locked_live.pushKV("target_height", private_chain.private_locked_live_scan.target_height);
+    locked_live.pushKV("target_block", private_chain.private_locked_live_scan.target_block.GetHex());
+    locked_live.pushKV("generation", private_chain.private_locked_live_scan.generation);
+    seed_history_obj.pushKV("locked_live", locked_live);
+    obj.pushKV("seed_history", seed_history_obj);
     if (int64_t birthtime = pwallet->GetBirthTime(); birthtime != UNKNOWN_TIME) {
         obj.pushKV("birthtime", birthtime);
     }
@@ -356,6 +470,7 @@ static RPCHelpMan createwallet()
                                                                        " support for creating and opening legacy wallets will be removed in the future."},
             {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Save wallet name to persistent settings and load on startup. True to add wallet to startup list, false to remove, null to leave unchanged."},
             {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true."},
+            {"bip39_passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Optional BIP39 passphrase for the generated recovery phrase. This is distinct from the wallet encryption passphrase and is never stored. It is supported only by non-blank descriptor wallets with private keys enabled. Use -named -stdin with nito-cli so this secret is not exposed in process arguments."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "",
@@ -398,7 +513,26 @@ static RPCHelpMan createwallet()
     if (!request.params[4].isNull() && request.params[4].get_bool()) {
         flags |= WALLET_FLAG_AVOID_REUSE;
     }
-    if (self.Arg<bool>(5)) {
+
+    SecureString bip39_passphrase{GetBIP39PassphraseFromRPCArgument(request.params[8])};
+    const bool use_descriptors{self.Arg<bool>(5)};
+    const bool use_external_signer{!request.params[7].isNull() && request.params[7].get_bool()};
+    if (!bip39_passphrase.empty()) {
+        if (!use_descriptors) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "A BIP39 passphrase is supported only for descriptor wallets");
+        }
+        if (flags & WALLET_FLAG_BLANK_WALLET) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "A BIP39 passphrase cannot be used when creating a blank wallet");
+        }
+        if (flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "A BIP39 passphrase cannot be used when private keys are disabled");
+        }
+        if (use_external_signer) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "A BIP39 passphrase cannot be used with an external signer");
+        }
+    }
+
+    if (use_descriptors) {
 #ifndef USE_SQLITE
         throw JSONRPCError(RPC_WALLET_ERROR, "Compiled without sqlite support (required for descriptor wallets)");
 #endif
@@ -409,7 +543,7 @@ static RPCHelpMan createwallet()
                                                  " In this release it can be re-enabled temporarily with the -deprecatedrpc=create_bdb setting.");
         }
     }
-    if (!request.params[7].isNull() && request.params[7].get_bool()) {
+    if (use_external_signer) {
 #ifdef ENABLE_EXTERNAL_SIGNER
         flags |= WALLET_FLAG_EXTERNAL_SIGNER;
 #else
@@ -429,6 +563,7 @@ static RPCHelpMan createwallet()
     options.require_create = true;
     options.create_flags = flags;
     options.create_passphrase = passphrase;
+    options.create_bip39_passphrase = bip39_passphrase;
     bilingual_str error;
     std::optional<bool> load_on_start = request.params[6].isNull() ? std::nullopt : std::optional<bool>(request.params[6].get_bool());
     const std::shared_ptr<CWallet> wallet = CreateWallet(context, request.params[0].get_str(), load_on_start, options, status, error, warnings);
@@ -514,20 +649,22 @@ static RPCHelpMan sethdseed()
                 "\nSet or generate a new HD wallet seed. Non-HD wallets will not be upgraded to being a HD wallet. Wallets that are already\n"
                 "HD will have a new HD seed set so that new keys added to the keypool will be derived from this new seed.\n"
                 "\nNote that you will need to MAKE A NEW BACKUP of your wallet after setting the HD wallet seed." + HELP_REQUIRING_PASSPHRASE +
-                "Note: This command is only compatible with legacy wallets.\n",
+                "Note: Existing descriptor wallets cannot rotate their seed with this command. For descriptor wallets, sethdseed can only initialize a blank descriptor wallet from a BIP39 mnemonic; WIF input remains available only to legacy wallets.\n"
+                "When initializing a blank descriptor wallet from a BIP39 recovery phrase, Nito automatically restores complete chain-derived sent and received history together with current spendable funds. Existing chains require the transparent history index and, after private activation, the Orchard index. Keep wallet.dat backups for labels, metadata, and any non-seed/imported keys.\n",
                 {
                     {"newkeypool", RPCArg::Type::BOOL, RPCArg::Default{true}, "Whether to flush old unused addresses, including change addresses, from the keypool and regenerate it.\n"
                                          "If true, the next address from getnewaddress and change address from getrawchangeaddress will be from this new seed.\n"
                                          "If false, addresses (including change addresses if the wallet already had HD Chain Split enabled) from the existing\n"
                                          "keypool will be used until it has been depleted."},
-                    {"seed", RPCArg::Type::STR, RPCArg::DefaultHint{"random seed"}, "The WIF private key to use as the new HD seed.\n"
-                                         "The seed value can be retrieved using the dumpwallet command. It is the private key marked hdseed=1"},
+                    {"seed", RPCArg::Type::STR, RPCArg::DefaultHint{"random seed"}, "The BIP39 English 12- or 24-word mnemonic to use as the new HD seed, or a WIF private key for legacy wallets only.\n"
+                                         "The WIF seed value can be retrieved using the dumpwallet command. It is the private key marked hdseed=1.\n"
+                                         "The mnemonic seed value can be retrieved using the dumpmnemonic command."},
+                    {"bip39_passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Optional BIP39 passphrase for the generated or supplied mnemonic used to initialize a blank descriptor wallet. This is distinct from the wallet encryption passphrase and is never stored. It is not supported with WIF or legacy wallets. Use -named -stdin with nito-cli so mnemonic and passphrase are not exposed in process arguments."},
                 },
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
                     HelpExampleCli("sethdseed", "")
             + HelpExampleCli("sethdseed", "false")
-            + HelpExampleCli("sethdseed", "true \"wifkey\"")
             + HelpExampleRpc("sethdseed", "true, \"wifkey\"")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
@@ -535,17 +672,8 @@ static RPCHelpMan sethdseed()
     std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
     if (!pwallet) return UniValue::VNULL;
 
-    LegacyScriptPubKeyMan& spk_man = EnsureLegacyScriptPubKeyMan(*pwallet, true);
-
     if (pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Cannot set a HD seed to a wallet with private keys disabled");
-    }
-
-    LOCK2(pwallet->cs_wallet, spk_man.cs_KeyStore);
-
-    // Do not do anything to non-HD wallets
-    if (!pwallet->CanSupportFeature(FEATURE_HD)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Cannot set an HD seed on a non-HD wallet. Use the upgradewallet RPC in order to upgrade a non-HD wallet to HD");
     }
 
     EnsureWalletIsUnlocked(*pwallet);
@@ -555,26 +683,259 @@ static RPCHelpMan sethdseed()
         flush_key_pool = request.params[0].get_bool();
     }
 
-    CPubKey master_pub_key;
-    if (request.params[1].isNull()) {
-        master_pub_key = spk_man.GenerateNewSeed();
-    } else {
-        CKey key = DecodeSecret(request.params[1].get_str());
-        if (!key.IsValid()) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key");
-        }
+    SecureString bip39_passphrase{GetBIP39PassphraseFromRPCArgument(request.params[2])};
+    const HDSeedInput seed_input = GetSeedKeyFromRPCArgument(request.params[1]);
+    const CKey& key = seed_input.key;
 
-        if (HaveKey(spk_man, key)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key (either as an HD seed or as a loose private key)");
+    const bool descriptor_wallet{pwallet->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)};
+    if (!bip39_passphrase.empty()) {
+        if (!descriptor_wallet) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "A BIP39 passphrase is not supported by legacy wallets");
         }
-
-        master_pub_key = spk_man.DeriveNewSeed(key);
+        if (!seed_input.bip39_mnemonic && !seed_input.generated_random) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "A BIP39 passphrase cannot be used with a WIF seed");
+        }
     }
 
+    if (descriptor_wallet) {
+        if (pwallet->HaveChain()) {
+            const std::optional<int> chain_height{pwallet->chain().getHeight()};
+            if (chain_height && *chain_height > 0) {
+                const uint256 chain_tip{pwallet->chain().getBlockHash(*chain_height)};
+                if (!pwallet->chain().hasBlocks(chain_tip, 0, *chain_height)) {
+                    throw JSONRPCError(RPC_MISC_ERROR, PrunedWalletRecoveryError().original);
+                }
+                if (!pwallet->chain().hasTransparentHistoryIndex()) {
+                    throw JSONRPCError(RPC_WALLET_ERROR, "A recovery phrase requires -transparenthistoryindex=1 when restoring an existing chain");
+                }
+                const int private_activation_height{Params().GetConsensus().privateTxActivationHeight};
+                if (private_activation_height >= 0 && *chain_height >= private_activation_height &&
+                    !pwallet->chain().hasOrchardIndex()) {
+                    throw JSONRPCError(RPC_WALLET_ERROR, "A recovery phrase requires -orchardindex=1 after private activation");
+                }
+            }
+        }
+        {
+            LOCK(pwallet->cs_wallet);
+            if (!pwallet->IsWalletFlagSet(WALLET_FLAG_BLANK_WALLET) || !pwallet->GetActiveScriptPubKeyMans().empty()) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Descriptor wallet HD seed can only be set on a blank descriptor wallet");
+            }
+            if (!seed_input.bip39_mnemonic && !seed_input.generated_random) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Descriptor wallet HD seed initialization requires a BIP39 mnemonic; WIF input is not supported");
+            }
+
+            pwallet->SetupDescriptorScriptPubKeyMans(key, bip39_passphrase);
+        }
+
+        pwallet->BlockUntilSyncedToCurrentChain();
+        int recovery_target_height{0};
+        uint256 recovery_target_block{Params().GenesisBlock().GetHash()};
+        {
+            LOCK(pwallet->cs_wallet);
+            if (pwallet->GetLastBlockHeight() >= 0 && !pwallet->GetLastBlockHash().IsNull()) {
+                recovery_target_height = pwallet->GetLastBlockHeight();
+                recovery_target_block = pwallet->GetLastBlockHash();
+            }
+        }
+        SeedHistoryState recovery_state{SeedHistoryState::AvailableBalance(
+            recovery_target_height,
+            recovery_target_block,
+            /*orchard_applicable=*/true)};
+        recovery_state.MarkHistory(/*orchard=*/false, SeedRecoveryStatus::PENDING, recovery_target_height, recovery_target_block);
+        recovery_state.MarkHistory(/*orchard=*/true, SeedRecoveryStatus::PENDING, recovery_target_height, recovery_target_block);
+        if (!pwallet->SetSeedHistoryState(recovery_state)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Could not save pending complete recovery state after setting HD seed");
+        }
+        if (!pwallet->TopUpSeedRestoreKeyPool()) {
+            recovery_state.MarkFunds(/*orchard=*/false, SeedRecoveryStatus::FAILED, recovery_target_height, recovery_target_block);
+            recovery_state.MarkFunds(/*orchard=*/true, SeedRecoveryStatus::FAILED, recovery_target_height, recovery_target_block);
+            recovery_state.MarkHistory(/*orchard=*/false, SeedRecoveryStatus::FAILED, recovery_target_height, recovery_target_block);
+            recovery_state.MarkHistory(/*orchard=*/true, SeedRecoveryStatus::FAILED, recovery_target_height, recovery_target_block);
+            if (!pwallet->SetSeedHistoryState(recovery_state)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Could not save failed recovery state after address discovery preparation failed");
+            }
+            throw JSONRPCError(RPC_WALLET_ERROR, "Could not prepare wallet address discovery after setting HD seed");
+        }
+        if (auto restored = pwallet->RestoreSeedHistory(
+                /*wait_for_indexes=*/true,
+                /*show_progress=*/true);
+            !restored) {
+            throw JSONRPCError(RPC_WALLET_ERROR, util::ErrorString(restored).original);
+        }
+        return UniValue::VNULL;
+    }
+
+    LegacyScriptPubKeyMan& spk_man = EnsureLegacyScriptPubKeyMan(*pwallet, true);
+    LOCK2(pwallet->cs_wallet, spk_man.cs_KeyStore);
+
+    if (pwallet->HasCanonicalPrivateHDSeed()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Cannot rotate the transparent HD seed after a canonical Orchard recovery root exists; this protects existing Orchard notes");
+    }
+
+    // Do not do anything to non-HD wallets
+    if (!pwallet->CanSupportFeature(FEATURE_HD)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Cannot set an HD seed on a non-HD wallet. Use the upgradewallet RPC in order to upgrade a non-HD wallet to HD");
+    }
+
+    if (HaveKey(spk_man, key)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key (either as an HD seed or as a loose private key)");
+    }
+
+    CPubKey master_pub_key = spk_man.DeriveNewSeed(key);
     spk_man.SetHDSeed(master_pub_key);
     if (flush_key_pool) spk_man.NewKeyPool();
 
     return UniValue::VNULL;
+},
+    };
+}
+
+static RPCHelpMan upgradeorchardwallet()
+{
+    return RPCHelpMan{"upgradeorchardwallet",
+        "\nAdd one canonical BIP39 Orchard recovery root to an existing V3 wallet without changing its transparent keys, descriptors, address sequence, labels, or default receive type.\n"
+        "A wallet.dat backup is created beside the wallet before any mutation. The returned phrase covers Orchard only; the backup remains required for pre-existing V3 transparent and imported keys." + HELP_REQUIRING_PASSPHRASE,
+        {
+            {"mnemonic", RPCArg::Type::STR, RPCArg::DefaultHint{"new random 24-word phrase"}, "Optional BIP39 English 12- or 24-word Orchard recovery phrase."},
+            {"bip39_passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Optional BIP39 passphrase for this Orchard recovery phrase. This is distinct from the wallet encryption passphrase and is never stored. Use -named -stdin with nito-cli so mnemonic and passphrase are not exposed in process arguments."},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "",
+            {
+                {RPCResult::Type::STR, "mnemonic", "BIP39 Orchard recovery phrase"},
+                {RPCResult::Type::STR, "scope", "Recovery scope; always orchard_only for an upgraded V3 wallet"},
+                {RPCResult::Type::BOOL, "bip39_passphrase_required", "true when this phrase must be restored with its BIP39 passphrase"},
+                {RPCResult::Type::STR, "backup", "Pre-upgrade wallet.dat backup path"},
+                {RPCResult::Type::STR, "warning", "Reminder that the V3 backup remains required"},
+            }},
+        RPCExamples{
+            HelpExampleCli("upgradeorchardwallet", "")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!pwallet) return UniValue::VNULL;
+
+    EnsureWalletIsUnlocked(*pwallet);
+    pwallet->BlockUntilSyncedToCurrentChain();
+
+    SecureString bip39_passphrase{GetBIP39PassphraseFromRPCArgument(request.params[1])};
+
+    CKey orchard_seed;
+    if (request.params[0].isNull()) {
+        orchard_seed = GenerateRandomKey();
+    } else {
+        auto decoded = DecodeBIP39Mnemonic(request.params[0].get_str());
+        if (!decoded) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, util::ErrorString(decoded).original);
+        }
+        orchard_seed = std::move(*decoded);
+    }
+    auto mnemonic = EncodeBIP39Mnemonic(orchard_seed);
+    if (!mnemonic) {
+        throw JSONRPCError(RPC_WALLET_ERROR, util::ErrorString(mnemonic).original);
+    }
+
+    fs::path backup_path;
+    {
+        LOCK(pwallet->cs_wallet);
+        if (pwallet->HasCanonicalPrivateHDSeed()) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "This wallet already has a canonical Orchard recovery root");
+        }
+        if (pwallet->GetActiveScriptPubKeyMans().empty()) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Cannot add Orchard to a wallet without an active transparent key manager; initialize the blank wallet first");
+        }
+
+        const fs::path wallet_file{fs::absolute(fs::PathFromString(pwallet->GetDatabase().Filename()))};
+        const fs::path wallet_dir{wallet_file.parent_path()};
+        const int64_t timestamp{GetTime()};
+        backup_path = wallet_dir / fs::PathFromString(strprintf("wallet-pre-orchard-%d.bak", timestamp));
+        for (unsigned int suffix = 1; fs::exists(backup_path) && suffix < 1000; ++suffix) {
+            backup_path = wallet_dir / fs::PathFromString(strprintf("wallet-pre-orchard-%d-%u.bak", timestamp, suffix));
+        }
+        if (fs::exists(backup_path) || !pwallet->BackupWallet(fs::PathToString(backup_path))) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Unable to create the required pre-upgrade wallet.dat backup");
+        }
+
+        bilingual_str seed_error;
+        if (!pwallet->InitializePrivateHDSeed(orchard_seed, bip39_passphrase, PrivateSeedScope::ORCHARD_ONLY, seed_error)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, seed_error.original);
+        }
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("mnemonic", *mnemonic);
+    result.pushKV("scope", "orchard_only");
+    result.pushKV("bip39_passphrase_required", !bip39_passphrase.empty());
+    result.pushKV("backup", fs::PathToString(backup_path));
+    result.pushKV("warning", bip39_passphrase.empty()
+        ? "Keep this wallet.dat backup permanently: the Orchard phrase does not restore pre-existing V3 transparent or imported keys."
+        : "Keep both the Orchard phrase and its separate BIP39 passphrase: the phrase alone restores a different wallet. Also keep this wallet.dat backup permanently because they do not restore pre-existing V3 transparent or imported keys.");
+    return result;
+},
+    };
+}
+
+static RPCHelpMan dumpmnemonic()
+{
+    return RPCHelpMan{"dumpmnemonic",
+        "\nReturns the canonical Orchard root encoded as a BIP39 English recovery phrase." + HELP_REQUIRING_PASSPHRASE +
+        "The response states whether the phrase covers the full deterministic V4 wallet or Orchard only, and whether its separate BIP39 passphrase is required. The BIP39 passphrase itself is never returned. Keep wallet.dat backups for every V3 or imported transparent key.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::OBJ, "", "",
+            {
+                {RPCResult::Type::STR, "mnemonic", "BIP39 English mnemonic for the active Nito HD seed"},
+                {RPCResult::Type::NUM, "words", "Number of words in the mnemonic"},
+                {RPCResult::Type::STR, "format", "Mnemonic format"},
+                {RPCResult::Type::STR, "seed_type", "How Nito interprets the mnemonic entropy"},
+                {RPCResult::Type::STR, "scope", "full_wallet or orchard_only"},
+                {RPCResult::Type::BOOL, "bip39_passphrase_required", "true when this phrase must be restored with its BIP39 passphrase"},
+                {RPCResult::Type::STR, "warning", "Security warning"},
+            }
+        },
+        RPCExamples{
+            HelpExampleCli("dumpmnemonic", "")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!pwallet) return UniValue::VNULL;
+
+    EnsureWalletIsUnlocked(*pwallet);
+
+    LOCK(pwallet->cs_wallet);
+
+    CKey hd_seed;
+    bilingual_str seed_error;
+    if (!pwallet->GetPrivateHDSeed(hd_seed, seed_error, /*require_exportable_seed=*/true)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, seed_error.original);
+    }
+
+    auto mnemonic = EncodeBIP39Mnemonic(hd_seed);
+    if (!mnemonic) {
+        throw JSONRPCError(RPC_WALLET_ERROR, util::ErrorString(mnemonic).original);
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("mnemonic", *mnemonic);
+    result.pushKV("words", static_cast<int>(std::count(mnemonic->begin(), mnemonic->end(), ' ') + 1));
+    result.pushKV("format", "bip39-english");
+    const PrivateSeedScope scope{pwallet->GetPrivateSeedScope()};
+    const bool orchard_only{scope == PrivateSeedScope::ORCHARD_ONLY};
+    const bool passphrase_required{pwallet->IsBIP39PassphraseEnabled()};
+    result.pushKV("seed_type", orchard_only ? "orchard_root_entropy" : (pwallet->IsLegacy() ? "legacy_hd_entropy" : "bip39_pbkdf2_master_seed"));
+    result.pushKV("scope", orchard_only ? "orchard_only" : "full_wallet");
+    result.pushKV("bip39_passphrase_required", passphrase_required);
+    if (orchard_only) {
+        result.pushKV("warning", passphrase_required
+            ? "This phrase requires its separate BIP39 passphrase and restores Orchard only. The phrase alone restores a different wallet. Keep wallet.dat permanently for pre-existing V3 transparent and imported keys."
+            : "This phrase restores Orchard only. Keep wallet.dat permanently for pre-existing V3 transparent and imported keys.");
+    } else {
+        result.pushKV("warning", passphrase_required
+            ? "This phrase requires its separate BIP39 passphrase. The phrase alone restores a different wallet. Store both offline and separately, and never share them."
+            : "Anyone with this mnemonic can spend funds derived from this wallet seed. Store it offline and never share it.");
+    }
+    return result;
 },
     };
 }
@@ -821,6 +1182,8 @@ static RPCHelpMan migratewallet()
 // addresses
 RPCHelpMan getaddressinfo();
 RPCHelpMan getnewaddress();
+RPCHelpMan getprivatekeymaninfo();
+RPCHelpMan getprivateviewkey();
 RPCHelpMan getrawchangeaddress();
 RPCHelpMan setlabel();
 RPCHelpMan listaddressgroupings();
@@ -853,10 +1216,14 @@ RPCHelpMan getreceivedbyaddress();
 RPCHelpMan getreceivedbylabel();
 RPCHelpMan getbalance();
 RPCHelpMan getunconfirmedbalance();
+RPCHelpMan getprivatebalance();
+RPCHelpMan getprivatenoteproof();
 RPCHelpMan lockunspent();
 RPCHelpMan listlockunspent();
 RPCHelpMan getbalances();
 RPCHelpMan listunspent();
+RPCHelpMan listprivateunspent();
+RPCHelpMan checkprivatenoteproof();
 
 // encryption
 RPCHelpMan walletpassphrase();
@@ -866,6 +1233,8 @@ RPCHelpMan encryptwallet();
 
 // spend
 RPCHelpMan sendtoaddress();
+RPCHelpMan shieldtoaddress();
+RPCHelpMan sendprivate();
 RPCHelpMan sendmany();
 RPCHelpMan settxfee();
 RPCHelpMan fundrawtransaction();
@@ -904,11 +1273,16 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &restorewallet},
         {"wallet", &dumpprivkey},
         {"wallet", &dumpwallet},
+        {"wallet", &dumpmnemonic},
         {"wallet", &encryptwallet},
         {"wallet", &getaddressesbylabel},
         {"wallet", &getaddressinfo},
         {"wallet", &getbalance},
         {"wallet", &getnewaddress},
+        {"wallet", &getprivatebalance},
+        {"wallet", &getprivatenoteproof},
+        {"wallet", &getprivatekeymaninfo},
+        {"wallet", &getprivateviewkey},
         {"wallet", &getrawchangeaddress},
         {"wallet", &getreceivedbyaddress},
         {"wallet", &getreceivedbylabel},
@@ -928,6 +1302,8 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &listdescriptors},
         {"wallet", &listlabels},
         {"wallet", &listlockunspent},
+        {"wallet", &listprivateunspent},
+        {"wallet", &checkprivatenoteproof},
         {"wallet", &listreceivedbyaddress},
         {"wallet", &listreceivedbylabel},
         {"wallet", &listsinceblock},
@@ -943,7 +1319,9 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &rescanblockchain},
         {"wallet", &send},
         {"wallet", &sendmany},
+        {"wallet", &sendprivate},
         {"wallet", &sendtoaddress},
+        {"wallet", &shieldtoaddress},
         {"wallet", &sethdseed},
         {"wallet", &setlabel},
         {"wallet", &settxfee},
@@ -954,6 +1332,7 @@ Span<const CRPCCommand> GetWalletRPCCommands()
         {"wallet", &sendall},
         {"wallet", &unloadwallet},
         {"wallet", &upgradewallet},
+        {"wallet", &upgradeorchardwallet},
         {"wallet", &walletcreatefundedpsbt},
 #ifdef ENABLE_EXTERNAL_SIGNER
         {"wallet", &walletdisplayaddress},

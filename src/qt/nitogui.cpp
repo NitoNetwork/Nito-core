@@ -44,6 +44,7 @@
 #include <util/translation.h>
 #include <validation.h>
 
+#include <algorithm>
 #include <functional>
 
 #include <QAction>
@@ -64,6 +65,7 @@
 #include <QScreen>
 #include <QSettings>
 #include <QShortcut>
+#include <QStringList>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QStyle>
@@ -314,6 +316,8 @@ void NitoGUI::createActions()
     encryptWalletAction->setCheckable(true);
     backupWalletAction = new QAction(tr("&Backup Wallet…"), this);
     backupWalletAction->setStatusTip(tr("Backup wallet to another location"));
+    showMnemonicAction = new QAction(tr("Show Recovery Phrase…"), this);
+    showMnemonicAction->setStatusTip(tr("Show the wallet's BIP39 recovery phrase"));
     changePassphraseAction = new QAction(tr("&Change Passphrase…"), this);
     changePassphraseAction->setStatusTip(tr("Change the passphrase used for wallet encryption"));
     signMessageAction = new QAction(tr("Sign &message…"), this);
@@ -343,6 +347,19 @@ void NitoGUI::createActions()
     m_open_wallet_action->setEnabled(false);
     m_open_wallet_action->setStatusTip(tr("Open a wallet"));
     m_open_wallet_menu = new QMenu(this);
+#ifdef ENABLE_WALLET
+    if (walletFrame) {
+        walletFrame->setOpenWalletButtonAvailable(m_open_wallet_action->isEnabled());
+        connect(m_open_wallet_action, &QAction::changed, walletFrame, [this] {
+            walletFrame->setOpenWalletButtonAvailable(m_open_wallet_action->isEnabled());
+        });
+        connect(walletFrame, &WalletFrame::openWalletButtonClicked, this, [this](const QPoint& global_pos) {
+            if (m_open_wallet_action->isEnabled()) {
+                m_open_wallet_menu->popup(global_pos);
+            }
+        });
+    }
+#endif // ENABLE_WALLET
 
     m_close_wallet_action = new QAction(tr("Close Wallet…"), this);
     m_close_wallet_action->setStatusTip(tr("Close wallet"));
@@ -387,6 +404,7 @@ void NitoGUI::createActions()
     {
         connect(encryptWalletAction, &QAction::triggered, walletFrame, &WalletFrame::encryptWallet);
         connect(backupWalletAction, &QAction::triggered, walletFrame, &WalletFrame::backupWallet);
+        connect(showMnemonicAction, &QAction::triggered, walletFrame, &WalletFrame::showHDSeedMnemonic);
         connect(changePassphraseAction, &QAction::triggered, walletFrame, &WalletFrame::changePassphrase);
         connect(signMessageAction, &QAction::triggered, [this]{ showNormalIfMinimized(); });
         connect(signMessageAction, &QAction::triggered, [this]{ gotoSignMessageTab(); });
@@ -405,7 +423,10 @@ void NitoGUI::createActions()
                 // Menu items remove single &. Single & are shown when && is in
                 // the string, but only the first occurrence. So replace only
                 // the first & with &&.
-                name.replace(name.indexOf(QChar('&')), 1, QString("&&"));
+                const auto amp_index{name.indexOf(QChar('&'))};
+                if (amp_index != -1) {
+                    name.replace(amp_index, 1, QString("&&"));
+                }
                 QAction* action = m_open_wallet_menu->addAction(name);
 
                 if (i.second) {
@@ -488,6 +509,7 @@ void NitoGUI::createMenuBar()
         file->addAction(m_migrate_wallet_action);
         file->addSeparator();
         file->addAction(backupWalletAction);
+        file->addAction(showMnemonicAction);
         file->addAction(m_restore_wallet_action);
         file->addSeparator();
         file->addAction(openAction);
@@ -623,6 +645,7 @@ void NitoGUI::setClientModel(ClientModel *_clientModel, interfaces::BlockAndHead
         modalOverlay->setKnownBestHeight(tip_info->header_height, QDateTime::fromSecsSinceEpoch(tip_info->header_time), /*presync=*/false);
         setNumBlocks(tip_info->block_height, QDateTime::fromSecsSinceEpoch(tip_info->block_time), tip_info->verification_progress, SyncType::BLOCK_SYNC, SynchronizationState::INIT_DOWNLOAD);
         connect(_clientModel, &ClientModel::numBlocksChanged, this, &NitoGUI::setNumBlocks);
+        modalOverlay->setLocalIndexProgress(QString(), false);
 
         // Receive and report messages from client model
         connect(_clientModel, &ClientModel::message, [this](const QString &title, const QString &message, unsigned int style){
@@ -686,25 +709,26 @@ void NitoGUI::enableHistoryAction(bool privacy)
 
 void NitoGUI::setWalletController(WalletController* wallet_controller, bool show_loading_minimized)
 {
+    (void)show_loading_minimized;
     assert(!m_wallet_controller);
     assert(wallet_controller);
 
     m_wallet_controller = wallet_controller;
 
     m_create_wallet_action->setEnabled(true);
-    m_open_wallet_action->setEnabled(true);
     m_open_wallet_action->setMenu(m_open_wallet_menu);
+    updateOpenWalletAction();
     m_restore_wallet_action->setEnabled(true);
 
     GUIUtil::ExceptionSafeConnect(wallet_controller, &WalletController::walletAdded, this, &NitoGUI::addWallet);
+    connect(wallet_controller, &WalletController::walletAdded, this, [this] { updateOpenWalletAction(); }, Qt::QueuedConnection);
     connect(wallet_controller, &WalletController::walletRemoved, this, &NitoGUI::removeWallet);
+    connect(wallet_controller, &WalletController::walletRemoved, this, [this] { updateOpenWalletAction(); }, Qt::QueuedConnection);
     connect(wallet_controller, &WalletController::destroyed, this, [this] {
         // wallet_controller gets destroyed manually, but it leaves our member copy dangling
         m_wallet_controller = nullptr;
     });
 
-    auto activity = new LoadWalletsActivity(m_wallet_controller, this);
-    activity->load(show_loading_minimized);
 }
 
 WalletController* NitoGUI::getWalletController()
@@ -790,8 +814,25 @@ void NitoGUI::removeAllWallets()
         return;
     setWalletActionsEnabled(false);
     walletFrame->removeAllWallets();
+    updateOpenWalletAction();
 }
 #endif // ENABLE_WALLET
+
+void NitoGUI::updateOpenWalletAction()
+{
+#ifdef ENABLE_WALLET
+    bool has_loadable_wallet{false};
+    if (m_wallet_controller) {
+        for (const std::pair<const std::string, bool>& wallet : m_wallet_controller->listWalletDir()) {
+            if (!wallet.second) {
+                has_loadable_wallet = true;
+                break;
+            }
+        }
+    }
+    m_open_wallet_action->setEnabled(has_loadable_wallet);
+#endif // ENABLE_WALLET
+}
 
 void NitoGUI::setWalletActionsEnabled(bool enabled)
 {
@@ -801,6 +842,7 @@ void NitoGUI::setWalletActionsEnabled(bool enabled)
     historyAction->setEnabled(enabled);
     encryptWalletAction->setEnabled(enabled);
     backupWalletAction->setEnabled(enabled);
+    showMnemonicAction->setEnabled(enabled);
     changePassphraseAction->setEnabled(enabled);
     signMessageAction->setEnabled(enabled);
     verifyMessageAction->setEnabled(enabled);
@@ -1096,7 +1138,6 @@ void NitoGUI::setNumBlocks(int count, const QDateTime& blockDate, double nVerifi
     }
     if (!clientModel)
         return;
-
     // Prevent orphan statusbar messages (e.g. hover Quit in main menu, wait until chain-sync starts -> garbled text)
     statusBar()->clearMessage();
 
@@ -1133,7 +1174,6 @@ void NitoGUI::setNumBlocks(int count, const QDateTime& blockDate, double nVerifi
 
     QDateTime currentDate = QDateTime::currentDateTime();
     qint64 secs = blockDate.secsTo(currentDate);
-
     tooltip = tr("Processed %n block(s) of transaction history.", "", count);
 
     // Set icon state: spinning if catching up, tick otherwise
@@ -1516,11 +1556,14 @@ void NitoGUI::detectShutdown()
 void NitoGUI::showProgress(const QString &title, int nProgress)
 {
     if (nProgress == 0) {
-        progressDialog = new QProgressDialog(title, QString(), 0, 100);
+        progressDialog = new QProgressDialog(title, QString(), 0, 100, this);
         GUIUtil::PolishProgressDialog(progressDialog);
-        progressDialog->setWindowModality(Qt::ApplicationModal);
+        progressDialog->setWindowTitle(title);
+        progressDialog->setWindowModality(Qt::WindowModal);
         progressDialog->setAutoClose(false);
         progressDialog->setValue(0);
+        progressDialog->show();
+        GUIUtil::CenterDialogOnParent(progressDialog, this);
     } else if (nProgress == 100) {
         if (progressDialog) {
             progressDialog->close();

@@ -6,6 +6,9 @@
 
 Verify that a nitod node can maintain list of wallets loading on startup
 """
+import json
+import shutil
+
 from test_framework.test_framework import NitoTestFramework
 from test_framework.util import (
     assert_equal,
@@ -56,6 +59,20 @@ class WalletStartupTest(NitoTestFramework):
         self.nodes[0].loadwallet(filename='')
         self.restart_node(0)
         assert_equal(set(self.nodes[0].listwallets()), set(('w2', 'w3')))
+
+        self.log.info('Missing startup wallets are removed from persistent settings after the first warning')
+        self.stop_node(0)
+        shutil.rmtree(self.nodes[0].wallets_path / 'w2')
+        with self.nodes[0].assert_debug_log(expected_msgs=["Skipping -wallet path that doesn't exist."]):
+            self.start_node(0)
+        assert_equal(self.nodes[0].listwallets(), ['w3'])
+        with open(self.nodes[0].chain_path / 'settings.json', encoding='utf8') as settings_file:
+            assert 'w2' not in json.load(settings_file)['wallet']
+
+        expected_stderr = f"Warning: Skipping -wallet path that doesn't exist. Failed to load database path '{self.nodes[0].wallets_path / 'w2'}'. Path does not exist."
+        self.stop_node(0, expected_stderr=expected_stderr)
+        self.start_node(0)
+        assert_equal(self.nodes[0].listwallets(), ['w3'])
 
 if __name__ == '__main__':
     WalletStartupTest().main()

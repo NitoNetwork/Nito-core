@@ -22,6 +22,11 @@ class WalletTests : public QObject
     Q_OBJECT
 
 private Q_SLOTS:
+    void createWalletDialogTests();
+    void prunedRecoveryTranslations();
+    void privateMixedHistory();
+    void transactionSourceAddresses();
+    void transactionSourceWithoutAddressBook();
     void walletTests();
 };
 

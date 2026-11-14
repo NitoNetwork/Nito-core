@@ -4,7 +4,7 @@ import android.os.Bundle;
 import android.system.ErrnoException;
 import android.system.Os;
 
-import org.qtproject.qt5.android.bindings.QtActivity;
+import org.qtproject.qt.android.bindings.QtActivity;
 
 import java.io.File;
 

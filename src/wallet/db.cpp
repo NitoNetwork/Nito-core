@@ -106,7 +106,7 @@ bool IsBDBFile(const fs::path& path)
     return data == 0x00053162 || data == 0x62310500;
 }
 
-bool IsSQLiteFile(const fs::path& path)
+bool IsSQLiteFileHeader(const fs::path& path)
 {
     if (!fs::exists(path)) return false;
 
@@ -123,18 +123,23 @@ bool IsSQLiteFile(const fs::path& path)
     char magic[16];
     file.read(magic, 16);
 
-    // Application id is at offset 68 and 4 bytes long
+    // Check the magic, see https://sqlite.org/fileformat.html
+    std::string magic_str(magic, 16);
+    return magic_str == std::string{"SQLite format 3\000", 16};
+}
+
+bool IsSQLiteFile(const fs::path& path)
+{
+    if (!IsSQLiteFileHeader(path)) return false;
+
+    std::ifstream file{path, std::ios::binary};
+    if (!file.is_open()) return false;
+
+    // Application id is at offset 68 and 4 bytes long.
     file.seekg(68, std::ios::beg);
     char app_id[4];
     file.read(app_id, 4);
-
-    file.close();
-
-    // Check the magic, see https://sqlite.org/fileformat.html
-    std::string magic_str(magic, 16);
-    if (magic_str != std::string{"SQLite format 3\000", 16}) {
-        return false;
-    }
+    if (!file) return false;
 
     // Check the application id matches our network magic
     return memcmp(Params().MessageStart().data(), app_id, 4) == 0;

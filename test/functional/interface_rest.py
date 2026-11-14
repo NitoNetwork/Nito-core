@@ -51,7 +51,10 @@ def filter_output_indices_by_value(vouts, value):
 class RESTTest (NitoTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
-        self.extra_args = [["-rest", "-blockfilterindex=1"], []]
+        self.extra_args = [
+            ["-rest", "-txindex=0", "-coinstatsindex=0", "-blockfilterindex=1", "-orchardindex=0"],
+            ["-txindex=0", "-coinstatsindex=0", "-orchardindex=0"],
+        ]
         # whitelist peers to speed up tx relay / mempool sync
         for args in self.extra_args:
             args.append("-whitelist=noban@127.0.0.1")
@@ -293,7 +296,7 @@ class RESTTest (NitoTestFramework):
         expected_filter = {
             'basic block filter index': {'synced': True, 'best_block_height': 208},
         }
-        self.wait_until(lambda: self.nodes[0].getindexinfo() == expected_filter)
+        self.wait_until(lambda: self.nodes[0].getindexinfo().get('basic block filter index') == expected_filter['basic block filter index'])
         json_obj = self.test_rest_request(f"/headers/{bb_hash}", query_params={"count": 5})
         assert_equal(len(json_obj), 5)  # now we should have 5 header objects
         json_obj = self.test_rest_request(f"/blockfilterheaders/basic/{bb_hash}", query_params={"count": 5})

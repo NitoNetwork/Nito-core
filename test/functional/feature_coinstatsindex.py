@@ -5,8 +5,8 @@
 """Test coinstatsindex across nodes.
 
 Test that the values returned by gettxoutsetinfo are consistent
-between a node running the coinstatsindex and a node without
-the index.
+between a node running coinstatsindex explicitly and a node with the
+default index policy.
 """
 
 from decimal import Decimal
@@ -35,15 +35,19 @@ from test_framework.wallet import (
     getnewdestination,
 )
 
+GENERATE_MAX_TRIES = 100_000_000
+BLOCK_SUBSIDY = 512
+
 
 class CoinStatsIndexTest(NitoTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
+        self.rpc_timeout = 180
         self.supports_cli = False
         self.extra_args = [
             [],
-            ["-coinstatsindex"]
+            ["-coinstatsindex=1"],
         ]
 
     def run_test(self):
@@ -55,14 +59,45 @@ class CoinStatsIndexTest(NitoTestFramework):
         self._test_init_index_after_reorg()
 
     def block_sanity_check(self, block_info):
-        block_subsidy = 50
         assert_equal(
-            block_info['prevout_spent'] + block_subsidy,
+            block_info['prevout_spent'] + BLOCK_SUBSIDY,
             block_info['new_outputs_ex_coinbase'] + block_info['coinbase'] + block_info['unspendable']
         )
 
     def sync_index_node(self):
         self.wait_until(lambda: self.nodes[1].getindexinfo()['coinstatsindex']['synced'] is True)
+
+    def chainwork(self, node):
+        return int(node.getblockchaininfo()["chainwork"], 16)
+
+    def generate_exact(self, generator, num_blocks, *, sync_fun=None):
+        blocks = []
+        attempts = 0
+        while len(blocks) < num_blocks:
+            attempts += 1
+            assert attempts <= num_blocks * 20
+            blocks.extend(self.generate(
+                generator,
+                1,
+                maxtries=GENERATE_MAX_TRIES,
+                sync_fun=sync_fun,
+            ))
+        return blocks
+
+    def generatetoaddress_exact(self, generator, num_blocks, address, *, sync_fun=None):
+        blocks = []
+        attempts = 0
+        while len(blocks) < num_blocks:
+            attempts += 1
+            assert attempts <= num_blocks * 20
+            blocks.extend(self.generatetoaddress(
+                generator,
+                1,
+                address,
+                maxtries=GENERATE_MAX_TRIES,
+                sync_fun=sync_fun,
+            ))
+        return blocks
 
     def _test_coin_stats_index(self):
         node = self.nodes[0]
@@ -71,9 +106,10 @@ class CoinStatsIndexTest(NitoTestFramework):
         index_hash_options = ['none', 'muhash']
 
         # Generate a normal transaction and mine it
-        self.generate(self.wallet, COINBASE_MATURITY + 1)
+        blocks = self.generate_exact(self.wallet, COINBASE_MATURITY + 1)
+        assert_equal(len(blocks), COINBASE_MATURITY + 1)
         self.wallet.send_self_transfer(from_node=node)
-        self.generate(node, 1)
+        assert_equal(len(self.generate_exact(node, 1)), 1)
 
         self.log.info("Test that gettxoutsetinfo() output is consistent with or without coinstatsindex option")
         res0 = node.gettxoutsetinfo('none')
@@ -93,7 +129,7 @@ class CoinStatsIndexTest(NitoTestFramework):
         self.log.info("Test that gettxoutsetinfo() can get fetch data on specific heights with index")
 
         # Generate a new tip
-        self.generate(node, 5)
+        assert_equal(len(self.generate_exact(node, 5)), 5)
 
         for hash_option in index_hash_options:
             # Fetch old stats by height
@@ -116,14 +152,14 @@ class CoinStatsIndexTest(NitoTestFramework):
         for hash_option in index_hash_options:
             # Genesis block is unspendable
             res4 = index_node.gettxoutsetinfo(hash_option, 0)
-            assert_equal(res4['total_unspendable_amount'], 50)
+            assert_equal(res4['total_unspendable_amount'], BLOCK_SUBSIDY)
             assert_equal(res4['block_info'], {
-                'unspendable': 50,
+                'unspendable': BLOCK_SUBSIDY,
                 'prevout_spent': 0,
                 'new_outputs_ex_coinbase': 0,
                 'coinbase': 0,
                 'unspendables': {
-                    'genesis_block': 50,
+                    'genesis_block': BLOCK_SUBSIDY,
                     'bip30': 0,
                     'scripts': 0,
                     'unclaimed_rewards': 0
@@ -133,12 +169,12 @@ class CoinStatsIndexTest(NitoTestFramework):
 
             # Test an older block height that included a normal tx
             res5 = index_node.gettxoutsetinfo(hash_option, 102)
-            assert_equal(res5['total_unspendable_amount'], 50)
+            assert_equal(res5['total_unspendable_amount'], BLOCK_SUBSIDY)
             assert_equal(res5['block_info'], {
                 'unspendable': 0,
-                'prevout_spent': 50,
-                'new_outputs_ex_coinbase': Decimal('49.99968800'),
-                'coinbase': Decimal('50.00031200'),
+                'prevout_spent': BLOCK_SUBSIDY,
+                'new_outputs_ex_coinbase': Decimal('511.99968800'),
+                'coinbase': Decimal('512.00031200'),
                 'unspendables': {
                     'genesis_block': 0,
                     'bip30': 0,
@@ -155,7 +191,7 @@ class CoinStatsIndexTest(NitoTestFramework):
             amount=21 * COIN,
         )
 
-        # Find the right position of the 21 BTC output
+        # Find the right position of the 21 NITO output
         tx1_out_21 = self.wallet.get_utxo(txid=tx1["txid"], vout=tx1["sent_vout"])
 
         # Generate and send another tx with an OP_RETURN output (which is unspendable)
@@ -166,17 +202,17 @@ class CoinStatsIndexTest(NitoTestFramework):
         self.nodes[0].sendrawtransaction(tx2_hex, 0, tx2_val)
 
         # Include both txs in a block
-        self.generate(self.nodes[0], 1)
+        assert_equal(len(self.generate_exact(self.nodes[0], 1)), 1)
 
         for hash_option in index_hash_options:
             # Check all amounts were registered correctly
             res6 = index_node.gettxoutsetinfo(hash_option, 108)
-            assert_equal(res6['total_unspendable_amount'], Decimal('70.99000000'))
+            assert_equal(res6['total_unspendable_amount'], Decimal('532.99000000'))
             assert_equal(res6['block_info'], {
                 'unspendable': Decimal('20.99000000'),
-                'prevout_spent': 71,
-                'new_outputs_ex_coinbase': Decimal('49.99999000'),
-                'coinbase': Decimal('50.01001000'),
+                'prevout_spent': 533,
+                'new_outputs_ex_coinbase': Decimal('511.99999000'),
+                'coinbase': Decimal('512.01001000'),
                 'unspendables': {
                     'genesis_block': 0,
                     'bip30': 0,
@@ -193,18 +229,17 @@ class CoinStatsIndexTest(NitoTestFramework):
         cb.rehash()
 
         # Generate a block that includes previous coinbase
-        tip = self.nodes[0].getbestblockhash()
-        block_time = self.nodes[0].getblock(tip)['time'] + 1
-        block = create_block(int(tip, 16), cb, block_time)
+        tmpl = self.nodes[0].getblocktemplate({"rules": ["segwit"]})
+        block = create_block(coinbase=cb, tmpl=tmpl)
         block.solve()
-        self.nodes[0].submitblock(block.serialize().hex())
+        assert_equal(self.nodes[0].submitblock(block.serialize().hex()), None)
         self.sync_all()
 
         for hash_option in index_hash_options:
             res7 = index_node.gettxoutsetinfo(hash_option, 109)
-            assert_equal(res7['total_unspendable_amount'], Decimal('80.99000000'))
+            assert_equal(res7['total_unspendable_amount'], Decimal('1004.99000000'))
             assert_equal(res7['block_info'], {
-                'unspendable': 10,
+                'unspendable': 472,
                 'prevout_spent': 0,
                 'new_outputs_ex_coinbase': 0,
                 'coinbase': 40,
@@ -212,7 +247,7 @@ class CoinStatsIndexTest(NitoTestFramework):
                     'genesis_block': 0,
                     'bip30': 0,
                     'scripts': 0,
-                    'unclaimed_rewards': 10
+                    'unclaimed_rewards': 472
                 }
             })
             self.block_sanity_check(res7['block_info'])
@@ -224,7 +259,7 @@ class CoinStatsIndexTest(NitoTestFramework):
         res9 = index_node.gettxoutsetinfo('muhash')
         assert_equal(res8, res9)
 
-        self.generate(index_node, 1, sync_fun=self.no_op)
+        assert_equal(len(self.generate_exact(index_node, 1, sync_fun=self.no_op)), 1)
         res10 = index_node.gettxoutsetinfo('muhash')
         assert res8['txouts'] < res10['txouts']
 
@@ -257,7 +292,8 @@ class CoinStatsIndexTest(NitoTestFramework):
 
         # Generate two block, let the index catch up, then invalidate the blocks
         index_node = self.nodes[1]
-        reorg_blocks = self.generatetoaddress(index_node, 2, getnewdestination()[2])
+        reorg_blocks = self.generatetoaddress_exact(index_node, 2, getnewdestination()[2])
+        assert_equal(len(reorg_blocks), 2)
         reorg_block = reorg_blocks[1]
         self.sync_index_node()
         res_invalid = index_node.gettxoutsetinfo('muhash')
@@ -265,7 +301,9 @@ class CoinStatsIndexTest(NitoTestFramework):
         assert_equal(index_node.gettxoutsetinfo('muhash')['height'], 110)
 
         # Add two new blocks
-        block = self.generate(index_node, 2, sync_fun=self.no_op)[1]
+        blocks = self.generate_exact(index_node, 2, sync_fun=self.no_op)
+        assert_equal(len(blocks), 2)
+        block = blocks[1]
         res = index_node.gettxoutsetinfo(hash_type='muhash', hash_or_height=None, use_index=False)
 
         # Test that the result of the reorged block is not returned for its old block height
@@ -281,7 +319,7 @@ class CoinStatsIndexTest(NitoTestFramework):
 
         # Add another block, so we don't depend on reconsiderblock remembering which
         # blocks were touched by invalidateblock
-        self.generate(index_node, 1)
+        assert_equal(len(self.generate_exact(index_node, 1)), 1)
 
         # Ensure that removing and re-adding blocks yields consistent results
         block = index_node.getblockhash(99)
@@ -303,14 +341,18 @@ class CoinStatsIndexTest(NitoTestFramework):
         self.log.info("Test a reorg while the index is deactivated")
         index_node = self.nodes[1]
         block = self.nodes[0].getbestblockhash()
-        self.generate(index_node, 2, sync_fun=self.no_op)
+        assert_equal(len(self.generate_exact(index_node, 2, sync_fun=self.no_op)), 2)
         self.sync_index_node()
+        previous_chainwork = self.chainwork(index_node)
 
         # Restart without index
-        self.restart_node(1, extra_args=[])
+        self.restart_node(1, extra_args=self.extra_args[0])
         self.connect_nodes(0, 1)
         index_node.invalidateblock(block)
-        self.generatetoaddress(index_node, 5, getnewdestination()[2])
+        blocks = self.generatetoaddress_exact(index_node, 5, getnewdestination()[2], sync_fun=self.no_op)
+        assert_equal(len(blocks), 5)
+        while self.chainwork(index_node) <= previous_chainwork:
+            blocks.extend(self.generatetoaddress_exact(index_node, 1, getnewdestination()[2], sync_fun=self.no_op))
         res = index_node.gettxoutsetinfo(hash_type='muhash', hash_or_height=None, use_index=False)
 
         # Restart with index that still has its best block on the old chain

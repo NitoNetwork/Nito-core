@@ -6,16 +6,21 @@
 #include <consensus/tx_check.h>
 
 #include <consensus/amount.h>
-#include <primitives/transaction.h>
+#include <consensus/private_tx_verify.h>
 #include <consensus/validation.h>
+#include <primitives/transaction.h>
 
 bool CheckTransaction(const CTransaction& tx, TxValidationState& state)
 {
     // Basic checks that don't depend on any context
-    if (tx.vin.empty())
+    const bool has_private = tx.HasPrivateBundle();
+    if (tx.vin.empty() && !has_private)
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-vin-empty");
-    if (tx.vout.empty())
+    if (tx.vout.empty() && !has_private)
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-vout-empty");
+    if (has_private && !CheckPrivateBundleSanity(*tx.m_private_bundle, state)) {
+        return false;
+    }
     // Size limits (this doesn't take the witness into account, as that hasn't been checked for malleability)
     if (::GetSerializeSize(TX_NO_WITNESS(tx)) * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT) {
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-oversize");
@@ -47,6 +52,9 @@ bool CheckTransaction(const CTransaction& tx, TxValidationState& state)
 
     if (tx.IsCoinBase())
     {
+        if (has_private) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-cb-private");
+        }
         if (tx.vin[0].scriptSig.size() < 2 || tx.vin[0].scriptSig.size() > 100)
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-cb-length");
     }

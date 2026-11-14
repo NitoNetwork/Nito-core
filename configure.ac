@@ -1,13 +1,13 @@
 AC_PREREQ([2.69])
-define(_CLIENT_VERSION_MAJOR, 3)
+define(_CLIENT_VERSION_MAJOR, 4)
 define(_CLIENT_VERSION_MINOR, 0)
-define(_CLIENT_VERSION_BUILD, 1)
+define(_CLIENT_VERSION_BUILD, 0)
 define(_CLIENT_VERSION_RC, 0)
 define(_CLIENT_VERSION_IS_RELEASE, true)
-define(_COPYRIGHT_YEAR, 2025)
+define(_COPYRIGHT_YEAR, 2026)
 define(_COPYRIGHT_HOLDERS,[The %s developers])
 define(_COPYRIGHT_HOLDERS_SUBSTITUTION,[[Nito Core]])
-AC_INIT([Nito Core],m4_join([.], _CLIENT_VERSION_MAJOR, _CLIENT_VERSION_MINOR, _CLIENT_VERSION_BUILD)m4_if(_CLIENT_VERSION_RC, [0], [], [rc]_CLIENT_VERSION_RC),[https://github.com/NitoNetwork/NITO-Core/issues],[nito],[https://nito.org/])
+AC_INIT([Nito Core],m4_join([.], _CLIENT_VERSION_MAJOR, _CLIENT_VERSION_MINOR, _CLIENT_VERSION_BUILD)m4_if(_CLIENT_VERSION_RC, [0], [], [rc]_CLIENT_VERSION_RC),[https://github.com/NitoNetwork/Nito-core/issues],[nito],[https://nito.network/])
 AC_CONFIG_SRCDIR([src/validation.cpp])
 AC_CONFIG_HEADERS([src/config/nito-config.h])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -727,8 +727,10 @@ case $host in
            BDB_LIBS="-L$bdb_prefix/lib -ldb_cxx-4.8"
          fi
 
-         if $BREW list --versions qt@5 >/dev/null; then
-           export PKG_CONFIG_PATH="$($BREW --prefix qt@5 2>/dev/null)/lib/pkgconfig:$PKG_CONFIG_PATH"
+         if $BREW list --versions qt@6 >/dev/null; then
+           export PKG_CONFIG_PATH="$($BREW --prefix qt@6 2>/dev/null)/lib/pkgconfig:$PKG_CONFIG_PATH"
+         elif $BREW list --versions qt >/dev/null; then
+           export PKG_CONFIG_PATH="$($BREW --prefix qt 2>/dev/null)/lib/pkgconfig:$PKG_CONFIG_PATH"
          fi
 
          case $host in
@@ -955,7 +957,9 @@ dnl "ad_strip" as the symbol for the entry point.
 if test "$TARGET_OS" = "darwin"; then
   AX_CHECK_LINK_FLAG([-Wl,-dead_strip], [CORE_LDFLAGS="$CORE_LDFLAGS -Wl,-dead_strip"], [], [$LDFLAG_WERROR])
   AX_CHECK_LINK_FLAG([-Wl,-dead_strip_dylibs], [CORE_LDFLAGS="$CORE_LDFLAGS -Wl,-dead_strip_dylibs"], [], [$LDFLAG_WERROR])
-  AX_CHECK_LINK_FLAG([-Wl,-fixup_chains], [HARDENED_LDFLAGS="$HARDENED_LDFLAGS -Wl,-fixup_chains"], [], [$LDFLAG_WERROR])
+  dnl The app bundle is rewritten by install_name_tool during macOS deployment.
+  dnl Chained fixups can make modern install_name_tool reject that rewrite.
+  AX_CHECK_LINK_FLAG([-Wl,-no_fixup_chains], [CORE_LDFLAGS="$CORE_LDFLAGS -Wl,-no_fixup_chains"], [], [$LDFLAG_WERROR])
 fi
 
 AC_CHECK_HEADERS([sys/select.h sys/prctl.h sys/sysctl.h vm/vm_param.h sys/vmmeter.h sys/resources.h])
@@ -1226,7 +1230,8 @@ fi
 
 dnl SUPPRESSED_CPPFLAGS=SUPPRESS_WARNINGS([$SOME_CPPFLAGS])
 dnl Replace -I with -isystem in $SOME_CPPFLAGS to suppress warnings from
-dnl headers from its include directories and return the result.
+dnl headers from its include directories and return the result. Also replace
+dnl framework search paths with system framework paths for Qt framework builds.
 dnl See -isystem documentation:
 dnl https://gcc.gnu.org/onlinedocs/gcc/Directory-Options.html
 dnl https://clang.llvm.org/docs/ClangCommandLineReference.html#cmdoption-clang-isystem-directory
@@ -1234,7 +1239,7 @@ dnl Do not change "-I/usr/include" to "-isystem /usr/include" because that
 dnl is not necessary (/usr/include is already a system directory) and because
 dnl it would break GCC's #include_next.
 AC_DEFUN([SUPPRESS_WARNINGS],
-         [[$(echo $1 |${SED} -E -e 's/(^| )-I/\1-isystem /g' -e 's;-isystem /usr/include/*( |$);-I/usr/include\1;g')]])
+         [[$(echo $1 |${SED} -E -e 's/(^| )-I/\1-isystem /g' -e 's/(^| )-F /\1-iframework /g' -e 's/(^| )-F([^ ]+)/\1-iframework \2/g' -e 's;-isystem /usr/include/*( |$);-I/usr/include\1;g')]])
 
 dnl enable-fuzz should disable all other targets
 if test "$enable_fuzz" = "yes"; then
@@ -1263,7 +1268,7 @@ else
   BITCOIN_QT_INIT
 
   dnl sets $nito_enable_qt, $nito_enable_qt_test, $nito_enable_qt_dbus
-  BITCOIN_QT_CONFIGURE([5.11.3])
+  BITCOIN_QT_CONFIGURE([6.2.0])
 
   dnl Keep a copy of the original $QT_INCLUDES and use it when invoking qt's moc
   QT_INCLUDES_UNSUPPRESSED=$QT_INCLUDES
@@ -1292,6 +1297,11 @@ if test "$enable_fuzz_binary" = "yes"; then
 fi
 
 if test "$enable_wallet" != "no"; then
+    PKG_CHECK_MODULES([UTF8PROC], [libutf8proc = 2.11.3], [], [AC_MSG_ERROR([utf8proc version 2.11.3 is required for wallet BIP39 Unicode normalization.])])
+    if test "$suppress_external_warnings" != "no" ; then
+      UTF8PROC_CFLAGS=SUPPRESS_WARNINGS($UTF8PROC_CFLAGS)
+    fi
+
     dnl Check for libdb_cxx only if wallet enabled
     if test "$use_bdb" != "no"; then
       BITCOIN_FIND_BDB48
@@ -1327,6 +1337,27 @@ if test "$enable_wallet" != "no"; then
         fi
         enable_wallet=no
     fi
+fi
+
+dnl Apple's linker warns when the same library is specified more than once.
+dnl Static Qt and SQLite both expose zlib on Darwin, so keep SQLite's trailing
+dnl -lz and remove exact -lz tokens from the Qt libraries after Qt's probes.
+if test "$TARGET_OS" = "darwin" && test "$use_sqlite" = "yes"; then
+  case " $SQLITE_LIBS " in
+    *" -lz "*)
+      nito_qt_libs_without_zlib=
+      for nito_qt_lib in $QT_LIBS; do
+        if test "$nito_qt_lib" != "-lz"; then
+          if test -n "$nito_qt_libs_without_zlib"; then
+            nito_qt_libs_without_zlib="$nito_qt_libs_without_zlib $nito_qt_lib"
+          else
+            nito_qt_libs_without_zlib="$nito_qt_lib"
+          fi
+        fi
+      done
+      QT_LIBS="$nito_qt_libs_without_zlib"
+      ;;
+  esac
 fi
 
 if test "$use_usdt" != "no"; then
@@ -1497,6 +1528,14 @@ if test "$build_nito_cli$build_nitod$nito_enable_qt$enable_fuzz_binary$use_tests
   PKG_CHECK_MODULES([EVENT], [libevent >= 2.1.8], [use_libevent=yes], [AC_MSG_ERROR([libevent version 2.1.8 or greater not found.])])
   if test "$TARGET_OS" != "windows"; then
     PKG_CHECK_MODULES([EVENT_PTHREADS], [libevent_pthreads >= 2.1.8], [], [AC_MSG_ERROR([libevent_pthreads version 2.1.8 or greater not found.])])
+    nito_event_pthreads_libs=
+    for flag in $EVENT_PTHREADS_LIBS; do
+      case "$flag" in
+        -l*) case " $EVENT_LIBS " in *" $flag "*) continue ;; esac ;;
+      esac
+      nito_event_pthreads_libs="$nito_event_pthreads_libs $flag"
+    done
+    EVENT_PTHREADS_LIBS="$nito_event_pthreads_libs"
   fi
 
   if test "$suppress_external_warnings" != "no"; then
@@ -1772,6 +1811,18 @@ AM_CONDITIONAL([TARGET_DARWIN], [test "$TARGET_OS" = "darwin"])
 AM_CONDITIONAL([BUILD_DARWIN], [test "$BUILD_OS" = "darwin"])
 AM_CONDITIONAL([TARGET_LINUX], [test "$TARGET_OS" = "linux"])
 AM_CONDITIONAL([TARGET_WINDOWS], [test "$TARGET_OS" = "windows"])
+
+NITO_ORCHARD_CARGO_TARGET=""
+case "$host" in
+  x86_64-w64-mingw32*)
+    NITO_ORCHARD_CARGO_TARGET="x86_64-pc-windows-gnu"
+    ;;
+  aarch64-*-linux-gnu*)
+    NITO_ORCHARD_CARGO_TARGET="aarch64-unknown-linux-gnu"
+    ;;
+esac
+AC_SUBST(NITO_ORCHARD_CARGO_TARGET)
+
 AM_CONDITIONAL([ENABLE_WALLET], [test "$enable_wallet" = "yes"])
 AM_CONDITIONAL([USE_SQLITE], [test "$use_sqlite" = "yes"])
 AM_CONDITIONAL([USE_BDB], [test "$use_bdb" = "yes"])
@@ -1897,6 +1948,16 @@ CPPFLAGS="$CPPFLAGS_TEMP"
 if test -n "$use_sanitizers"; then
   export SECP_CFLAGS="$SECP_CFLAGS $SANITIZER_CFLAGS"
 fi
+dnl Keep Darwin subconfigures, such as secp256k1, on the same libtool path as
+dnl the top-level configure. Modern Apple ld reports -single_module as obsolete;
+dnl pre-answering the libtool probe avoids noisy detection output while keeping
+dnl the final link flags unchanged.
+case $host in
+  *darwin*)
+     lt_cv_apple_cc_single_mod="yes"
+     export lt_cv_apple_cc_single_mod
+   ;;
+esac
 ac_configure_args="${ac_configure_args} --disable-shared --with-pic --enable-benchmark=no --enable-module-recovery --disable-module-ecdh"
 AC_CONFIG_SUBDIRS([src/secp256k1])
 

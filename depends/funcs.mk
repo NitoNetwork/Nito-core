@@ -30,13 +30,17 @@ define fetch_file_inner
     echo "$(5)  $$($(1)_download_dir)/$(4).temp" > $$($(1)_download_dir)/.$(4).hash && \
     $(build_SHA256SUM) -c $$($(1)_download_dir)/.$(4).hash && \
     mv $$($(1)_download_dir)/$(4).temp $$($(1)_source_dir)/$(4) && \
-    rm -rf $$($(1)_download_dir) )
+    rm -rf $$($(1)_download_dir) ) || \
+    { echo "Download failed or SHA256 mismatch for $(3) from $(2), removing temporary files"; \
+      rm -f $$($(1)_download_dir)/$(4).temp $$($(1)_download_dir)/.$(4).hash; false; }
 endef
 
 define fetch_file
     ( test -f $$($(1)_source_dir)/$(4) || \
-    ( $(call fetch_file_inner,$(1),$(2),$(3),$(4),$(5)) || \
-      $(call fetch_file_inner,$(1),$(FALLBACK_DOWNLOAD_PATH),$(3),$(4),$(5))))
+    ( $(call fetch_file_inner,$(1),$(2),$(3),$(4),$(5)) \
+    $(foreach u,$(strip $($(1)_fallback_download_path)),|| $(call fetch_file_inner,$(1),$(u),$(3),$(4),$(5))) \
+    $(foreach m,$(MIRROR_PATHS),|| $(call fetch_file_inner,$(1),$(subst %,$(1),$(m)),$(3),$(4),$(5))) \
+    || $(call fetch_file_inner,$(1),$(FALLBACK_DOWNLOAD_PATH),$(3),$(4),$(5))))
 endef
 
 define int_get_build_recipe_hash
@@ -134,6 +138,7 @@ $(1)_config_env+=$($(1)_config_env_$(host_arch)) $($(1)_config_env_$(host_arch)_
 $(1)_config_env+=$($(1)_config_env_$(host_os)) $($(1)_config_env_$(host_os)_$(release_type))
 $(1)_config_env+=$($(1)_config_env_$(host_arch)_$(host_os)) $($(1)_config_env_$(host_arch)_$(host_os)_$(release_type))
 
+$(1)_config_env+=PKG_CONFIG="pkg-config --static" FILE=file
 $(1)_config_env+=PKG_CONFIG_LIBDIR=$($($(1)_type)_prefix)/lib/pkgconfig
 $(1)_config_env+=PKG_CONFIG_PATH=$($($(1)_type)_prefix)/share/pkgconfig
 $(1)_config_env+=PKG_CONFIG_SYSROOT_DIR=/
@@ -179,7 +184,7 @@ $(1)_cmake=env CC="$$($(1)_cc)" \
 ifeq ($($(1)_type),build)
 $(1)_cmake += -DCMAKE_INSTALL_RPATH:PATH="$$($($(1)_type)_prefix)/lib"
 else
-ifneq ($(host),$(build))
+ifneq ($(canonical_host),$(build))
 $(1)_cmake += -DCMAKE_SYSTEM_NAME=$($(host_os)_cmake_system)
 $(1)_cmake += -DCMAKE_C_COMPILER_TARGET=$(host)
 $(1)_cmake += -DCMAKE_CXX_COMPILER_TARGET=$(host)
@@ -195,7 +200,6 @@ endif
 $($(1)_fetched):
 	mkdir -p $$(@D) $(SOURCES_PATH)
 	rm -f $$@
-	touch $$@
 	cd $$(@D); $($(1)_fetch_cmds)
 	cd $($(1)_source_dir); $(foreach source,$($(1)_all_sources),$(build_SHA256SUM) $(source) >> $$(@);)
 	touch $$@

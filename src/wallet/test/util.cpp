@@ -51,7 +51,8 @@ std::shared_ptr<CWallet> TestLoadWallet(std::unique_ptr<WalletDatabase> database
 {
     bilingual_str error;
     std::vector<bilingual_str> warnings;
-    auto wallet = CWallet::Create(context, "", std::move(database), create_flags, error, warnings);
+    const SecureString empty_bip39_passphrase;
+    auto wallet = CWallet::Create(context, "", std::move(database), create_flags, empty_bip39_passphrase, error, warnings);
     NotifyWalletLoaded(context, wallet);
     if (context.chain) {
         wallet->postInitProcess();
@@ -142,6 +143,7 @@ bool MockableBatch::WriteKey(DataStream&& key, DataStream&& value, bool overwrit
         return false;
     }
     SerializeData key_data{key.begin(), key.end()};
+    if (ShouldFailKey(key_data)) return false;
     SerializeData value_data{value.begin(), value.end()};
     auto [it, inserted] = m_records.emplace(key_data, value_data);
     if (!inserted && overwrite) { // Overwrite if requested
@@ -157,6 +159,7 @@ bool MockableBatch::EraseKey(DataStream&& key)
         return false;
     }
     SerializeData key_data{key.begin(), key.end()};
+    if (ShouldFailKey(key_data)) return false;
     m_records.erase(key_data);
     return true;
 }
@@ -185,6 +188,26 @@ bool MockableBatch::ErasePrefix(Span<const std::byte> prefix)
         it = m_records.erase(it);
     }
     return true;
+}
+
+bool MockableBatch::ShouldFailKey(const SerializeData& key)
+{
+    if (!m_fail_key_type) return false;
+    try {
+        DataStream key_stream{Span<const std::byte>{key.data(), key.size()}};
+        std::string key_type;
+        key_stream >> key_type;
+        return key_type == *m_fail_key_type;
+    } catch (...) {
+        return false;
+    }
+}
+
+void MockableBatch::RestoreTransaction()
+{
+    if (!m_txn_snapshot) return;
+    m_records = std::move(*m_txn_snapshot);
+    m_txn_snapshot.reset();
 }
 
 std::unique_ptr<WalletDatabase> CreateMockableWalletDatabase(MockableData records)

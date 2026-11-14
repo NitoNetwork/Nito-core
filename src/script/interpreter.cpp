@@ -1392,6 +1392,24 @@ uint256 GetSpentScriptsSHA256(const std::vector<CTxOut>& outputs_spent)
     return ss.GetSHA256();
 }
 
+template <class T>
+uint256 GetPrivateEffectsSighashCommitment(const T& tx, const PrecomputedTransactionData* cache)
+{
+    assert(tx.HasPrivateBundle());
+    if (cache && cache->m_private_effects_ready) {
+        return cache->m_private_effects_hash;
+    }
+    return tx.m_private_bundle->GetEffectsHash();
+}
+
+template <class T>
+void CommitPrivateEffectsToTransparentSighash(HashWriter& writer, const T& tx, const PrecomputedTransactionData* cache = nullptr)
+{
+    if (tx.HasPrivateBundle()) {
+        writer << GetPrivateEffectsSighashCommitment(tx, cache);
+    }
+}
+
 
 } // namespace
 
@@ -1399,6 +1417,11 @@ template <class T>
 void PrecomputedTransactionData::Init(const T& txTo, std::vector<CTxOut>&& spent_outputs, bool force)
 {
     assert(!m_spent_outputs_ready);
+
+    if (txTo.HasPrivateBundle()) {
+        m_private_effects_hash = txTo.m_private_bundle->GetEffectsHash();
+        m_private_effects_ready = true;
+    }
 
     m_spent_outputs = std::move(spent_outputs);
     if (!m_spent_outputs.empty()) {
@@ -1524,6 +1547,7 @@ bool SignatureHashSchnorr(uint256& hash_out, ScriptExecutionData& execdata, cons
     if (output_type == SIGHASH_ALL) {
         ss << cache.m_outputs_single_hash;
     }
+    CommitPrivateEffectsToTransparentSighash(ss, tx_to, &cache);
 
     // Data about the input/prevout being spent
     assert(execdata.m_annex_init);
@@ -1565,10 +1589,55 @@ bool SignatureHashSchnorr(uint256& hash_out, ScriptExecutionData& execdata, cons
     return true;
 }
 
+int SigHashCache::CacheIndex(int hash_type) const noexcept
+{
+    // BASE and WITNESS_V0 cannot both execute a signature check through one
+    // input checker, so they can safely share entries. VerifyScript enforces
+    // an empty scriptSig for native witness and exactly one push of the witness
+    // program for P2SH-wrapped witness; neither BASE path can reach CHECKSIG
+    // before the WITNESS_V0 program is evaluated. Reordering those stages would
+    // require separating SigVersion in this cache key.
+    return 3 * !!(hash_type & SIGHASH_ANYONECANPAY) +
+           2 * ((hash_type & 0x1f) == SIGHASH_SINGLE) +
+           1 * ((hash_type & 0x1f) == SIGHASH_NONE);
+}
+
+bool SigHashCache::Load(int hash_type, const CScript& script_code, HashWriter& writer) const noexcept
+{
+    const auto& entry = m_cache_entries[CacheIndex(hash_type)];
+    if (entry && script_code == entry->first) {
+        writer = HashWriter{entry->second};
+        return true;
+    }
+    return false;
+}
+
+void SigHashCache::Store(int hash_type, const CScript& script_code, const HashWriter& writer) noexcept
+{
+    m_cache_entries[CacheIndex(hash_type)].emplace(script_code, writer);
+}
+
 template <class T>
-uint256 SignatureHash(const CScript& scriptCode, const T& txTo, unsigned int nIn, int nHashType, const CAmount& amount, SigVersion sigversion, const PrecomputedTransactionData* cache)
+uint256 SignatureHash(const CScript& scriptCode, const T& txTo, unsigned int nIn, int nHashType, const CAmount& amount, SigVersion sigversion, const PrecomputedTransactionData* cache, SigHashCache* sighash_cache)
 {
     assert(nIn < txTo.vin.size());
+
+    if (sigversion != SigVersion::WITNESS_V0 && (nHashType & 0x1f) == SIGHASH_SINGLE && nIn >= txTo.vout.size()) {
+        if (!txTo.HasPrivateBundle()) {
+            return uint256::ONE;
+        }
+        HashWriter single_bug{};
+        single_bug << uint256::ONE;
+        CommitPrivateEffectsToTransparentSighash(single_bug, txTo, cache);
+        single_bug << nHashType;
+        return single_bug.GetHash();
+    }
+
+    HashWriter ss{};
+    if (sighash_cache && sighash_cache->Load(nHashType, scriptCode, ss)) {
+        ss << nHashType;
+        return ss.GetHash();
+    }
 
     if (sigversion == SigVersion::WITNESS_V0) {
         uint256 hashPrevouts;
@@ -1588,12 +1657,11 @@ uint256 SignatureHash(const CScript& scriptCode, const T& txTo, unsigned int nIn
         if ((nHashType & 0x1f) != SIGHASH_SINGLE && (nHashType & 0x1f) != SIGHASH_NONE) {
             hashOutputs = cacheready ? cache->hashOutputs : SHA256Uint256(GetOutputsSHA256(txTo));
         } else if ((nHashType & 0x1f) == SIGHASH_SINGLE && nIn < txTo.vout.size()) {
-            HashWriter ss{};
-            ss << txTo.vout[nIn];
-            hashOutputs = ss.GetHash();
+            HashWriter single_output{};
+            single_output << txTo.vout[nIn];
+            hashOutputs = single_output.GetHash();
         }
 
-        HashWriter ss{};
         // Version
         ss << txTo.nVersion;
         // Input prevouts/nSequence (none/all, depending on flags)
@@ -1610,26 +1678,15 @@ uint256 SignatureHash(const CScript& scriptCode, const T& txTo, unsigned int nIn
         ss << hashOutputs;
         // Locktime
         ss << txTo.nLockTime;
-        // Sighash type
-        ss << nHashType;
-
-        return ss.GetHash();
+    } else {
+        CTransactionSignatureSerializer<T> txTmp(txTo, scriptCode, nIn, nHashType);
+        ss << txTmp;
     }
 
-    // Check for invalid use of SIGHASH_SINGLE
-    if ((nHashType & 0x1f) == SIGHASH_SINGLE) {
-        if (nIn >= txTo.vout.size()) {
-            //  nOut out of range
-            return uint256::ONE;
-        }
-    }
+    CommitPrivateEffectsToTransparentSighash(ss, txTo, cache);
 
-    // Wrapper to serialize only the necessary parts of the transaction being signed
-    CTransactionSignatureSerializer<T> txTmp(txTo, scriptCode, nIn, nHashType);
-
-    // Serialize and hash
-    HashWriter ss{};
-    ss << txTmp << nHashType;
+    if (sighash_cache) sighash_cache->Store(nHashType, scriptCode, ss);
+    ss << nHashType;
     return ss.GetHash();
 }
 
@@ -1662,7 +1719,7 @@ bool GenericTransactionSignatureChecker<T>::CheckECDSASignature(const std::vecto
     // Witness sighashes need the amount.
     if (sigversion == SigVersion::WITNESS_V0 && amount < 0) return HandleMissingData(m_mdb);
 
-    uint256 sighash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, this->txdata);
+    uint256 sighash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, this->txdata, &m_sighash_cache);
 
     if (!VerifyECDSASignature(vchSig, pubkey, sighash))
         return false;

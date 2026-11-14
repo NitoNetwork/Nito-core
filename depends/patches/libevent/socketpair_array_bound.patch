@@ -1,0 +1,21 @@
+--- a/util-internal.h
++++ b/util-internal.h
+@@ -304,6 +304,6 @@ int evutil_socket_finished_connecting_(evutil_socket_t fd);
+ 
+ EVENT2_EXPORT_SYMBOL
+-int evutil_ersatz_socketpair_(int, int , int, evutil_socket_t[]);
++int evutil_ersatz_socketpair_(int, int , int, evutil_socket_t[2]);
+ 
+ int evutil_resolve_(int family, const char *hostname, struct sockaddr *sa,
+     ev_socklen_t *socklen, int port);
+--- a/evutil.c
++++ b/evutil.c
+@@ -211,7 +211,7 @@ evutil_socketpair(int family, int type, int protocol, evutil_socket_t fd[2])
+ 
+ int
+ evutil_ersatz_socketpair_(int family, int type, int protocol,
+-    evutil_socket_t fd[])
++    evutil_socket_t fd[2])
+ {
+ #ifdef _WIN32
+ #define WIN32_SOCKETPAIR_IMPLEMENTATION

@@ -46,11 +46,11 @@ class NotificationsTest(NitoTestFramework):
 
         # -alertnotify and -blocknotify on node0, walletnotify on node1
         self.extra_args = [[
-            f"-alertnotify=echo > {os.path.join(self.alertnotify_dir, '%s')}",
-            f"-blocknotify=echo > {os.path.join(self.blocknotify_dir, '%s')}",
-            f"-shutdownnotify=echo > {self.shutdownnotify_file}",
+            f'-alertnotify=echo > "{self.alertnotify_dir}"/%s',
+            f'-blocknotify=echo > "{self.blocknotify_dir}"/%s',
+            f'-shutdownnotify=echo > "{self.shutdownnotify_file}"',
         ], [
-            f"-walletnotify=echo %h_%b > {os.path.join(self.walletnotify_dir, notify_outputname('%w', '%s'))}",
+            f'-walletnotify=echo %h_%b > "{self.walletnotify_dir}"/{notify_outputname("%w", "%s")}',
         ]]
         self.wallet_names = [self.default_wallet_name, self.wallet]
         super().setup_network()
@@ -125,14 +125,12 @@ class NotificationsTest(NitoTestFramework):
             self.sync_mempools()
             self.expect_wallet_notify([(tx1, -1, UNCONFIRMED_HASH_STRING)])
 
-            # Generate bump transaction, sync mempools, and check for bump1
-            # notification. In the future, per
-            # https://github.com/nito/nito/pull/9371, it might be better
-            # to have notifications for both tx1 and bump1.
+            # Require the replacement notification. An asynchronous update
+            # for the replaced transaction may also arrive in this interval.
             bump1 = self.nodes[0].bumpfee(tx1)["txid"]
             assert_equal(bump1 in self.nodes[0].getrawmempool(), True)
             self.sync_mempools()
-            self.expect_wallet_notify([(bump1, -1, UNCONFIRMED_HASH_STRING)])
+            self.expect_wallet_notify([(bump1, -1, UNCONFIRMED_HASH_STRING)], optional_txids=[tx1])
 
             # Add bump1 transaction to new block, checking for a notification
             # and the correct number of confirmations.
@@ -168,10 +166,11 @@ class NotificationsTest(NitoTestFramework):
         self.stop_nodes()
         self.wait_until(lambda: os.path.isfile(self.shutdownnotify_file), timeout=10)
 
-    def expect_wallet_notify(self, tx_details):
-        self.wait_until(lambda: len(os.listdir(self.walletnotify_dir)) >= len(tx_details), timeout=10)
-        # Should have no more and no less files than expected
-        assert_equal(sorted(notify_outputname(self.wallet, tx_id) for tx_id, _, _ in tx_details), sorted(os.listdir(self.walletnotify_dir)))
+    def expect_wallet_notify(self, tx_details, optional_txids=()):
+        required = {notify_outputname(self.wallet, tx_id) for tx_id, _, _ in tx_details}
+        optional = {notify_outputname(self.wallet, tx_id) for tx_id in optional_txids}
+        self.wait_until(lambda: required <= set(os.listdir(self.walletnotify_dir)), timeout=10)
+        assert set(os.listdir(self.walletnotify_dir)) <= required | optional
         # Should now verify contents of each file
         for tx_id, blockheight, blockhash in tx_details:
             fname = os.path.join(self.walletnotify_dir, notify_outputname(self.wallet, tx_id))

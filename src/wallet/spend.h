@@ -8,14 +8,23 @@
 
 #include <consensus/amount.h>
 #include <policy/fees.h> // for FeeCalculation
+#include <psbt.h>
+#include <uint256.h>
 #include <util/result.h>
 #include <wallet/coinselection.h>
 #include <wallet/transaction.h>
 #include <wallet/wallet.h>
 
 #include <optional>
+#include <vector>
 
 namespace wallet {
+/** Select confirmed private notes within the Orchard action limit. Explicit
+ * coin control consumes exactly the requested set, including for consolidation. */
+bool SelectPrivateNotes(const CWallet& wallet, CAmount target, const CCoinControl& coin_control,
+                        std::vector<const CPrivateWalletNote*>& selected, CAmount& selected_value)
+    EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+
 /** Get the marginal bytes if spending the specified output from this transaction.
  * Use CoinControl to determine whether to expect signature grinding when calculating the size of the input spend. */
 int CalculateMaximumSignedInputSize(const CTxOut& txout, const CWallet* pwallet, const CCoinControl* coin_control);
@@ -209,6 +218,8 @@ struct CreatedTransactionResult
     CAmount fee;
     FeeCalculation fee_calc;
     std::optional<unsigned int> change_pos;
+    std::vector<PSBTProprietary> private_psbt_records;
+    std::vector<uint256> private_spend_note_ids;
 
     CreatedTransactionResult(CTransactionRef _tx, CAmount _fee, std::optional<unsigned int> _change_pos, const FeeCalculation& _fee_calc)
         : tx(_tx), fee(_fee), fee_calc(_fee_calc), change_pos(_change_pos) {}
@@ -225,7 +236,7 @@ util::Result<CreatedTransactionResult> CreateTransaction(CWallet& wallet, const 
  * Insert additional inputs into the transaction by
  * calling CreateTransaction();
  */
-util::Result<CreatedTransactionResult> FundTransaction(CWallet& wallet, const CMutableTransaction& tx, const std::vector<CRecipient>& recipients, std::optional<unsigned int> change_pos, bool lockUnspents, CCoinControl);
+util::Result<CreatedTransactionResult> FundTransaction(CWallet& wallet, const CMutableTransaction& tx, const std::vector<CRecipient>& recipients, std::optional<unsigned int> change_pos, bool lockUnspents, CCoinControl, bool sign = false);
 } // namespace wallet
 
 #endif // BITCOIN_WALLET_SPEND_H

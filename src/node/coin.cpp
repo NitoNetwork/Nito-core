@@ -5,8 +5,10 @@
 
 #include <node/coin.h>
 
+#include <coins.h>
 #include <node/context.h>
 #include <txmempool.h>
+#include <util/check.h>
 #include <validation.h>
 
 namespace node {
@@ -23,5 +25,36 @@ void FindCoins(const NodeContext& node, std::map<COutPoint, Coin>& coins)
             coin.second.Clear();
         }
     }
+}
+
+bool FindCoinsByScriptPubKeys(const NodeContext& node, const std::set<CScript>& scripts, std::map<COutPoint, Coin>& coins)
+{
+    assert(node.chainman);
+    if (scripts.empty()) return true;
+
+    std::unique_ptr<CCoinsViewCursor> cursor;
+    {
+        LOCK(cs_main);
+        Chainstate& active_chainstate = node.chainman->ActiveChainstate();
+        active_chainstate.ForceFlushStateToDisk();
+        cursor = CHECK_NONFATAL(active_chainstate.CoinsDB().Cursor());
+    }
+
+    int64_t count{0};
+    while (cursor->Valid()) {
+        COutPoint outpoint;
+        Coin coin;
+        if (!cursor->GetKey(outpoint) || !cursor->GetValue(coin)) return false;
+
+        if (++count % 8192 == 0) {
+            node.rpc_interruption_point();
+        }
+
+        if (!coin.IsSpent() && scripts.count(coin.out.scriptPubKey)) {
+            coins.emplace(outpoint, std::move(coin));
+        }
+        cursor->Next();
+    }
+    return true;
 }
 } // namespace node

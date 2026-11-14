@@ -32,12 +32,15 @@
 #include <util/batchpriority.h>
 #include <util/check.h>
 #include <util/fs.h>
+#include <util/fs_helpers.h>
+#include <util/readwritefile.h>
 #include <util/signalinterrupt.h>
 #include <util/strencodings.h>
 #include <util/translation.h>
 #include <validation.h>
 
 #include <map>
+#include <system_error>
 #include <unordered_map>
 
 namespace kernel {
@@ -150,6 +153,84 @@ bool BlockTreeDB::LoadBlockIndexGuts(const Consensus::Params& consensusParams, s
 
 namespace node {
 std::atomic_bool fReindex(false);
+
+static constexpr const char* NITO_PRIVATE_ACTIVATION_LATCH_FILE{"nito-private-activation-v1.dat"};
+
+static fs::path NitoPrivateActivationLatchPath(const BlockManager::Options& opts)
+{
+    return opts.datadir / NITO_PRIVATE_ACTIVATION_LATCH_FILE;
+}
+
+static std::string NitoPrivateActivationLatchContents(const CChainParams& params)
+{
+    return strprintf(
+        "nito-private-activation-latch-v1\n"
+        "network-magic=%s\n"
+        "genesis=%s\n"
+        "activation-height=%d\n",
+        HexStr(params.MessageStart()),
+        params.GenesisBlock().GetHash().ToString(),
+        params.GetConsensus().privateTxActivationHeight);
+}
+
+bool BlockManager::LoadNitoPrivateActivationLatch(std::string& error)
+{
+    const fs::path path{NitoPrivateActivationLatchPath(m_opts)};
+    std::error_code file_error;
+    const bool exists{std::filesystem::exists(path, file_error)};
+    if (file_error) {
+        error = strprintf("Cannot inspect Nito private activation latch %s: %s",
+                          fs::PathToString(path), file_error.message());
+        return false;
+    }
+    if (!exists) return true;
+
+    constexpr size_t MAX_LATCH_FILE_SIZE{4096};
+    const auto [read_ok, contents]{ReadBinaryFile(path, MAX_LATCH_FILE_SIZE + 1)};
+    if (!read_ok) {
+        error = strprintf("Cannot read Nito private activation latch %s", fs::PathToString(path));
+        return false;
+    }
+    if (contents != NitoPrivateActivationLatchContents(GetParams())) {
+        error = strprintf(
+            "Invalid Nito private activation latch %s. The file must match this network, genesis block, and activation height.",
+            fs::PathToString(path));
+        return false;
+    }
+
+    m_nito_private_activation_observed.store(true, std::memory_order_release);
+    LogPrintf("Loaded durable Nito private activation latch from %s\n", fs::PathToString(path));
+    return true;
+}
+
+bool BlockManager::MarkNitoPrivateActivationObserved()
+{
+    AssertLockHeld(::cs_main);
+    if (NitoPrivateActivationObserved()) return true;
+
+    const fs::path path{NitoPrivateActivationLatchPath(m_opts)};
+    const fs::path tmp_path{path + ".tmp"};
+    FILE* file{fsbridge::fopen(tmp_path, "wb")};
+    if (!file) {
+        LogPrintf("Failed to open Nito private activation latch temporary file %s\n", fs::PathToString(tmp_path));
+        return false;
+    }
+
+    const std::string contents{NitoPrivateActivationLatchContents(GetParams())};
+    bool ok{std::fwrite(contents.data(), 1, contents.size(), file) == contents.size() && FileCommit(file)};
+    if (std::fclose(file) != 0) ok = false;
+    if (!ok || !RenameOver(tmp_path, path)) {
+        std::error_code ignored;
+        std::filesystem::remove(tmp_path, ignored);
+        LogPrintf("Failed to commit durable Nito private activation latch %s\n", fs::PathToString(path));
+        return false;
+    }
+    DirectoryCommit(m_opts.datadir);
+
+    m_nito_private_activation_observed.store(true, std::memory_order_release);
+    LogPrintf("Nito private activation latch durably persisted to %s\n", fs::PathToString(path));
+    return true;
+}
 
 bool CBlockIndexWorkComparator::operator()(const CBlockIndex* pa, const CBlockIndex* pb) const
 {
@@ -575,13 +656,10 @@ void BlockManager::ScanAndUnlinkAlreadyPrunedFiles()
 
 const CBlockIndex* BlockManager::GetLastCheckpoint(const CCheckpointData& data)
 {
-    const MapCheckpoints& checkpoints = data.mapCheckpoints;
-
-    for (const MapCheckpoints::value_type& i : reverse_iterate(checkpoints)) {
-        const uint256& hash = i.second;
-        const CBlockIndex* pindex = LookupBlockIndex(hash);
-        if (pindex) {
-            return pindex;
+    for (const auto& [height, hash] : reverse_iterate(data.mapCheckpoints)) {
+        (void)height;
+        if (const CBlockIndex* index = LookupBlockIndex(hash)) {
+            return index;
         }
     }
     return nullptr;

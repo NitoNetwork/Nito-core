@@ -1,0 +1,11 @@
+--- a/qtdeclarative/src/qml/jsruntime/qv4qobjectwrapper.cpp
++++ b/qtdeclarative/src/qml/jsruntime/qv4qobjectwrapper.cpp
+@@ -1671,7 +1671,7 @@
+             if (!args[ii + 1].fromValue(argTypes[ii], engine,
+                                         callArgs->args[ii].asValue<Value>())) {
+                 qWarning() << QString::fromLatin1("Could not convert argument %1 from %2 to %3")
+-                    .arg(ii).arg(callArgs->args[ii].asValue<Value>().toQStringNoThrow()).arg(argTypes[ii].name());
++                    .arg(ii).arg(callArgs->args[ii].asValue<Value>().toQStringNoThrow()).arg(QString::fromUtf8(argTypes[ii].name()));
+                 const StackTrace stack = engine->stackTrace();
+                 for (const StackFrame &frame : stack) {
+                     qWarning() << "\t" << frame.function + QLatin1Char('@') + frame.source

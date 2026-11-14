@@ -24,11 +24,20 @@
 #include <string>
 
 #include <QLatin1String>
+#include <QStringList>
 
 using wallet::ISMINE_ALL;
+using wallet::ISMINE_NO;
 using wallet::ISMINE_SPENDABLE;
 using wallet::ISMINE_WATCH_ONLY;
 using wallet::isminetype;
+
+namespace {
+bool IsUserVisibleRecipientOutput(const CTxOut& txout)
+{
+    return txout.nValue > 0 && !txout.scriptPubKey.IsUnspendable();
+}
+} // namespace
 
 QString TransactionDesc::FormatTxStatus(const interfaces::WalletTxStatus& status, bool inMempool)
 {
@@ -101,7 +110,40 @@ bool GetPaymentRequestMerchant(const std::string& pr, QString& merchant)
     return false;
 }
 
-QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wallet, TransactionRecord* rec, NitoUnit unit)
+QString TransactionDesc::FormatInputAddresses(const interfaces::WalletTx& wtx, bool expanded)
+{
+    // Public inputs cannot identify the source of Orchard or mixed payments.
+    if (wtx.is_coinbase || wtx.has_private_bundle) return {};
+
+    QStringList addresses;
+    for (const auto& address : wtx.txin_addresses) {
+        addresses.append(QString::fromStdString(EncodeDestination(address)));
+    }
+    QString html = "<b>" + tr("From") + ":</b> ";
+    if (addresses.isEmpty()) {
+        return html + tr("Source address unavailable") + "<br>";
+    }
+    if (addresses.size() == 1) {
+        html += GUIUtil::HtmlEscape(addresses.front());
+    } else {
+        const QString action = expanded ? tr("Hide input addresses") : tr("Show input addresses");
+        html += "<a href=\"#input-addresses\" title=\"" + GUIUtil::HtmlEscape(action) + "\">";
+        html += GUIUtil::HtmlEscape(expanded ? action : tr("%1 input addresses").arg(addresses.size()));
+        html += "</a>";
+    }
+    if (!wtx.txin_addresses_complete) {
+        html += " (" + tr("Some input addresses are unavailable.") + ")";
+    }
+    html += "<br>";
+    if (expanded && addresses.size() > 1) {
+        for (const auto& address : addresses) {
+            html += "&nbsp;&nbsp;" + GUIUtil::HtmlEscape(address) + "<br>";
+        }
+    }
+    return html;
+}
+
+QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wallet, TransactionRecord* rec, NitoUnit unit, bool expand_input_addresses)
 {
     int numBlocks;
     interfaces::WalletTxStatus status;
@@ -114,15 +156,175 @@ QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wall
     strHTML.reserve(4000);
     strHTML += "<html><font face='verdana, arial, helvetica, sans-serif'>";
 
+    if (rec->is_private_note_only && !wtx.tx) {
+        interfaces::WalletTxStatus note_status{};
+        note_status.depth_in_main_chain = rec->status.depth;
+        note_status.is_abandoned = rec->status.status == TransactionStatus::Abandoned;
+        strHTML += "<b>" + tr("Status") + ":</b> " + FormatTxStatus(note_status, false);
+        strHTML += "<br>";
+        strHTML += "<b>" + tr("Date") + ":</b> " + (rec->time ? GUIUtil::dateTimeStr(rec->time) : "") + "<br>";
+        strHTML += "<b>" + tr("Privacy") + ":</b> " + tr("Bech32x private transaction") + "<br>";
+        strHTML += "<b>" + tr("Private credit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, rec->credit) + "<br>";
+        strHTML += "<b>" + tr("Net amount") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, rec->credit, true) + "<br>";
+        strHTML += "<b>" + tr("Transaction ID") + ":</b> " + rec->getTxHash() + "<br>";
+        strHTML += "<b>" + tr("Output index (vout)") + ":</b> " + QString::number(rec->getOutputIndex()) + "<br>";
+        return strHTML + "</font></html>";
+    }
+
+    if (!wtx.tx) {
+        strHTML += "<b>" + tr("Transaction ID") + ":</b> " + rec->getTxHash() + "<br>";
+        return strHTML + "</font></html>";
+    }
+
     int64_t nTime = wtx.time;
-    CAmount nCredit = wtx.credit;
-    CAmount nDebit = wtx.debit;
+    CAmount nCredit = wtx.credit + wtx.private_credit;
+    CAmount nDebit = wtx.debit + wtx.private_debit;
     CAmount nNet = nCredit - nDebit;
+    CAmount nDisplayNet = nNet;
+
+    if (nDebit == 0 && rec->credit > 0) {
+        nDisplayNet = rec->credit;
+    }
 
     strHTML += "<b>" + tr("Status") + ":</b> " + FormatTxStatus(status, inMempool);
     strHTML += "<br>";
 
     strHTML += "<b>" + tr("Date") + ":</b> " + (nTime ? GUIUtil::dateTimeStr(nTime) : "") + "<br>";
+
+    if (rec->is_private || wtx.has_private_bundle) {
+        strHTML += "<b>" + tr("Privacy") + ":</b> " + tr("Bech32x private transaction") + "<br>";
+        if (!rec->is_private && wtx.private_credit > 0) {
+            strHTML += "<b>" + tr("Private credit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, wtx.private_credit) + "<br>";
+        }
+        if (!rec->is_private && wtx.private_debit > 0) {
+            strHTML += "<b>" + tr("Private debit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, -wtx.private_debit) + "<br>";
+        }
+        if (!rec->is_private && wtx.private_value_balance != 0) {
+            strHTML += "<b>" + tr("Private value balance") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, wtx.private_value_balance) + "<br>";
+        }
+    }
+
+    if (rec->type == TransactionRecord::InternalTransfer) {
+        const CAmount row_amount = rec->credit + rec->debit;
+        int internal_output_count{0};
+        for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i) {
+            if (i >= wtx.txout_is_mine.size() || i >= wtx.txout_address.size()) {
+                continue;
+            }
+            const CTxOut& txout = wtx.tx->vout[i];
+            const isminetype mine = wtx.txout_is_mine[i];
+            if (!(mine & (ISMINE_SPENDABLE | ISMINE_WATCH_ONLY)) || !IsUserVisibleRecipientOutput(txout)) {
+                continue;
+            }
+
+            if (internal_output_count == 0) {
+                strHTML += "<b>" + tr("To") + ":</b><br>";
+            }
+            const CTxDestination& dest = wtx.txout_address[i];
+            strHTML += "&nbsp;&nbsp;";
+            if (IsValidDestination(dest)) {
+                std::string name;
+                if (wallet.getAddress(dest, &name, /* is_mine= */ nullptr, /* purpose= */ nullptr) && !name.empty()) {
+                    strHTML += GUIUtil::HtmlEscape(name) + " ";
+                }
+                strHTML += GUIUtil::HtmlEscape(EncodeDestination(dest));
+                if (mine & ISMINE_WATCH_ONLY) {
+                    strHTML += " (" + tr("watch-only") + ")";
+                } else if (mine & ISMINE_SPENDABLE) {
+                    strHTML += " (" + tr("own address") + ")";
+                }
+            } else {
+                strHTML += tr("unknown");
+            }
+            strHTML += " - <b>" + tr("Amount") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, txout.nValue);
+            strHTML += " - <b>" + tr("Output index (vout)") + ":</b> " + QString::number(i) + "<br>";
+            ++internal_output_count;
+        }
+        if (internal_output_count == 0 && !rec->address.empty()) {
+            CTxDestination dest = DecodeDestination(rec->address);
+            std::string name;
+            strHTML += "<b>" + tr("To") + ":</b> ";
+            if (IsValidDestination(dest) &&
+                wallet.getAddress(dest, &name, /* is_mine= */ nullptr, /* purpose= */ nullptr) && !name.empty()) {
+                strHTML += GUIUtil::HtmlEscape(name) + " ";
+            }
+            strHTML += GUIUtil::HtmlEscape(rec->address);
+            if (IsValidDestination(dest)) {
+                isminetype ismine;
+                if (wallet.getAddress(dest, /* name= */ nullptr, &ismine, /* purpose= */ nullptr) && ismine == ISMINE_SPENDABLE) {
+                    strHTML += " (" + tr("own address") + ")";
+                }
+            }
+            strHTML += "<br>";
+        }
+        // Internal transfers/consolidations are represented by their table row amount;
+        // wallet-wide debit/credit totals are change heuristics and confuse this view.
+        strHTML += "<b>" + tr("Amount") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, row_amount, true) + "<br>";
+        if (wtx.fee > 0) {
+            strHTML += "<b>" + tr("Transaction fee") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, -wtx.fee) + "<br>";
+        }
+        strHTML += "<b>" + tr("Net amount") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, nNet, true) + "<br>";
+        strHTML += "<b>" + tr("Transaction ID") + ":</b> " + rec->getTxHash() + "<br>";
+        strHTML += "<b>" + tr("Transaction total size") + ":</b> " + QString::number(wtx.tx->GetTotalSize()) + " bytes<br>";
+        strHTML += "<b>" + tr("Transaction virtual size") + ":</b> " + QString::number(GetVirtualTransactionSize(*wtx.tx)) + " bytes<br>";
+        strHTML += "<b>" + tr("Output index (vout)") + ":</b> ";
+        const bool has_multiple_internal_outputs = internal_output_count > 1 || rec->is_multi_recipient;
+        strHTML += has_multiple_internal_outputs ? tr("multiple recipients") : QString::number(rec->getOutputIndex());
+        strHTML += "<br>";
+        return strHTML + "</font></html>";
+    }
+
+    if (rec->type == TransactionRecord::PrivateUnshield) {
+        if (!rec->address.empty()) {
+            CTxDestination dest = DecodeDestination(rec->address);
+            std::string name;
+            strHTML += "<b>" + tr("To") + ":</b> ";
+            if (IsValidDestination(dest) &&
+                wallet.getAddress(dest, &name, /* is_mine= */ nullptr, /* purpose= */ nullptr) && !name.empty()) {
+                strHTML += GUIUtil::HtmlEscape(name) + " ";
+            }
+            strHTML += GUIUtil::HtmlEscape(rec->address);
+            if (IsValidDestination(dest)) {
+                isminetype ismine;
+                if (wallet.getAddress(dest, /* name= */ nullptr, &ismine, /* purpose= */ nullptr) && ismine == ISMINE_SPENDABLE) {
+                    strHTML += " (" + tr("own address") + ")";
+                }
+            }
+            strHTML += "<br>";
+        }
+        if (rec->debit < 0) {
+            strHTML += "<b>" + tr("Debit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, rec->debit) + "<br>";
+        }
+        if (rec->credit > 0) {
+            strHTML += "<b>" + tr("Credit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, rec->credit) + "<br>";
+        }
+        if (rec->debit < 0 && wtx.fee > 0) {
+            strHTML += "<b>" + tr("Transaction fee") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, -wtx.fee) + "<br>";
+        }
+        strHTML += "<b>" + tr("Transaction ID") + ":</b> " + rec->getTxHash() + "<br>";
+        strHTML += "<b>" + tr("Transaction total size") + ":</b> " + QString::number(wtx.tx->GetTotalSize()) + " bytes<br>";
+        strHTML += "<b>" + tr("Transaction virtual size") + ":</b> " + QString::number(GetVirtualTransactionSize(*wtx.tx)) + " bytes<br>";
+        strHTML += "<b>" + tr("Output index (vout)") + ":</b> " + QString::number(rec->getOutputIndex()) + "<br>";
+        return strHTML + "</font></html>";
+    }
+
+    if (rec->is_private && wtx.has_private_bundle) {
+        if (rec->debit < 0) {
+            strHTML += "<b>" + tr("Debit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, rec->debit) + "<br>";
+        } else if (rec->credit > 0) {
+            strHTML += "<b>" + tr("Credit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, rec->credit) + "<br>";
+        } else {
+            strHTML += "<b>" + tr("Amount") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, rec->credit + rec->debit, true) + "<br>";
+        }
+        if (rec->debit < 0 && wtx.fee > 0) {
+            strHTML += "<b>" + tr("Transaction fee") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, -wtx.fee) + "<br>";
+        }
+        strHTML += "<b>" + tr("Transaction ID") + ":</b> " + rec->getTxHash() + "<br>";
+        strHTML += "<b>" + tr("Transaction total size") + ":</b> " + QString::number(wtx.tx->GetTotalSize()) + " bytes<br>";
+        strHTML += "<b>" + tr("Transaction virtual size") + ":</b> " + QString::number(GetVirtualTransactionSize(*wtx.tx)) + " bytes<br>";
+        strHTML += "<b>" + tr("Output index (vout)") + ":</b> " + QString::number(rec->getOutputIndex()) + "<br>";
+        return strHTML + "</font></html>";
+    }
 
     //
     // From
@@ -131,7 +333,7 @@ QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wall
     {
         strHTML += "<b>" + tr("Source") + ":</b> " + tr("Generated") + "<br>";
     }
-    else if (wtx.value_map.count("from") && !wtx.value_map["from"].empty())
+    else if ((nNet <= 0 || wtx.has_private_bundle) && wtx.value_map.count("from") && !wtx.value_map["from"].empty())
     {
         // Online transaction
         strHTML += "<b>" + tr("From") + ":</b> " + GUIUtil::HtmlEscape(wtx.value_map["from"]) + "<br>";
@@ -142,13 +344,18 @@ QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wall
         if (nNet > 0)
         {
             // Credit
+            if (!wtx.has_private_bundle) {
+                strHTML += FormatInputAddresses(wtx, expand_input_addresses);
+            }
             CTxDestination address = DecodeDestination(rec->address);
             if (IsValidDestination(address)) {
                 std::string name;
                 isminetype ismine;
                 if (wallet.getAddress(address, &name, &ismine, /* purpose= */ nullptr))
                 {
-                    strHTML += "<b>" + tr("From") + ":</b> " + tr("unknown") + "<br>";
+                    if (wtx.has_private_bundle) {
+                        strHTML += "<b>" + tr("From") + ":</b> " + tr("unknown") + "<br>";
+                    }
                     strHTML += "<b>" + tr("To") + ":</b> ";
                     strHTML += GUIUtil::HtmlEscape(rec->address);
                     QString addressOwned = ismine == ISMINE_SPENDABLE ? tr("own address") : tr("watch-only");
@@ -201,11 +408,12 @@ QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wall
         //
         // Credit
         //
-        strHTML += "<b>" + tr("Credit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, nNet) + "<br>";
+        const CAmount nDisplayCredit = rec->credit > 0 ? rec->credit : nNet;
+        strHTML += "<b>" + tr("Credit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, nDisplayCredit) + "<br>";
     }
     else
     {
-        isminetype fAllFromMe = ISMINE_SPENDABLE;
+        isminetype fAllFromMe = wtx.txin_is_mine.empty() ? ISMINE_NO : ISMINE_SPENDABLE;
         for (const isminetype mine : wtx.txin_is_mine)
         {
             if(fAllFromMe > mine) fAllFromMe = mine;
@@ -231,6 +439,8 @@ QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wall
                 // Ignore change
                 isminetype toSelf = *(mine++);
                 if ((toSelf == ISMINE_SPENDABLE) && (fAllFromMe == ISMINE_SPENDABLE))
+                    continue;
+                if (!toSelf && !IsUserVisibleRecipientOutput(txout))
                     continue;
 
                 if (!wtx.value_map.count("to") || wtx.value_map["to"].empty())
@@ -260,14 +470,17 @@ QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wall
 
             if (fAllToMe)
             {
-                // Payment to self
-                CAmount nChange = wtx.change;
-                CAmount nValue = nCredit - nChange;
-                strHTML += "<b>" + tr("Total debit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, -nValue) + "<br>";
-                strHTML += "<b>" + tr("Total credit") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, nValue) + "<br>";
+                // Payment to self / consolidation. Change heuristics can mark every
+                // output as change after a history rebuild, so show the selected row
+                // or wallet-visible output amount instead of misleading zero totals.
+                const CAmount row_amount = rec->credit + rec->debit;
+                const CAmount self_amount = row_amount > 0 ? row_amount : nCredit;
+                if (self_amount > 0) {
+                    strHTML += "<b>" + tr("Amount") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, self_amount) + "<br>";
+                }
             }
 
-            CAmount nTxFee = nDebit - wtx.tx->GetValueOut();
+            CAmount nTxFee = wtx.fee;
             if (nTxFee > 0)
                 strHTML += "<b>" + tr("Transaction fee") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, -nTxFee) + "<br>";
         }
@@ -291,7 +504,7 @@ QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wall
         }
     }
 
-    strHTML += "<b>" + tr("Net amount") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, nNet, true) + "<br>";
+    strHTML += "<b>" + tr("Net amount") + ":</b> " + NitoUnits::formatHtmlWithUnit(unit, nDisplayNet, true) + "<br>";
 
     //
     // Message
@@ -304,7 +517,9 @@ QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wall
     strHTML += "<b>" + tr("Transaction ID") + ":</b> " + rec->getTxHash() + "<br>";
     strHTML += "<b>" + tr("Transaction total size") + ":</b> " + QString::number(wtx.tx->GetTotalSize()) + " bytes<br>";
     strHTML += "<b>" + tr("Transaction virtual size") + ":</b> " + QString::number(GetVirtualTransactionSize(*wtx.tx)) + " bytes<br>";
-    strHTML += "<b>" + tr("Output index") + ":</b> " + QString::number(rec->getOutputIndex()) + "<br>";
+    strHTML += "<b>" + tr("Output index (vout)") + ":</b> ";
+    strHTML += rec->is_multi_recipient ? tr("multiple recipients") : QString::number(rec->getOutputIndex());
+    strHTML += "<br>";
 
     // Message from normal nito:URI (nito:123...?message=example)
     for (const std::pair<std::string, std::string>& r : orderForm) {

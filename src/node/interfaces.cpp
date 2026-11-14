@@ -12,6 +12,8 @@
 #include <deploymentstatus.h>
 #include <external_signer.h>
 #include <index/blockfilterindex.h>
+#include <index/orchardindex.h>
+#include <index/transparenthistoryindex.h>
 #include <init.h>
 #include <interfaces/chain.h>
 #include <interfaces/handler.h>
@@ -44,6 +46,7 @@
 #include <sync.h>
 #include <txmempool.h>
 #include <uint256.h>
+#include <undo.h>
 #include <univalue.h>
 #include <util/check.h>
 #include <util/result.h>
@@ -58,6 +61,7 @@
 #endif
 
 #include <any>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -68,6 +72,7 @@ using interfaces::BlockTip;
 using interfaces::Chain;
 using interfaces::FoundBlock;
 using interfaces::Handler;
+using interfaces::IndexStatus;
 using interfaces::MakeSignalHandler;
 using interfaces::Node;
 using interfaces::WalletLoader;
@@ -285,6 +290,25 @@ public:
     {
         LOCK(::cs_main);
         return chainman().ActiveChain().Height();
+    }
+    std::vector<IndexStatus> getWalletIndexStatuses() override
+    {
+        std::vector<IndexStatus> statuses;
+        auto append_index = [&](const IndexSummary& summary) {
+            statuses.push_back(IndexStatus{
+                .name = summary.name,
+                .synced = summary.synced,
+                .best_block_height = summary.best_block_height,
+            });
+        };
+
+        if (const TransparentHistoryIndex* transparent_history_index{GetTransparentHistoryIndex()}) {
+            append_index(transparent_history_index->GetSummary());
+        }
+        if (const OrchardIndex* orchard_index{GetOrchardIndex()}) {
+            append_index(orchard_index->GetSummary());
+        }
+        return statuses;
     }
     uint256 getBestBlockHash() override
     {
@@ -530,6 +554,74 @@ public:
         LOCK(::cs_main);
         return Assert(chainman().ActiveChain()[height])->GetBlockHash();
     }
+    bool getPrivateChainState(uint256& root, uint64_t& commitment_count) override
+    {
+        LOCK(::cs_main);
+        const CCoinsViewCache& coins = chainman().ActiveChainstate().CoinsTip();
+        return coins.GetPrivateRoot(root) && coins.GetPrivateCommitmentCount(commitment_count);
+    }
+    bool getPrivateCommitmentIndex(const uint256& commitment, uint64_t& commitment_index) override
+    {
+        commitment_index = 0;
+        if (const OrchardIndex* orchard_index{GetOrchardIndex()}) {
+            const IndexSummary summary{orchard_index->GetSummary()};
+            if (summary.synced) {
+                uint256 indexed_root;
+                uint64_t indexed_count{0};
+                uint64_t indexed_position{0};
+                if (orchard_index->LookupCommitmentIndex(commitment, indexed_position, indexed_root, indexed_count)) {
+                    LOCK(::cs_main);
+                    const CCoinsViewCache& coins = chainman().ActiveChainstate().CoinsTip();
+                    uint256 chain_root;
+                    uint64_t chain_count{0};
+                    if (coins.GetPrivateRoot(chain_root) &&
+                        coins.GetPrivateCommitmentCount(chain_count) &&
+                        chain_root == indexed_root &&
+                        chain_count == indexed_count) {
+                        commitment_index = indexed_position;
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+    bool getPrivateAuthPath(uint64_t commitment_index, std::vector<uint256>& auth_path, uint256& root) override
+    {
+        auth_path.clear();
+        std::vector<std::vector<uint256>> auth_paths;
+        if (!getPrivateAuthPaths({commitment_index}, auth_paths, root) || auth_paths.size() != 1) return false;
+        auth_path = std::move(auth_paths.front());
+        return true;
+    }
+    bool getPrivateAuthPaths(const std::vector<uint64_t>& commitment_indices, std::vector<std::vector<uint256>>& auth_paths, uint256& root) override
+    {
+        auth_paths.clear();
+        root.SetNull();
+        if (commitment_indices.empty()) return false;
+
+        if (const OrchardIndex* orchard_index{GetOrchardIndex()}) {
+            if (orchard_index->BlockUntilSyncedToCurrentChain()) {
+                uint64_t indexed_count{0};
+                if (orchard_index->LookupMerkleAuthPaths(commitment_indices, auth_paths, root, indexed_count)) {
+                    LOCK(::cs_main);
+                    const CCoinsViewCache& coins = chainman().ActiveChainstate().CoinsTip();
+                    uint256 chain_root;
+                    uint64_t chain_count{0};
+                    if (coins.GetPrivateRoot(chain_root) &&
+                        coins.GetPrivateCommitmentCount(chain_count) &&
+                        chain_root == root &&
+                        chain_count == indexed_count) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        auth_paths.clear();
+        root.SetNull();
+        return false;
+    }
     bool haveBlockOnDisk(int height) override
     {
         LOCK(::cs_main);
@@ -559,6 +651,19 @@ public:
     {
         return GetBlockFilterIndex(filter_type) != nullptr;
     }
+    bool waitForBlockFilterIndexSynced(BlockFilterType filter_type) override
+    {
+        const BlockFilterIndex* block_filter_index{GetBlockFilterIndex(filter_type)};
+        return block_filter_index && block_filter_index->BlockUntilSyncedToCurrentChain();
+    }
+    std::optional<int> getSyncedBlockFilterIndexHeight(BlockFilterType filter_type) override
+    {
+        const BlockFilterIndex* block_filter_index{GetBlockFilterIndex(filter_type)};
+        if (!block_filter_index) return std::nullopt;
+        const IndexSummary summary{block_filter_index->GetSummary()};
+        if (!summary.synced) return std::nullopt;
+        return summary.best_block_height;
+    }
     std::optional<bool> blockFilterMatchesAny(BlockFilterType filter_type, const uint256& block_hash, const GCSFilter::ElementSet& filter_set) override
     {
         const BlockFilterIndex* block_filter_index{GetBlockFilterIndex(filter_type)};
@@ -568,6 +673,113 @@ public:
         const CBlockIndex* index{WITH_LOCK(::cs_main, return chainman().m_blockman.LookupBlockIndex(block_hash))};
         if (index == nullptr || !block_filter_index->LookupFilter(index, filter)) return std::nullopt;
         return filter.GetFilter().MatchAny(filter_set);
+    }
+    std::optional<std::vector<interfaces::BlockKey>> findBlockFilterMatches(BlockFilterType filter_type, int start_height, int stop_height, const GCSFilter::ElementSet& filter_set) override
+    {
+        const BlockFilterIndex* block_filter_index{GetBlockFilterIndex(filter_type)};
+        if (!block_filter_index) return std::nullopt;
+
+        const CBlockIndex* stop_index{nullptr};
+        {
+            LOCK(::cs_main);
+            const CChain& active_chain{chainman().ActiveChain()};
+            if (start_height < 0 || stop_height < start_height || stop_height > active_chain.Height()) {
+                return std::nullopt;
+            }
+            stop_index = active_chain[stop_height];
+        }
+        if (!stop_index) return std::nullopt;
+
+        std::vector<BlockFilter> filters;
+        if (!block_filter_index->LookupFilterRange(start_height, stop_index, filters)) {
+            return std::nullopt;
+        }
+
+        std::vector<interfaces::BlockKey> matches;
+        matches.reserve(filters.size() / 100 + 1);
+        int height{start_height};
+        for (const BlockFilter& filter : filters) {
+            if (filter.GetFilter().MatchAny(filter_set)) {
+                matches.push_back({filter.GetBlockHash(), height});
+            }
+            ++height;
+        }
+        return matches;
+    }
+    std::optional<std::vector<interfaces::OrchardIndexedTransaction>> getOrchardBlockTransactions(const uint256& block_hash) override
+    {
+        const OrchardIndex* orchard_index{GetOrchardIndex()};
+        if (!orchard_index) return std::nullopt;
+
+        const CBlockIndex* index{WITH_LOCK(::cs_main, return chainman().m_blockman.LookupBlockIndex(block_hash))};
+        if (!index) return std::nullopt;
+
+        std::vector<interfaces::OrchardIndexedTransaction> txs;
+        if (!orchard_index->LookupBlockTransactions(index, txs)) return std::nullopt;
+        return txs;
+    }
+    CTransactionRef getOrchardTransaction(const uint256& block_hash, int32_t position) override
+    {
+        const OrchardIndex* orchard_index{GetOrchardIndex()};
+        if (!orchard_index) return {};
+        const CBlockIndex* index{WITH_LOCK(::cs_main, return chainman().m_blockman.LookupBlockIndex(block_hash))};
+        return orchard_index->LookupTransaction(index, position);
+    }
+    std::optional<std::vector<interfaces::TransparentHistoryEntry>> getTransparentHistory(const std::set<CScript>& scripts, int start_height, int stop_height) override
+    {
+        const TransparentHistoryIndex* transparent_history_index{GetTransparentHistoryIndex()};
+        if (!transparent_history_index) return std::nullopt;
+
+        const IndexSummary summary{transparent_history_index->GetSummary()};
+        if (!indexOnActiveChain(summary) || summary.best_block_height < stop_height) return std::nullopt;
+
+        std::vector<interfaces::TransparentHistoryEntry> entries;
+        if (!transparent_history_index->LookupScripts(scripts, start_height, stop_height, entries)) return std::nullopt;
+        if (!indexOnActiveChain(summary)) return std::nullopt;
+        const IndexSummary after{transparent_history_index->GetSummary()};
+        if (!indexOnActiveChain(after) || after.best_block_height < stop_height) return std::nullopt;
+        return entries;
+    }
+    bool hasTransparentHistoryIndex() override
+    {
+        return GetTransparentHistoryIndex() != nullptr;
+    }
+    std::optional<int> getTransparentHistoryIndexHeight() override
+    {
+        const TransparentHistoryIndex* transparent_history_index{GetTransparentHistoryIndex()};
+        if (!transparent_history_index) return std::nullopt;
+        return transparent_history_index->GetSummary().best_block_height;
+    }
+    std::optional<int> getSyncedTransparentHistoryIndexHeight() override
+    {
+        const TransparentHistoryIndex* transparent_history_index{GetTransparentHistoryIndex()};
+        if (!transparent_history_index) return std::nullopt;
+        const IndexSummary summary{transparent_history_index->GetSummary()};
+        if (!indexOnActiveChain(summary)) return std::nullopt;
+        return summary.best_block_height;
+    }
+    bool hasOrchardIndex() override
+    {
+        return GetOrchardIndex() != nullptr;
+    }
+    std::optional<int> getOrchardIndexHeight() override
+    {
+        const OrchardIndex* orchard_index{GetOrchardIndex()};
+        if (!orchard_index) return std::nullopt;
+        return orchard_index->GetSummary().best_block_height;
+    }
+    bool waitForOrchardIndexSynced() override
+    {
+        const OrchardIndex* orchard_index{GetOrchardIndex()};
+        return orchard_index && orchard_index->BlockUntilSyncedToCurrentChain();
+    }
+    std::optional<int> getSyncedOrchardIndexHeight() override
+    {
+        const OrchardIndex* orchard_index{GetOrchardIndex()};
+        if (!orchard_index) return std::nullopt;
+        const IndexSummary summary{orchard_index->GetSummary()};
+        if (!indexOnActiveChain(summary)) return std::nullopt;
+        return summary.best_block_height;
     }
     bool findBlock(const uint256& hash, const FoundBlock& block) override
     {
@@ -614,6 +826,44 @@ public:
                int{FillBlock(block2, block2_out, lock, active, chainman().m_blockman)};
     }
     void findCoins(std::map<COutPoint, Coin>& coins) override { return FindCoins(m_node, coins); }
+    bool findConfirmedTransactionInputs(const CTransaction& tx, const uint256& block_hash,
+                                       int position, std::vector<CTxOut>& inputs) override
+    {
+        inputs.clear();
+        if (tx.IsCoinBase() || position <= 0) return false;
+
+        // Wallet scans visit transactions in block order. Keep one bounded block
+        // cache so a block/undo pair is not read again for every wallet payment.
+        std::shared_ptr<const InputBlockData> cached;
+        WITH_LOCK(m_input_block_mutex, cached = m_input_block);
+        if (!cached || cached->block.GetHash() != block_hash) {
+            const CBlockIndex* index;
+            {
+                LOCK(cs_main);
+                index = chainman().m_blockman.LookupBlockIndex(block_hash);
+                if (!index || !(index->nStatus & BLOCK_HAVE_DATA) || !(index->nStatus & BLOCK_HAVE_UNDO)) return false;
+            }
+            auto data = std::make_shared<InputBlockData>();
+            // Disk I/O does not hold cs_main. Concurrent pruning may make this
+            // lookup fail; the wallet retains any previously resolved inputs.
+            if (!chainman().m_blockman.ReadBlockFromDisk(data->block, *index) ||
+                !chainman().m_blockman.UndoReadFromDisk(data->undo, *index)) return false;
+            cached = std::move(data);
+            WITH_LOCK(m_input_block_mutex, m_input_block = cached);
+        }
+        const auto pos = static_cast<size_t>(position);
+        if (pos >= cached->block.vtx.size() || pos - 1 >= cached->undo.vtxundo.size() ||
+            cached->block.vtx[pos]->GetHash() != tx.GetHash()) return false;
+        const auto& coins = cached->undo.vtxundo[pos - 1].vprevout;
+        if (coins.size() != tx.vin.size()) return false;
+        inputs.reserve(coins.size());
+        for (const auto& coin : coins) inputs.push_back(coin.out);
+        return true;
+    }
+    bool findCoinsByScriptPubKeys(const std::set<CScript>& scripts, std::map<COutPoint, Coin>& coins) override
+    {
+        return FindCoinsByScriptPubKeys(m_node, scripts, coins);
+    }
     double guessVerificationProgress(const uint256& block_hash) override
     {
         LOCK(::cs_main);
@@ -822,7 +1072,17 @@ public:
 
     NodeContext* context() override { return &m_node; }
     ArgsManager& args() { return *Assert(m_node.args); }
+    bool indexOnActiveChain(const IndexSummary& summary)
+    {
+        if (!summary.synced) return false;
+        LOCK(cs_main);
+        const CBlockIndex* block{chainman().ActiveChain()[summary.best_block_height]};
+        return block && block->GetBlockHash() == summary.best_block_hash;
+    }
     ChainstateManager& chainman() { return *Assert(m_node.chainman); }
+    struct InputBlockData { CBlock block; CBlockUndo undo; };
+    Mutex m_input_block_mutex;
+    std::shared_ptr<const InputBlockData> m_input_block GUARDED_BY(m_input_block_mutex);
     NodeContext& m_node;
 };
 } // namespace

@@ -26,7 +26,7 @@ class CreateTxWalletTest(NitoTestFramework):
 
     def run_test(self):
         self.log.info('Create some old blocks')
-        self.nodes[0].setmocktime(TIME_GENESIS_BLOCK)
+        self.nodes[0].setmocktime(TIME_GENESIS_BLOCK + 121)
         self.generate(self.nodes[0], 200)
         self.nodes[0].setmocktime(0)
 

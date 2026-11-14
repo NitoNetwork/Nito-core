@@ -203,6 +203,12 @@ public:
      *                         2014 (removed in commit 93a18a3)
      */
     mapValue_t mapValue;
+    //! Verified public previous-output addresses, indexed by vin position.
+    //! An empty value means the previous script was resolved but has no address.
+    //! This optional display cache is serialized separately from RPC metadata.
+    std::map<uint32_t, std::string> m_input_addresses;
+    std::string SerializeInputAddresses() const;
+    void DeserializeInputAddresses(const std::string& encoded);
     std::vector<std::pair<std::string, std::string> > vOrderForm;
     unsigned int fTimeReceivedIsTxTime;
     unsigned int nTimeReceived; //!< time received by this node
@@ -246,6 +252,7 @@ public:
     void Init()
     {
         mapValue.clear();
+        m_input_addresses.clear();
         vOrderForm.clear();
         fTimeReceivedIsTxTime = false;
         nTimeReceived = 0;
@@ -263,6 +270,8 @@ public:
     void Serialize(Stream& s) const
     {
         mapValue_t mapValueCopy = mapValue;
+        mapValueCopy.erase("nito_input_addresses");
+        if (!m_input_addresses.empty()) mapValueCopy["nito_input_addresses"] = SerializeInputAddresses();
 
         mapValueCopy["fromaccount"] = "";
         if (nOrderPos != -1) {
@@ -293,6 +302,11 @@ public:
         s >> TX_WITH_WITNESS(tx) >> serialized_block_hash >> dummy_vector1 >> serializedIndex >> dummy_vector2 >> mapValue >> vOrderForm >> fTimeReceivedIsTxTime >> nTimeReceived >> fFromMe >> dummy_bool;
 
         m_state = TxStateInterpretSerialized({serialized_block_hash, serializedIndex});
+
+        if (const auto it = mapValue.find("nito_input_addresses"); it != mapValue.end()) {
+            DeserializeInputAddresses(it->second);
+            mapValue.erase(it);
+        }
 
         const auto it_op = mapValue.find("n");
         nOrderPos = (it_op != mapValue.end()) ? LocaleIndependentAtoi<int64_t>(it_op->second) : -1;

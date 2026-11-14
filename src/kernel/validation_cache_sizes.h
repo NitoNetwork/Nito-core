@@ -6,6 +6,7 @@
 #ifndef BITCOIN_KERNEL_VALIDATION_CACHE_SIZES_H
 #define BITCOIN_KERNEL_VALIDATION_CACHE_SIZES_H
 
+#include <consensus/private_tx_verify.h>
 #include <script/sigcache.h>
 
 #include <cstddef>
@@ -15,6 +16,7 @@ namespace kernel {
 struct ValidationCacheSizes {
     size_t signature_cache_bytes{DEFAULT_MAX_SIG_CACHE_BYTES / 2};
     size_t script_execution_cache_bytes{DEFAULT_MAX_SIG_CACHE_BYTES / 2};
+    size_t private_orchard_proof_cache_bytes{DEFAULT_MAX_PRIVATE_ORCHARD_PROOF_CACHE_BYTES};
 };
 }
 

@@ -43,9 +43,7 @@ void MacDockIconHandler::cleanup()
 }
 
 /**
- * Force application activation on macOS. With Qt 5.5.1 this is required when
- * an action in the Dock menu is triggered.
- * TODO: Define a Qt version where it's no-longer necessary.
+ * Force application activation on macOS when a Dock menu action is triggered.
  */
 void ForceActivation()
 {

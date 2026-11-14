@@ -16,6 +16,7 @@ namespace interfaces {
 class Node;
 class Wallet;
 struct WalletTx;
+struct WalletPrivateNote;
 struct WalletTxStatus;
 }
 
@@ -70,6 +71,8 @@ public:
         SendToOther,
         RecvWithAddress,
         RecvFromOther,
+        PrivateUnshield,
+        InternalTransfer,
     };
 
     /** Number of confirmation recommended for accepting a transaction */
@@ -98,6 +101,7 @@ public:
      */
     static bool showTransaction();
     static QList<TransactionRecord> decomposeTransaction(const interfaces::WalletTx& wtx);
+    static TransactionRecord decomposePrivateNote(const interfaces::WalletPrivateNote& note);
 
     /** @name Immutable transaction attributes
       @{*/
@@ -107,6 +111,10 @@ public:
     std::string address;
     CAmount debit;
     CAmount credit;
+    bool is_private{false};
+    bool is_private_note_only{false};
+    bool is_multi_recipient{false};
+    uint256 private_note_cmx;
     /**@}*/
 
     /** Subtransaction index, for sort key */

@@ -159,7 +159,7 @@
     <MakeDir Directories="$(GeneratedFilesOutDir)" />
     <Exec Command="echo Performing libnito_qt moc code include generation task, output path $(GeneratedFilesOutDir)." />
     <Exec Command="echo $(QtToolsDir)\moc.exe $(MOC_DEFINES) &quot;%(QT_MOC.Identity)&quot; -o $(GeneratedFilesOutDir)\%(Filename).moc." />
-    <Exec Command="$(QtToolsDir)\moc.exe $(MOC_DEFINES) &quot;%(QT_MOC.Identity)&quot; -o $(GeneratedFilesOutDir)\%(Filename).moc" />
+    <Exec Command="&quot;$(QtToolsDir)\moc.exe&quot; $(MOC_DEFINES) &quot;%(QT_MOC.Identity)&quot; -o $(GeneratedFilesOutDir)\%(Filename).moc" />
   </Target>
 
   <Target Name="mocheader" Inputs="@(MocHeaderFiles)" Outputs="@(MocHeaderFiles->'$(GeneratedFilesOutDir)\moc\moc_%(Filename).cpp')">
@@ -169,7 +169,7 @@
     <Exec Command="echo Performing libnito_qt moc header generation task, output path $(GeneratedFilesOutDir)\moc." />
     <Exec Command="echo $(QtToolsDir)\moc.exe $(MOC_DEFINES) &quot;%(MocHeaderFiles.Identity)&quot; -o $(GeneratedFilesOutDir)\moc\moc_%(Filename).cpp." />
     <MakeDir Directories="$(GeneratedFilesOutDir)\moc\" />
-    <Exec Command="$(QtToolsDir)\moc.exe $(MOC_DEFINES) &quot;%(MocHeaderFiles.Identity)&quot; -o $(GeneratedFilesOutDir)\moc\moc_%(Filename).cpp" />
+    <Exec Command="&quot;$(QtToolsDir)\moc.exe&quot; $(MOC_DEFINES) &quot;%(MocHeaderFiles.Identity)&quot; -o $(GeneratedFilesOutDir)\moc\moc_%(Filename).cpp" />
   </Target>
 
   <Target Name="forms" Inputs="@(UiFormFiles)" Outputs="@(UiFormFiles->'$(GeneratedFilesOutDir)\forms\ui_%(Filename).h')">
@@ -178,7 +178,7 @@
     </PropertyGroup>
     <Exec Command="echo Performing libnito_qt forms header generation task, output path $(GeneratedFilesOutDir)\forms." />
     <MakeDir Directories="$(GeneratedFilesOutDir)\forms\" />
-    <Exec Command="$(QtToolsDir)\uic.exe &quot;%(UiFormFiles.Identity)&quot; -o $(GeneratedFilesOutDir)\forms\ui_%(Filename).h" />
+    <Exec Command="&quot;$(QtToolsDir)\uic.exe&quot; &quot;%(UiFormFiles.Identity)&quot; -o $(GeneratedFilesOutDir)\forms\ui_%(Filename).h" />
   </Target>
 
   <Target Name="translation" Inputs="@(TranslationFiles)" Outputs="@(TranslationFiles->'..\..\src\qt\locale\%(Filename).qm')">
@@ -186,16 +186,16 @@
       <ErrorText>There was an error executing the libnito_qt translation file generation task.</ErrorText>
     </PropertyGroup>
     <Exec Command="echo Performing libnito_qt translation file generation task." />
-    <Exec Command="$(QtToolsDir)\lrelease.exe &quot;%(TranslationFiles.Identity)&quot; -qm ..\..\src\qt\locale\%(Filename).qm" />
+    <Exec Command="&quot;$(QtToolsDir)\lrelease.exe&quot; &quot;%(TranslationFiles.Identity)&quot; -qm ..\..\src\qt\locale\%(Filename).qm" />
   </Target>
 
-  <Target Name="resource" Inputs="@(ResourceTemplates)" Outputs="@(ResourceTemplates->'$(GeneratedFilesOutDir)\rcc\qrc_%(Filename).cpp')" DependsOnTargets="translation">
+  <Target Name="resource" Inputs="@(ResourceTemplates);@(TranslationFiles)" Outputs="@(ResourceTemplates->'$(GeneratedFilesOutDir)\rcc\qrc_%(Filename).cpp')" DependsOnTargets="translation">
     <PropertyGroup>
       <ErrorText>There was an error executing the libnito_qt resource code generation task.</ErrorText>
     </PropertyGroup>
     <Exec Command="echo Performing libnito_qt resource code generation task, output path $(GeneratedFilesOutDir)\rcc." />
     <MakeDir Directories="$(GeneratedFilesOutDir)\rcc\" />
-    <Exec Command="$(QtToolsDir)\rcc.exe --verbose --name %(Filename) &quot;%(ResourceTemplates.Identity)&quot; -o $(GeneratedFilesOutDir)\rcc\qrc_%(Filename).cpp" />
+    <Exec Command="&quot;$(QtToolsDir)\rcc.exe&quot; --verbose --name %(Filename) &quot;%(ResourceTemplates.Identity)&quot; -o $(GeneratedFilesOutDir)\rcc\qrc_%(Filename).cpp" />
   </Target>
 
   <Target Name="qtclean">

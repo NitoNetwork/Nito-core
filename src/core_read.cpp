@@ -127,8 +127,8 @@ static bool DecodeTx(CMutableTransaction& tx, const std::vector<unsigned char>& 
     // - Decode both with extended serialization (which interprets the 0x0001 tag as a marker for
     //   the presence of witnesses) and with legacy serialization (which interprets the tag as a
     //   0-input 1-output incomplete transaction).
-    //   - Restricted by try_no_witness (which disables legacy if false) and try_witness (which
-    //     disables extended if false).
+    //   - Restricted by try_no_witness (which disables basic serialization if false) and
+    //     try_witness (which disables extended serialization if false).
     //   - Ignore serializations that do not fully consume the hex string.
     // - If neither succeeds, fail.
     // - If only one succeeds, return that one.
@@ -162,7 +162,7 @@ static bool DecodeTx(CMutableTransaction& tx, const std::vector<unsigned char>& 
     if (try_no_witness) {
         DataStream ssData(tx_data);
         try {
-            ssData >> TX_NO_WITNESS(tx_legacy);
+            ssData >> TX_NO_OPTIONAL(tx_legacy);
             if (ssData.empty()) ok_legacy = true;
         } catch (const std::exception&) {
             // Fall through.

@@ -18,9 +18,19 @@ bool CCoinControl::HasSelected() const
     return !m_selected.empty();
 }
 
+bool CCoinControl::HasSelectedPrivateNotes() const
+{
+    return !m_selected_private_notes.empty();
+}
+
 bool CCoinControl::IsSelected(const COutPoint& outpoint) const
 {
     return m_selected.count(outpoint) > 0;
+}
+
+bool CCoinControl::IsPrivateNoteSelected(const uint256& cmx) const
+{
+    return m_selected_private_notes.count(cmx) > 0;
 }
 
 bool CCoinControl::IsExternalSelected(const COutPoint& outpoint) const
@@ -45,14 +55,26 @@ PreselectedInput& CCoinControl::Select(const COutPoint& outpoint)
     ++m_selection_pos;
     return input;
 }
+
+void CCoinControl::SelectPrivateNote(const uint256& cmx)
+{
+    m_selected_private_notes.insert(cmx);
+}
+
 void CCoinControl::UnSelect(const COutPoint& outpoint)
 {
     m_selected.erase(outpoint);
 }
 
+void CCoinControl::UnSelectPrivateNote(const uint256& cmx)
+{
+    m_selected_private_notes.erase(cmx);
+}
+
 void CCoinControl::UnSelectAll()
 {
     m_selected.clear();
+    m_selected_private_notes.clear();
 }
 
 std::vector<COutPoint> CCoinControl::ListSelected() const
@@ -63,6 +85,11 @@ std::vector<COutPoint> CCoinControl::ListSelected() const
             return pair.first;
         });
     return outpoints;
+}
+
+std::vector<uint256> CCoinControl::ListSelectedPrivateNotes() const
+{
+    return {m_selected_private_notes.begin(), m_selected_private_notes.end()};
 }
 
 void CCoinControl::SetInputWeight(const COutPoint& outpoint, int64_t weight)

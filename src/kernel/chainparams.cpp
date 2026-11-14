@@ -27,6 +27,14 @@
 #include <cstring>
 #include <type_traits>
 
+// Mainnet Orchard activation is independent of the established subsidy schedule.
+static constexpr int NITO_V4_PRIVATE_TX_MAINNET_ACTIVATION_HEIGHT = 1165432;
+// The public test chain enables v4 from genesis so testing is independent of
+// the fixed mainnet activation schedule.
+static constexpr int NITO_V4_PRIVATE_TX_TESTNET_ACTIVATION_HEIGHT = 0;
+static constexpr int NITO_V4_PRIVATE_TX_SIGNET_ACTIVATION_HEIGHT = 1;
+static constexpr int NITO_V4_PRIVATE_TX_REGTEST_DEFAULT_ACTIVATION_HEIGHT = 1;
+
 static CBlock CreateGenesisBlock(const char* pszTimestamp, const CScript& genesisOutputScript, uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
 {
     CMutableTransaction txNew;
@@ -78,6 +86,7 @@ public:
         consensus.CSVHeight = 1; 
         consensus.SegwitHeight = 1; 
         consensus.nLegacyP2SHActivationHeight = 750000;
+        consensus.privateTxActivationHeight = NITO_V4_PRIVATE_TX_MAINNET_ACTIVATION_HEIGHT;
         consensus.MinBIP9WarningHeight = 1; 
         consensus.powLimit = uint256S("0x00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
@@ -97,8 +106,8 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0;
 
-        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000000000002e29bd3c4afb3");
-        consensus.defaultAssumeValid = uint256S("0x000000000000003313c51ea30df5cce1be4095e6303ddf865516d72a63f9f8fd"); // 790000
+        consensus.nMinimumChainWork = uint256S("0x0000000000000000000000000000000000000000000004de69c433950859d3bd");
+        consensus.defaultAssumeValid = uint256S("0x000000000000031820a5d8c9f5a81484499721598ed060a17f6c0e43f84af1d1"); // 930500
 
         /**
          * The message start string is designed to be unlikely to occur in normal data.
@@ -122,11 +131,8 @@ public:
         assert(genesis.hashMerkleRoot == uint256S("0x90b863a727d4abf9838e8df221052e418d70baf996e2cea3211e8df4da1bb131"));
 
 
-        vSeeds.emplace_back("1.nitonetwork.org.");
-        vSeeds.emplace_back("2.nitonetwork.org.");
-        vSeeds.emplace_back("3.nitonode.com.");
-        vSeeds.emplace_back("seed.nitonetwork.link.");
-        vSeeds.emplace_back("seed.nitopool.fr.");
+        vSeeds.emplace_back("seed.nito.network.");
+        vSeeds.emplace_back("seed.nitopool.online.");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,0);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,5);
@@ -143,9 +149,9 @@ public:
 
         checkpointData = {
             {
-                { 1, uint256S("0x00000000005269c67470137d81d135b81fbaffe8dbc546b15b0299a591b89d16")},
-                { 10, uint256S("0x00000000003652db95d9518d9e8f5f0729080cf6cc425e0c65d03faa1d0316dd")},
-                { 100, uint256S("0x000000000009e93bc343e97c0ccef77eb6592d98a039d2e15a4157cd5b826138")},
+                {1, uint256S("0x00000000005269c67470137d81d135b81fbaffe8dbc546b15b0299a591b89d16")},
+                {10, uint256S("0x00000000003652db95d9518d9e8f5f0729080cf6cc425e0c65d03faa1d0316dd")},
+                {100, uint256S("0x000000000009e93bc343e97c0ccef77eb6592d98a039d2e15a4157cd5b826138")},
                 {1000, uint256S("0x0000000000062f63d314c901d27f867844106121404230b7f1dbff5bf3a3bfac")},
                 {5000, uint256S("0x000000000000f4bddf4aa95e25c96410846b06fc6c3ab90ffefe64c291d117e2")},
                 {10000, uint256S("0x00000000000000322b892cc337a5c572b1d637aebc2c039784a3ee317651c10c")},
@@ -178,16 +184,15 @@ public:
             }
         };
 
-
         m_assumeutxo_data = {
             // TODO to be specified in a future patch.
         };
 
         chainTxData = ChainTxData{
-            // Data from RPC: getchaintxstats @ block 794468
-            .nTime    = 1774532485,
-            .nTxCount = 952418,
-            .dTxRate  = 0.01760130352926609,
+            // Data from RPC: getchaintxstats 4096 000000000000010ea376eaa8992abbf57d2dfc3828fd41e05ba44e20310d59ff
+            .nTime    = 1778608539,
+            .nTxCount = 1032959,
+            .dTxRate  = 0.01997638813410041,
         };
     }
 };
@@ -210,6 +215,7 @@ public:
         consensus.CSVHeight = 1; 
         consensus.SegwitHeight = 1; 
         consensus.nLegacyP2SHActivationHeight = 0;
+        consensus.privateTxActivationHeight = NITO_V4_PRIVATE_TX_TESTNET_ACTIVATION_HEIGHT;
         consensus.MinBIP9WarningHeight = 1; // segwit activation height + miner confirmation window
         consensus.powLimit = uint256S("00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
@@ -232,10 +238,11 @@ public:
         consensus.nMinimumChainWork = uint256S("0x00");
         consensus.defaultAssumeValid = uint256S("0x00"); // 2550000
 
-        pchMessageStart[0] = 0xb6;
-        pchMessageStart[1] = 0xb6;
-        pchMessageStart[2] = 0xb6;
-        pchMessageStart[3] = 0xdb;
+        // Isolate the public V4 testnet from every pre-release test chain.
+        pchMessageStart[0] = 0xcd;
+        pchMessageStart[1] = 0x9b;
+        pchMessageStart[2] = 0x72;
+        pchMessageStart[3] = 0x1a;
         nDefaultPort = 8840;
         nPruneAfterHeight = 1000;
         m_assumed_blockchain_size = 2;
@@ -250,10 +257,10 @@ public:
         vFixedSeeds.clear();
         vSeeds.clear();
         // nodes with support for servicebits filtering should be at the top
-        vSeeds.emplace_back("t1.nitonetwork.org.");
-        vSeeds.emplace_back("t2.nitonetwork.org.");
-        vSeeds.emplace_back("t3.nitonode.com.");
-        vSeeds.emplace_back("testnet.nitonetwork.link.");
+        vSeeds.emplace_back("t1.testnet.nito.network.");
+        vSeeds.emplace_back("t2.testnet.nito.network.");
+        vSeeds.emplace_back("t3.testnet.nito.network.");
+        vSeeds.emplace_back("testnet-seed.nito.network.");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,111);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196);
@@ -270,7 +277,7 @@ public:
 
         checkpointData = {
             {
-                { 0, uint256S("0x00000000ddbcc1487e98d0e27fcc235129c543e6b6066df0cc0d157a0e02312b")},
+                {0, uint256S("0x00000000ddbcc1487e98d0e27fcc235129c543e6b6066df0cc0d157a0e02312b")},
             }
         };
 
@@ -337,6 +344,7 @@ public:
         consensus.CSVHeight = 1;
         consensus.SegwitHeight = 1;
         consensus.nLegacyP2SHActivationHeight = 0;
+        consensus.privateTxActivationHeight = NITO_V4_PRIVATE_TX_SIGNET_ACTIVATION_HEIGHT;
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
@@ -413,6 +421,7 @@ public:
         consensus.CSVHeight = 1;    // Always active unless overridden
         consensus.SegwitHeight = 1;
         consensus.nLegacyP2SHActivationHeight = 0;
+        consensus.privateTxActivationHeight = opts.private_tx_activation_height.value_or(NITO_V4_PRIVATE_TX_REGTEST_DEFAULT_ACTIVATION_HEIGHT);
         consensus.MinBIP9WarningHeight = 1;
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
@@ -485,13 +494,26 @@ public:
 
         checkpointData = {
             {
-                { 0, uint256S("0x00000000883439521559eaee4bf336fa07101ccecbd1a1d9eb095f60954f5c0c")},
-
+                {0, uint256S("0x00000000883439521559eaee4bf336fa07101ccecbd1a1d9eb095f60954f5c0c")},
             }
         };
 
         m_assumeutxo_data = {
-
+            {
+                .height = 110,
+                .hash_serialized = AssumeutxoHash{uint256S("0x40ab1706d1e841c7f42ff1a2fd8ac750e5d638ee383cf4f99b4756e7e0213158")},
+                .nChainTx = 111,
+                .blockhash = uint256S("0x16a581fc2da8f5ad8594b178a0df854ef88a3a892808b7e1ccfad8ea27deb577"),
+            },
+            {
+                // Historical transparent-only snapshot used by the functional
+                // AssumeUTXO tests. Post-activation snapshots are intentionally
+                // unsupported because the format has no Orchard state.
+                .height = 299,
+                .hash_serialized = AssumeutxoHash{uint256S("0xed6ece9e5829b3cf6d553d1ad66a8fa6185e5cfa7c4e6cd40f129253ac18c87b")},
+                .nChainTx = 334,
+                .blockhash = uint256S("0x4956bf4162113fd55fdd3bd70e01407416d856b9761f095c9c33efb746783241"),
+            },
         };
 
         chainTxData = ChainTxData{

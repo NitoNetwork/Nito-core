@@ -7,12 +7,12 @@
 
 import os
 
-from test_framework.test_framework import NitoTestFramework
+from test_framework.test_framework import NitoTestFramework, SkipTest
 
 
 def rename_and_link(*, from_name, to_name):
     os.rename(from_name, to_name)
-    os.symlink(to_name, from_name)
+    os.symlink(to_name, from_name, target_is_directory=True)
     assert os.path.islink(from_name) and os.path.isdir(from_name)
 
 
@@ -21,6 +21,17 @@ class SymlinkTest(NitoTestFramework):
         self.num_nodes = 1
 
     def run_test(self):
+        # Probe before moving node data: Windows can deny symlink creation
+        # unless the user has the corresponding privilege or developer mode.
+        probe = self.nodes[0].datadir_path / "symlink_probe"
+        try:
+            os.symlink(self.nodes[0].chain_path, probe, target_is_directory=True)
+        except OSError as error:
+            if os.name == "nt" and error.winerror == 1314:
+                raise SkipTest("Creating directory symlinks requires Windows privileges")
+            raise
+        else:
+            probe.unlink()
         dir_new_blocks = self.nodes[0].chain_path / "new_blocks"
         dir_new_chainstate = self.nodes[0].chain_path / "new_chainstate"
         self.stop_node(0)

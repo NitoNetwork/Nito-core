@@ -122,7 +122,7 @@
      </item>
     </layout>
    </item>
-   <item row="1" column="0">
+   <item row="2" column="0">
     <widget class="QLabel" name="labellLabel">
      <property name="text">
       <string>&amp;Label:</string>
@@ -135,7 +135,7 @@
      </property>
     </widget>
    </item>
-   <item row="1" column="1">
+   <item row="2" column="1">
     <widget class="QLineEdit" name="addAsLabel">
      <property name="toolTip">
       <string>Enter a label for this address to add it to the list of used addresses</string>
@@ -145,7 +145,7 @@
      </property>
     </widget>
    </item>
-   <item row="2" column="0">
+   <item row="1" column="0">
     <widget class="QLabel" name="amountLabel">
      <property name="text">
       <string>A&amp;mount:</string>
@@ -158,7 +158,7 @@
      </property>
     </widget>
    </item>
-   <item row="2" column="1">
+   <item row="1" column="1">
     <layout class="QHBoxLayout" name="horizontalLayoutAmount" stretch="0,1,0">
      <item>
       <widget class="NitoAmountField" name="payAmount" native="true">
@@ -170,7 +170,7 @@
      <item>
       <widget class="QCheckBox" name="checkboxSubtractFeeFromAmount">
        <property name="toolTip">
-        <string>The fee will be deducted from the amount being sent. The recipient will receive less Nito's than you enter in the amount field. If multiple recipients are selected, the fee is split equally.</string>
+        <string>The fee will be deducted from the amount being sent. The recipient will receive less NITO than you enter in the amount field. If multiple recipients are selected, the fee is split equally.</string>
        </property>
        <property name="text">
         <string>S&amp;ubtract fee from amount</string>
@@ -228,14 +228,16 @@
    <container>1</container>
   </customwidget>
  </customwidgets>
- <tabstops>
-  <tabstop>payTo</tabstop>
-  <tabstop>addressBookButton</tabstop>
-  <tabstop>pasteButton</tabstop>
-  <tabstop>deleteButton</tabstop>
-  <tabstop>addAsLabel</tabstop>
-  <tabstop>payAmount</tabstop>
- </tabstops>
+  <tabstops>
+   <tabstop>payTo</tabstop>
+   <tabstop>addressBookButton</tabstop>
+   <tabstop>pasteButton</tabstop>
+   <tabstop>deleteButton</tabstop>
+   <tabstop>payAmount</tabstop>
+   <tabstop>checkboxSubtractFeeFromAmount</tabstop>
+   <tabstop>useAvailableBalanceButton</tabstop>
+   <tabstop>addAsLabel</tabstop>
+  </tabstops>
  <resources>
   <include location="../nito.qrc"/>
  </resources>

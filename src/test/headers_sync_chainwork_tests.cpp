@@ -3,6 +3,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <arith_uint256.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <consensus/params.h>
@@ -74,19 +75,24 @@ BOOST_AUTO_TEST_CASE(headers_sync_state)
     std::unique_ptr<HeadersSyncState> hss;
 
     const int target_blocks = 15000;
-    arith_uint256 chain_work = target_blocks*2;
+    const uint32_t header_nbits{UintToArith256(Params().GetConsensus().powLimit).GetCompact()};
+    CBlockHeader proof_header;
+    proof_header.nBits = header_nbits;
+    const CBlockIndex proof_index{proof_header};
+    const arith_uint256 header_work{GetBlockProof(proof_index)};
+    const CBlockIndex* chain_start = WITH_LOCK(::cs_main, return m_node.chainman->m_blockman.LookupBlockIndex(Params().GenesisBlock().GetHash()));
+    const arith_uint256 chain_work{chain_start->nChainWork + (target_blocks - 1) * header_work};
 
     // Generate headers for two different chains (using differing merkle roots
     // to ensure the headers are different).
     GenerateHeaders(first_chain, target_blocks-1, Params().GenesisBlock().GetHash(),
             Params().GenesisBlock().nVersion, Params().GenesisBlock().nTime,
-            ArithToUint256(0), Params().GenesisBlock().nBits);
+            ArithToUint256(0), header_nbits);
 
     GenerateHeaders(second_chain, target_blocks-2, Params().GenesisBlock().GetHash(),
             Params().GenesisBlock().nVersion, Params().GenesisBlock().nTime,
-            ArithToUint256(1), Params().GenesisBlock().nBits);
+            ArithToUint256(1), header_nbits);
 
-    const CBlockIndex* chain_start = WITH_LOCK(::cs_main, return m_node.chainman->m_blockman.LookupBlockIndex(Params().GenesisBlock().GetHash()));
     std::vector<CBlockHeader> headers_batch;
 
     // Feed the first chain to HeadersSyncState, by delivering 1 header
