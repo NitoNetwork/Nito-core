@@ -541,6 +541,12 @@ void Chainstate::MaybeUpdateMempoolForReorg(
             }
         }
         if (tx.HasPrivateBundle()) {
+            // A reorg can move transactions already in the mempool below the
+            // first Orchard-capable candidate block. Admission checks alone
+            // do not revisit these entries after another block disconnects.
+            if (!Consensus::PrivateTxActive(m_chainman.GetConsensus(), m_chain.Height() + 1)) {
+                return true;
+            }
             const CCoinsViewCache& chain_private_view = CoinsTip();
             if (!chain_private_view.HavePrivateAnchor(tx.m_private_bundle->effects.anchor)) {
                 return true;
