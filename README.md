@@ -4,14 +4,14 @@
   <img src="doc/nito/assets/nito-v4-header.svg" alt="Nito Core v4 - Nito x Bech32x (Orchard)" width="100%">
 </p>
 
-**V4 source preview:** the `v4.0` branch is available for review and testing.
-V3.0.1 remains the [latest stable release](https://github.com/NitoNetwork/Nito-core/releases/latest).
-No V4 binary release has been published yet. To test this branch, follow the
-[source-build guide](doc/nito/source-builds.md).
-
-Nito Core 4.0.0 is the next version of the full node and wallet for Nito.network. It
+Nito Core 4.0.0 is the full node and wallet for Nito.network. It
 preserves the existing transparent chain, wallet and SHA-256 mining interfaces
 and adds opt-in Bech32x private transactions backed by Orchard cryptography.
+
+The `v4.0` branch contains the V4 sources. V4 release binaries have not been
+published yet; follow the [source-build guide](doc/nito/source-builds.md) to
+build this version. V3.0.1 remains the
+[latest stable release](https://github.com/NitoNetwork/Nito-core/releases/latest).
 
 ## Upgrade Requirement
 

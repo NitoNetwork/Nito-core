@@ -5,9 +5,10 @@ Nito Core instead of installing the official binaries.
 
 ## Supported Build Contract
 
-The public V4 source preview is on the
+The Nito Core V4 sources are on the
 [`v4.0` branch](https://github.com/NitoNetwork/Nito-core/tree/v4.0).
-V3.0.1 remains the stable release; no V4 binary release is available yet.
+V4 release binaries have not been published yet. V3.0.1 remains the latest
+stable release.
 Clone this branch explicitly and record the exact revision before building:
 
 ```bash
@@ -18,7 +19,6 @@ git rev-parse HEAD
 ```
 
 For a published binary release, use its exact announced tag or commit instead.
-The repository's default branch remains V3 and does not select V4 automatically.
 
 Use the repository's `depends/` system for release and exchange builds. It
 compiles the pinned, SHA-256-verified dependency sources used by the official

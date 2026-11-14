@@ -11,7 +11,7 @@ For Nito releases, download the artifacts, `SHA256SUMS` and
 Follow the [checksum verification instructions](../../README.md#download-and-verify)
 and the [release signing policy](../../doc/release-process.md). The manifest
 identifies the source commit and explicitly records whether signing was used.
-V4 is currently a source preview; no V4 binary release is available yet.
+V4 release binaries have not been published yet.
 
 Bitcoin Core's [Guix signatures](https://github.com/bitcoin-core/guix.sigs)
 and builder keys belong to Bitcoin Core. They do not authenticate Nito releases.

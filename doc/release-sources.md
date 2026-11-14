@@ -1,8 +1,9 @@
 # Release sources and third-party notices
 
-V4 is currently a [source preview](nito/source-builds.md), without a published
-binary release. The archive and redistribution instructions below apply when
-release binaries and their matching source bundle are made available.
+V4 release binaries have not been published yet. The
+[source-build guide](nito/source-builds.md) covers building from the `v4.0`
+branch. The archive and redistribution instructions below apply when release
+binaries and their matching source bundle are made available.
 
 Nito Core includes third-party software under its own licenses. The Nito Core
 license in `COPYING` does not replace those licenses. Portable archives keep

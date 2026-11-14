@@ -45,7 +45,7 @@ If you want to build the windows installer with `make deploy` you need [NSIS](ht
 
     sudo apt install nsis
 
-Obtain the public `v4.0` source preview using the
+Obtain the Nito Core V4 sources from `v4.0` using the
 [source checkout instructions](nito/source-builds.md#supported-build-contract),
 and record its exact commit with `git rev-parse HEAD` before building. For a
 published release, use the revision named in its announcement.

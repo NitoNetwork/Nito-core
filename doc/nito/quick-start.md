@@ -1,8 +1,9 @@
 # Quick Start
 
 This guide starts Nito Core v4 with transparent and Bech32x wallet support.
-V4 is currently a source preview; follow the [source-build guide](source-builds.md)
-to try it. V3.0.1 remains the stable binary release.
+V4 release binaries have not been published yet; follow the
+[source-build guide](source-builds.md) to build this version. V3.0.1 remains
+the latest stable release.
 
 ## Install And Verify
 

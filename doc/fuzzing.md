@@ -4,7 +4,7 @@
 
 To quickly get started fuzzing Nito Core using [libFuzzer](https://llvm.org/docs/LibFuzzer.html):
 
-The examples below use the public `v4.0` source preview from the
+The examples below use the Nito Core V4 sources on `v4.0` in the
 [official repository](https://github.com/NitoNetwork/Nito-core/tree/v4.0).
 Record `git rev-parse HEAD` with your test results.
 

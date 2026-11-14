@@ -5,7 +5,7 @@ translations and patches. Use the
 [issues](https://github.com/NitoNetwork/Nito-core/issues) and
 [pull requests](https://github.com/NitoNetwork/Nito-core/pulls) of the official
 repository for daemon, wallet and Qt changes. Base V4 work on `v4.0` and select
-that branch as the pull request target; the default branch remains V3.
+that branch as the pull request target.
 
 ## Getting started
 

@@ -1,8 +1,8 @@
-# Nito Core 4.0.0 Preview Notes
+# Nito Core 4.0.0 Release Notes
 
-These notes describe the public `v4.0` source preview. V3.0.1 remains the stable
-release; V4 binaries have not been published yet. See the
-[source-build guide](nito/source-builds.md) to review or test V4.
+These notes describe Nito Core 4.0.0 on the `v4.0` branch. V4 release binaries
+have not been published yet; V3.0.1 remains the latest stable release. See the
+[source-build guide](nito/source-builds.md) to build V4.
 
 Nito Core 4.0.0 adds opt-in Bech32x private transactions to Nito.network while
 preserving transparent wallet, block, mining and pool behavior.
