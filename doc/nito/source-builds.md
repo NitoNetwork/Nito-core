@@ -5,20 +5,21 @@ Nito Core instead of installing the official binaries.
 
 ## Supported Build Contract
 
-The Nito Core V4 sources are on the
-[`v4.0` branch](https://github.com/NitoNetwork/Nito-core/tree/v4.0).
-V4 release binaries have not been published yet. V3.0.1 remains the latest
-stable release.
-Clone this branch explicitly and record the exact revision before building:
+The stable Nito Core 4.0.0 sources are identified by the
+[`v4.0.0` tag](https://github.com/NitoNetwork/Nito-core/tree/v4.0.0).
+The [`v4.0` branch](https://github.com/NitoNetwork/Nito-core/tree/v4.0)
+contains subsequent V4 maintenance. Build the exact release tag when matching
+the published release contract:
 
 ```bash
-git clone --branch v4.0 --single-branch https://github.com/NitoNetwork/Nito-core.git
+git clone --branch v4.0.0 --single-branch https://github.com/NitoNetwork/Nito-core.git
 cd Nito-core
 git status --short
 git rev-parse HEAD
 ```
 
-For a published binary release, use its exact announced tag or commit instead.
+For development or maintenance testing, replace the tag with the intended
+branch or exact commit and record that revision with the results.
 
 Use the repository's `depends/` system for release and exchange builds. It
 compiles the pinned, SHA-256-verified dependency sources used by the official

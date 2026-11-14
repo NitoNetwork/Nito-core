@@ -4,6 +4,11 @@ Nito Core v4 preserves Nito's transparent chain and wallet behavior and adds
 opt-in Bech32x private transactions backed by Orchard cryptography. Mainnet
 activation is block `1,165,432`; testnet enables Orchard from genesis.
 
+The current stable release is
+[Nito Core 4.0.0](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0).
+See the [4.0.0 release notes](../release-notes.md) for the upgrade summary and
+the tables below for detailed user and operator guidance.
+
 ## Wallet Users
 
 | Need | Guide |

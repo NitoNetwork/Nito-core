@@ -1,16 +1,16 @@
 # Quick Start
 
-This guide starts Nito Core v4 with transparent and Bech32x wallet support.
-V4 release binaries have not been published yet; follow the
-[source-build guide](source-builds.md) to build this version. V3.0.1 remains
-the latest stable release.
+This guide starts Nito Core 4.0.0 with transparent and Bech32x wallet support.
+Official binaries are available from the
+[Nito Core 4.0.0 release](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0).
+Operators who compile Nito Core should follow the
+[source-build guide](source-builds.md).
 
 ## Install And Verify
 
-When V4 binaries are published on the
-[official release page](https://github.com/NitoNetwork/Nito-core/releases),
-download the artifact for your platform and verify it against that release's
-`SHA256SUMS`:
+Download the artifact for your platform and `SHA256SUMS` from the
+[official release page](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0),
+then verify the download before installation:
 
 ```bash
 sha256sum -c SHA256SUMS

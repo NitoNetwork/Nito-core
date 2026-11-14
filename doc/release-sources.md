@@ -1,9 +1,10 @@
 # Release sources and third-party notices
 
-V4 release binaries have not been published yet. The
-[source-build guide](nito/source-builds.md) covers building from the `v4.0`
-branch. The archive and redistribution instructions below apply when release
-binaries and their matching source bundle are made available.
+Nito Core 4.0.0 binaries and their corresponding source bundle are published
+on the [official release page](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0).
+The [source-build guide](nito/source-builds.md) covers building the exact tag or
+a later V4 maintenance revision. The archive and redistribution instructions
+below apply to the official packages.
 
 Nito Core includes third-party software under its own licenses. The Nito Core
 license in `COPYING` does not replace those licenses. Portable archives keep
@@ -23,12 +24,12 @@ Berkeley DB and the other bundled libraries retain their respective licenses.
 
 ## Obtain the matching source
 
-Download `nito-VERSION-sources.tar.gz` from the **same release** as your binaries:
+Download `nito-4.0.0-sources.tar.gz` from the **same release** as your binaries:
 
-https://github.com/NitoNetwork/Nito-core/releases
+https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0
 
-Replace `VERSION` with the released version, and verify the archive against
-that release's `SHA256SUMS`. The source archive contains:
+Verify the archive against that release's `SHA256SUMS`. The source archive
+contains:
 
 - Nito Core source, build scripts and dependency patches from the release commit;
 - checksum-verified dependency archives under `depends/sources/`, including Qt;

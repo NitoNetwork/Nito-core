@@ -4,14 +4,31 @@
   <img src="doc/nito/assets/nito-v4-header.svg" alt="Nito Core v4 - Nito x Bech32x (Orchard)" width="100%">
 </p>
 
-Nito Core 4.0.0 is the full node and wallet for Nito.network. It
+Nito Core 4.0.0 is the current full node and wallet for Nito.network. It
 preserves the existing transparent chain, wallet and SHA-256 mining interfaces
 and adds opt-in Bech32x private transactions backed by Orchard cryptography.
 
-The `v4.0` branch contains the V4 sources. V4 release binaries have not been
-published yet; follow the [source-build guide](doc/nito/source-builds.md) to
-build this version. V3.0.1 remains the
-[latest stable release](https://github.com/NitoNetwork/Nito-core/releases/latest).
+Download the official binaries and matching source archive from the
+[Nito Core 4.0.0 release](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0).
+The `v4.0` branch contains the maintained V4 source line.
+
+## Major Additions In 4.0.0
+
+- **Bech32x and Orchard:** opt-in private receive and send flows, with explicit
+  private funding and a dedicated Orchard index. See the
+  [Bech32x wallet guide](doc/nito/bech32x-private-wallet.md).
+- **Compatible wallet upgrades:** supported V3 wallet files continue to open
+  directly; Orchard can be added without replacing existing transparent keys.
+  See [wallet backup and restore](doc/nito/wallet-backup-restore.md).
+- **Complete deterministic recovery:** native V4 phrases cover transparent and
+  Orchard authority, with an optional BIP39 passphrase and explicit index
+  requirements for historical recovery.
+- **Operational continuity:** transparent consensus, SHA-256 mining, block
+  headers, rewards and normal pool interfaces remain unchanged. See
+  [activation](doc/nito/consensus-activation.md) and
+  [mining compatibility](doc/nito/mining-pool-compatibility.md).
+- **Multi-platform delivery:** release packages are provided for Linux x86_64,
+  Linux ARM64, Windows x64 and macOS ARM64, with aggregate SHA-256 checksums.
 
 ## Upgrade Requirement
 
@@ -28,11 +45,9 @@ coinbase format.
 
 ## Download And Verify
 
-When V4 binaries are published, obtain them from the
-[official release page](https://github.com/NitoNetwork/Nito-core/releases) and
-verify the selected file against that release's `SHA256SUMS`. The commands below
-describe verification of those future artifacts; substitute their exact version
-and filenames. The current stable V3.0.1 downloads do not contain V4 features.
+Obtain Nito Core 4.0.0 from the
+[official release page](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0)
+and verify the selected file against the accompanying `SHA256SUMS`.
 
 Linux:
 
@@ -43,13 +58,13 @@ sha256sum --ignore-missing -c SHA256SUMS
 macOS:
 
 ```bash
-shasum -a 256 nito-VERSION-arm64-apple-darwin.dmg
+shasum -a 256 nito-4.0.0-arm64-apple-darwin.dmg
 ```
 
 Windows PowerShell:
 
 ```powershell
-Get-FileHash .\nito-VERSION-win64.zip -Algorithm SHA256
+Get-FileHash .\nito-4.0.0-win64.zip -Algorithm SHA256
 ```
 
 Compare the complete reported hash with the matching line in `SHA256SUMS`.
