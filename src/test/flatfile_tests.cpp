@@ -3,11 +3,13 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <chain.h>
 #include <clientversion.h>
 #include <common/args.h>
 #include <flatfile.h>
 #include <streams.h>
 #include <test/util/setup_common.h>
+#include <util/fs_helpers.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -88,6 +90,78 @@ BOOST_AUTO_TEST_CASE(flatfile_open)
         AutoFile file{seq.Open(FlatFilePos(1, pos2))};
         BOOST_CHECK_THROW(file >> LIMITED_STRING(text, 256), std::ios_base::failure);
     }
+}
+
+BOOST_AUTO_TEST_CASE(flatfile_large_position)
+{
+    const auto data_dir = m_args.GetDataDirBase();
+    FlatFileSeq seq(data_dir, "large", 16 * 1024);
+    constexpr uint64_t large_pos = (uint64_t{1} << 32) + 123;
+
+    AutoFile file{seq.Open(FlatFilePos{0, large_pos})};
+    BOOST_REQUIRE(!file.IsNull());
+    BOOST_CHECK_EQUAL(FileTell64(file.Get()), large_pos);
+    BOOST_CHECK_EQUAL(fs::file_size(seq.FileName(FlatFilePos{0, 0})), 0U);
+}
+
+BOOST_AUTO_TEST_CASE(flatfile_64bit_serialization)
+{
+    constexpr uint64_t large_pos = (uint64_t{1} << 32) + 123;
+
+    const FlatFilePos original_pos{7, large_pos};
+    DataStream pos_stream{};
+    pos_stream << original_pos;
+    FlatFilePos decoded_pos;
+    pos_stream >> decoded_pos;
+    BOOST_CHECK_EQUAL(decoded_pos.nFile, original_pos.nFile);
+    BOOST_CHECK_EQUAL(decoded_pos.nPos, original_pos.nPos);
+
+    CBlockFileInfo original_info;
+    original_info.nBlocks = 2;
+    original_info.nSize = large_pos;
+    original_info.nUndoSize = large_pos + 456;
+    original_info.nHeightFirst = 1;
+    original_info.nHeightLast = 2;
+    original_info.nTimeFirst = 3;
+    original_info.nTimeLast = 4;
+
+    DataStream info_stream{};
+    info_stream << original_info;
+    CBlockFileInfo decoded_info;
+    info_stream >> decoded_info;
+    BOOST_CHECK_EQUAL(decoded_info.nSize, original_info.nSize);
+    BOOST_CHECK_EQUAL(decoded_info.nUndoSize, original_info.nUndoSize);
+
+    CDiskBlockIndex original_index;
+    original_index.nStatus = BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO;
+    original_index.nFile = 3;
+    original_index.nDataPos = large_pos;
+    original_index.nUndoPos = large_pos + 789;
+
+    DataStream index_stream{};
+    index_stream << original_index;
+    CDiskBlockIndex decoded_index;
+    index_stream >> decoded_index;
+    BOOST_CHECK_EQUAL(decoded_index.nDataPos, original_index.nDataPos);
+    BOOST_CHECK_EQUAL(decoded_index.nUndoPos, original_index.nUndoPos);
+}
+
+BOOST_AUTO_TEST_CASE(flatfile_position_serialization_compatibility)
+{
+    constexpr int file_number = 9;
+    constexpr uint32_t legacy_pos = 123456789;
+
+    DataStream widened_stream{};
+    widened_stream << FlatFilePos{file_number, legacy_pos};
+
+    DataStream legacy_stream{};
+    int legacy_file_number = file_number;
+    uint32_t legacy_position = legacy_pos;
+    legacy_stream << VARINT_MODE(legacy_file_number, VarIntMode::NONNEGATIVE_SIGNED);
+    legacy_stream << VARINT(legacy_position);
+
+    BOOST_CHECK_EQUAL_COLLECTIONS(widened_stream.begin(), widened_stream.end(),
+                                  legacy_stream.begin(), legacy_stream.end());
 }
 
 BOOST_AUTO_TEST_CASE(flatfile_allocate)

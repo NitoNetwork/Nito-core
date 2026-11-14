@@ -15,11 +15,17 @@
 #include <util/fs.h>
 #include <util/syserror.h>
 
+#include <algorithm>
+#include <array>
+#include <cctype>
 #include <cerrno>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -38,10 +44,18 @@
 #include <fcntl.h>
 #include <sys/resource.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <linux/magic.h>
+#include <sys/vfs.h>
+#elif defined(__APPLE__)
+#include <sys/mount.h>
+#endif
 #else
-#include <io.h> /* For _get_osfhandle, _chsize */
+#include <io.h> /* For _get_osfhandle, _chsize_s, _fseeki64, _ftelli64 */
 #include <shlobj.h> /* For SHGetSpecialFolderPathW */
 #endif // WIN32
+
+static_assert(sizeof(void*) >= 8, "Nito Core requires a 64-bit build for safe block file handling");
 
 /** Mutex to protect dir_locks. */
 static GlobalMutex cs_dir_locks;
@@ -100,6 +114,51 @@ bool CheckDiskSpace(const fs::path& dir, uint64_t additional_bytes)
     return free_bytes_available >= min_disk_space + additional_bytes;
 }
 
+bool FileSystemSupportsLargeFiles(std::string_view filesystem_type)
+{
+    std::string normalized;
+    normalized.reserve(filesystem_type.size());
+    std::transform(filesystem_type.begin(), filesystem_type.end(), std::back_inserter(normalized), [](unsigned char c) {
+        return std::tolower(c);
+    });
+    return normalized != "fat" && normalized != "fat12" && normalized != "fat16" && normalized != "fat32" && normalized != "msdos" && normalized != "vfat";
+}
+
+std::optional<std::string> GetLargeFileIncompatibleFileSystem(const fs::path& directory)
+{
+#if defined(WIN32)
+    std::array<wchar_t, MAX_PATH + 1> volume_path{};
+    if (!GetVolumePathNameW(directory.c_str(), volume_path.data(), volume_path.size())) {
+        return std::nullopt;
+    }
+
+    std::array<wchar_t, MAX_PATH + 1> filesystem_name{};
+    if (!GetVolumeInformationW(volume_path.data(), nullptr, 0, nullptr, nullptr, nullptr, filesystem_name.data(), filesystem_name.size())) {
+        return std::nullopt;
+    }
+
+    const std::wstring_view wide_name{filesystem_name.data()};
+    const std::string name{wide_name.begin(), wide_name.end()};
+    if (!FileSystemSupportsLargeFiles(name)) {
+        return name;
+    }
+#elif defined(__linux__)
+    struct statfs filesystem_info;
+    if (statfs(directory.c_str(), &filesystem_info) == 0 && filesystem_info.f_type == MSDOS_SUPER_MAGIC) {
+        return "FAT/FAT32";
+    }
+#elif defined(__APPLE__)
+    struct statfs filesystem_info;
+    if (statfs(directory.c_str(), &filesystem_info) == 0) {
+        const std::string name{filesystem_info.f_fstypename};
+        if (!FileSystemSupportsLargeFiles(name)) {
+            return name;
+        }
+    }
+#endif
+    return std::nullopt;
+}
+
 std::streampos GetFileSize(const char* path, std::streamsize max)
 {
     std::ifstream file{path, std::ios::binary};
@@ -149,10 +208,10 @@ void DirectoryCommit(const fs::path& dirname)
 #endif
 }
 
-bool TruncateFile(FILE* file, unsigned int length)
+bool TruncateFile(FILE* file, uint64_t length)
 {
 #if defined(WIN32)
-    return _chsize(_fileno(file), length) == 0;
+    return _chsize_s(_fileno(file), length) == 0;
 #else
     return ftruncate(fileno(file), length) == 0;
 #endif
@@ -186,7 +245,7 @@ int RaiseFileDescriptorLimit(int nMinFD)
  * this function tries to make a particular range of a file allocated (corresponding to disk space)
  * it is advisory, and the range specified in the arguments will never contain live data
  */
-void AllocateFileRange(FILE* file, unsigned int offset, unsigned int length)
+void AllocateFileRange(FILE* file, uint64_t offset, unsigned int length)
 {
 #if defined(WIN32)
     // Windows-specific version
@@ -221,7 +280,7 @@ void AllocateFileRange(FILE* file, unsigned int offset, unsigned int length)
     // Fallback version
     // TODO: just write one byte per block
     static const char buf[65536] = {};
-    if (fseek(file, offset, SEEK_SET)) {
+    if (FileSeek64(file, offset, SEEK_SET)) {
         return;
     }
     while (length > 0) {

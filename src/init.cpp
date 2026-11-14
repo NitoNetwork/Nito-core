@@ -915,6 +915,12 @@ bool AppInitParameterInteraction(const ArgsManager& args)
     if (!fs::is_directory(args.GetBlocksDirPath())) {
         return InitError(strprintf(_("Specified blocks directory \"%s\" does not exist."), args.GetArg("-blocksdir", "")));
     }
+    if (const auto filesystem_type{GetLargeFileIncompatibleFileSystem(args.GetBlocksDirPath())}) {
+        return InitError(strprintf(
+            _("The blocks directory \"%1$s\" uses %2$s, which cannot store blockchain data files larger than 4 GiB. Choose a filesystem that supports large files."),
+            fs::PathToString(args.GetBlocksDirPath()),
+            *filesystem_type));
+    }
 
     // parse and validate enabled filter types
     std::string blockfilterindex_value = args.GetArg("-blockfilterindex", DEFAULT_BLOCKFILTERINDEX);

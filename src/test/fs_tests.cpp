@@ -140,6 +140,22 @@ BOOST_AUTO_TEST_CASE(rename)
     fs::remove(path2);
 }
 
+BOOST_AUTO_TEST_CASE(filesystem_large_file_support)
+{
+    BOOST_CHECK(!FileSystemSupportsLargeFiles("FAT"));
+    BOOST_CHECK(!FileSystemSupportsLargeFiles("fat12"));
+    BOOST_CHECK(!FileSystemSupportsLargeFiles("fat16"));
+    BOOST_CHECK(!FileSystemSupportsLargeFiles("Fat32"));
+    BOOST_CHECK(!FileSystemSupportsLargeFiles("msdos"));
+    BOOST_CHECK(!FileSystemSupportsLargeFiles("VFAT"));
+
+    BOOST_CHECK(FileSystemSupportsLargeFiles("exFAT"));
+    BOOST_CHECK(FileSystemSupportsLargeFiles("NTFS"));
+    BOOST_CHECK(FileSystemSupportsLargeFiles("ext4"));
+    BOOST_CHECK(FileSystemSupportsLargeFiles("apfs"));
+    BOOST_CHECK(FileSystemSupportsLargeFiles("unknown"));
+}
+
 #ifndef __MINGW64__ // no symlinks on mingw
 BOOST_AUTO_TEST_CASE(create_directories)
 {

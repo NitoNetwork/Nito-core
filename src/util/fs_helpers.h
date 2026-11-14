@@ -13,6 +13,9 @@
 #include <cstdio>
 #include <iosfwd>
 #include <limits>
+#include <optional>
+#include <string>
+#include <string_view>
 
 /**
  * Ensure file contents are fully committed to disk, using a platform-specific
@@ -26,9 +29,48 @@ bool FileCommit(FILE* file);
  */
 void DirectoryCommit(const fs::path& dirname);
 
-bool TruncateFile(FILE* file, unsigned int length);
+bool TruncateFile(FILE* file, uint64_t length);
+
+/**
+ * Return whether a filesystem type is known to support files larger than
+ * 4 GiB. Unknown filesystem types are accepted; FAT variants with a 4 GiB
+ * per-file limit are rejected.
+ */
+bool FileSystemSupportsLargeFiles(std::string_view filesystem_type);
+
+/**
+ * Return the filesystem type when the directory is on a filesystem that is
+ * known not to support files larger than 4 GiB. Detection failures and
+ * supported filesystems return std::nullopt.
+ */
+std::optional<std::string> GetLargeFileIncompatibleFileSystem(const fs::path& directory);
+
+/**
+ * 64-bit-clean file positioning.
+ *
+ * These wrappers are necessary on Windows, where long remains 32 bits in
+ * 64-bit builds.
+ */
+inline int FileSeek64(FILE* file, int64_t offset, int origin)
+{
+#if defined(WIN32)
+    return _fseeki64(file, offset, origin);
+#else
+    return std::fseek(file, offset, origin);
+#endif
+}
+
+inline int64_t FileTell64(FILE* file)
+{
+#if defined(WIN32)
+    return _ftelli64(file);
+#else
+    return std::ftell(file);
+#endif
+}
+
 int RaiseFileDescriptorLimit(int nMinFD);
-void AllocateFileRange(FILE* file, unsigned int offset, unsigned int length);
+void AllocateFileRange(FILE* file, uint64_t offset, unsigned int length);
 
 /**
  * Rename src to dest.
