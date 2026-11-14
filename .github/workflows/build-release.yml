@@ -535,7 +535,7 @@ jobs:
           set -euo pipefail
           build_scope="$(printf '%s' "${BUILD_SCOPE}" | tr '[:upper:]' '[:lower:]')"
           if [ "$build_scope" = "all" ]; then
-            echo "::group::[NITO.NETWORK] Unit, Orchard and legacy-wallet release gates"
+            echo "::group::[NITO.NETWORK] Unit, Orchard, legacy-wallet and private-reorg release gates"
             QT_QPA_PLATFORM=minimal WARNING_CLEAN_LOG=native-tests.log \
               bash .github/scripts/warning-clean-run.sh make check -j${MAKEJOBS}
             WARNING_CLEAN_LOG=orchard-format.log \
@@ -547,6 +547,9 @@ jobs:
             WARNING_CLEAN_LOG=legacy-wallet-test.log \
               bash .github/scripts/warning-clean-run.sh \
                 python3 test/functional/wallet_backup.py --legacy-wallet --configfile="$PWD/test/config.ini"
+            WARNING_CLEAN_LOG=private-reorg-test.log \
+              bash .github/scripts/warning-clean-run.sh \
+                python3 test/functional/mempool_private_activation_reorg.py --legacy-wallet --configfile="$PWD/test/config.ini"
             echo "::endgroup::"
           fi
 
