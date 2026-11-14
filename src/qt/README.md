@@ -1,6 +1,6 @@
 This directory contains the source code for the Nito Core graphical user interface (GUI). It uses the [Qt](https://www1.qt.io/developers/) cross-platform framework.
 
-The current precise version for Qt 5 is specified in [qt.mk](/depends/packages/qt.mk).
+The current precise version for the depends-managed Qt 6 build is specified in [qt.mk](/depends/packages/qt.mk).
 
 ## Compile and run
 
@@ -18,7 +18,7 @@ To run:
 
 #### forms/
 
-- A directory that contains [Designer UI](https://doc.qt.io/qt-5.9/designer-using-a-ui-file.html) files. These files specify the characteristics of form elements in XML. Qt UI files can be edited with [Qt Creator](#using-qt-creator-as-ide) or using any text editor.
+- A directory that contains [Designer UI](https://doc.qt.io/qt-6/designer-using-a-ui-file.html) files. These files specify the characteristics of form elements in XML. Qt UI files can be edited with [Qt Creator](#using-qt-creator-as-an-ide) or using any text editor.
 
 #### locale/
 
@@ -38,7 +38,7 @@ To run:
 
 #### \*model.(h/cpp)
 
-- The model. When it has a corresponding controller, it generally inherits from  [QAbstractTableModel](https://doc.qt.io/qt-5/qabstracttablemodel.html). Models that are used by controllers as helpers inherit from other Qt classes like [QValidator](https://doc.qt.io/qt-5/qvalidator.html).
+- The model. When it has a corresponding controller, it generally inherits from [QAbstractTableModel](https://doc.qt.io/qt-6/qabstracttablemodel.html). Models that are used by controllers as helpers inherit from other Qt classes like [QValidator](https://doc.qt.io/qt-6/qvalidator.html).
 - ClientModel is used by the main application `nitogui` and several models like `peertablemodel`.
 
 #### \*page.(h/cpp)
@@ -47,11 +47,11 @@ To run:
 
 #### \*dialog.(h/cpp)
 
-- Various dialogs, e.g. to open a URL. Inherit from [QDialog](https://doc.qt.io/qt-5/qdialog.html).
+- Various dialogs, e.g. to open a URL. Inherit from [QDialog](https://doc.qt.io/qt-6/qdialog.html).
 
 #### paymentserver.(h/cpp)
 
-- (Deprecated) Used to process BIP21 payment URI requests. Also handles URI-based application switching (e.g. when following a nito:... link from a browser).
+- Processes BIP21 payment URI requests and URI-based application switching (e.g. when following a nito:... link from a browser).
 
 #### walletview.(h/cpp)
 
@@ -61,7 +61,7 @@ To run:
 
 * UI elements like NitoAmountField, which inherit from QWidget.
 * `nitostrings.cpp`: automatically generated
-* `nitounits.(h/cpp)`: BTC / mBTC / etc. handling
+* `nitounits.(h/cpp)`: NITO unit display handling
 * `callback.h`
 * `guiconstants.h`: UI colors, app name, etc.
 * `guiutil.h`: several helper functions
@@ -72,7 +72,9 @@ To run:
 
 See [CONTRIBUTING.md](/CONTRIBUTING.md) for general guidelines.
 
-**Note:** Do not change `local/nito_en.ts`. It is updated [automatically](/doc/translation_process.md#writing-code-with-translations).
+The English source catalog is `locale/nito_en.ts`. Follow the
+[translation process](/doc/translation_process.md#developer-workflow)
+when updating source strings and maintained catalogs.
 
 ## Using Qt Creator as an IDE
 
@@ -108,7 +110,7 @@ sudo apt-get install qtcreator
 
  **macOS**
  - Under `Kits`: select the default "Desktop" kit
- - Under `Compilers`: select `"Clang (x86 64bit in /usr/bin)"`
+ - Under `Compilers`: select Clang for the target architecture, using the toolchain selected for the source build
  - Under `Debuggers`: select `"LLDB"` as debugger (you might need to set the path to your LLDB installation)
 
  **Ubuntu & Debian**

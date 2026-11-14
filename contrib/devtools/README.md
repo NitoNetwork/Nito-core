@@ -100,11 +100,96 @@ options, as all its configuration is set at the top of the file. It runs many ti
 pypy3 contrib/devtools/headerssync-params.py
 ```
 
+nito-chain-observer.py
+======================
+
+P2P release-security observer for Nito chain anchors. It connects to Nito peers
+over the public P2P protocol, downloads headers, verifies header proof-of-work
+and Nito difficulty transitions, recomputes chainwork, and writes a canonical
+Ed25519-signed attestation. It does not use JSON-RPC credentials. The observer
+requires agreement from at least `ceil(2/3)` of the peers passed with `--peer`;
+`--min-peer-agree` can only make that threshold stricter.
+
+It advertises V4 compatibility as a header client, without advertising full
+block serving. It does not validate transactions or Orchard proofs. Before
+using an anchor for a release, check it against independently operated full
+nodes. Peer names and observer identities must represent independent operators;
+different labels alone do not establish independence.
+
+Generate one observer keypair and keep the resulting file private:
+
+```bash
+umask 077
+python3 contrib/devtools/nito-chain-observer.py generate-key > observer-key.json
+```
+
+Create an attestation from independent P2P peers:
+
+```bash
+jq -r .private_key observer-key.json | python3 contrib/devtools/nito-chain-observer.py observe \
+  --peer seed.nito.network \
+  --peer seed.nitopool.online \
+  --observer-id observer-a \
+  --signing-key-stdin \
+  --output observer-a.json
+```
+
+Verify signed attestations with `ceil(2/3)` trusted-observer agreement:
+
+```bash
+python3 contrib/devtools/nito-chain-observer.py verify \
+  --attestation observer-a.json \
+  --attestation observer-b.json \
+  --attestation observer-c.json \
+  --observer-key observer-a=<ed25519-public-key-hex> \
+  --observer-key observer-b=<ed25519-public-key-hex> \
+  --observer-key observer-c=<ed25519-public-key-hex>
+```
+
+The observer requires the Python `cryptography` package for Ed25519 signatures.
+The signing example also uses `jq`; only the public key should be shared.
+Verification defaults to mainnet. Use `verify --network=testnet3` or
+`--network=regtest` for those networks. Attestations from another network and
+multiple trusted identities backed by the same public key are rejected.
+
+update-chainparams-security.py
+==============================
+
+Release helper that produces a verifiable chainparams security report from
+signed P2P observer attestations only. It emits replacement values for
+`nMinimumChainWork` and `defaultAssumeValid` after checking:
+
+- Ed25519 signatures against a trusted observer public-key registry.
+- `ceil(2/3)` agreement over the full known observer key set supplied with
+  `--observer-key`.
+- `ceil(2/3)` peer agreement inside each observer attestation, recomputed
+  from the included peer observations instead of trusting a declared count.
+- Attestation freshness.
+- Mainnet identity and correctly formatted anchor fields.
+- No chainwork rollback below the current `src/kernel/chainparams.cpp` value,
+  unless explicitly overridden.
+
+Example:
+
+```bash
+python3 contrib/devtools/update-chainparams-security.py \
+  --attestation observer-a.json \
+  --attestation observer-b.json \
+  --attestation observer-c.json \
+  --observer-key observer-a=<ed25519-public-key-hex> \
+  --observer-key observer-b=<ed25519-public-key-hex> \
+  --observer-key observer-c=<ed25519-public-key-hex> \
+  --output chainparams-security.json
+```
+
+This helper has no RPC mode. `chainTxData` is a progress-estimation hint and is
+not managed by the signed P2P security-anchor refresh path.
+
 gen-nito-conf.sh
 ===================
 
 Generates a nito.conf file in `share/examples/` by parsing the output from `nitod --help`. This script is run during the
-release process to include a nito.conf with the release binaries and can also be run by users to generate a file locally.
+source maintenance process to update the example nito.conf and can also be run by users to generate a file locally.
 When generating a file as part of the release process, make sure to commit the changes after running the script.
 
 With in-tree builds this tool can be run from any directory within the

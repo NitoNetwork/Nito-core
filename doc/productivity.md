@@ -126,7 +126,7 @@ Writing code
 
 ### Format C/C++ diffs with `clang-format-diff.py`
 
-See [contrib/devtools/README.md](/contrib/devtools/README.md#clang-format-diff.py).
+See [contrib/devtools/README.md](/contrib/devtools/README.md#clang-format-diffpy).
 
 ### Format Python diffs with `yapf-diff.py`
 
@@ -176,10 +176,12 @@ When reviewing patches that move code around, try using `git diff --patience com
 
 When looking at other's pull requests, it may make sense to add the following section to your `.git/config` file:
 
+Use the official Nito Core repository for upstream pull requests:
+
 ```
 [remote "upstream-pull"]
         fetch = +refs/pull/*/head:refs/remotes/upstream-pull/*
-        url = git@github.com:nito/nito.git
+        url = https://github.com/NitoNetwork/Nito-core.git
 ```
 
 This will add an `upstream-pull` remote to your git repository, which can be fetched using `git fetch --all` or `git fetch upstream-pull`. It will download and store on disk quite a lot of data (all PRs, including merged and closed ones). Afterwards, you can use `upstream-pull/NUMBER/head` in arguments to `git show`, `git checkout` and anywhere a commit id would be acceptable to see the changes from pull request NUMBER.

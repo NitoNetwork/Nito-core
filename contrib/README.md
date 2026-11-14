@@ -3,7 +3,7 @@ Repository Tools
 
 ### [Developer tools](/contrib/devtools) ###
 Specific tools for developers working on this repository.
-Additional tools, including the `github-merge.py` script, are available in the [maintainer-tools](https://github.com/nito-core/nito-maintainer-tools) repository.
+Additional upstream tools, including the `github-merge.py` script, are available in the [Bitcoin Core maintainer-tools](https://github.com/bitcoin-core/bitcoin-maintainer-tools) repository.
 
 ### [Verify-Commits](/contrib/verify-commits) ###
 Tool to verify that every merge commit was signed by a developer using the `github-merge.py` script.
@@ -24,7 +24,9 @@ Build Tools and Keys
 ### Packaging ###
 The [Debian](/contrib/debian) subfolder contains the copyright file.
 
-All other packaging related files can be found in the [nito-core/packaging](https://github.com/nito-core/packaging) repository.
+Nito release packaging is documented in the [release process](../doc/release-process.md).
+The [Bitcoin Core packaging repository](https://github.com/bitcoin-core/packaging)
+contains upstream distribution-specific examples.
 
 ### [MacDeploy](/contrib/macdeploy) ###
 Scripts and notes for Mac builds.
@@ -36,7 +38,8 @@ Test and Verify Tools
 Utilities to generate test vectors for the data-driven Nito tests.
 
 ### [Verify-Binaries](/contrib/verify-binaries) ###
-This script attempts to download and verify the signature file SHA256SUMS.asc from nito.org.
+Legacy GPG verification tooling. For Nito downloads, use the current
+[checksum and manifest verification instructions](../README.md#download-and-verify).
 
 Command Line Tools
 ---------------------

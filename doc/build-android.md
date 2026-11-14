@@ -1,7 +1,10 @@
 ANDROID BUILD NOTES
 ======================
 
-This guide describes how to build and package the `nito-qt` GUI for Android on Linux and macOS.
+These are inherited development notes for building and packaging the Qt GUI
+for Android. Android is not an official Nito Core V4 release target. The steps
+below have not been qualified with the current Qt 6 and Orchard toolchain;
+use the [supported build profiles](nito/source-builds.md) for release binaries.
 
 
 ## Dependencies
@@ -12,7 +15,8 @@ The minimum supported Android NDK version is [r23](https://github.com/android/nd
 
 In order to build `ANDROID_API_LEVEL` (API level corresponding to the Android version targeted, e.g. Android 9.0 Pie is 28 and its "Platform package" needs to be available) and `ANDROID_TOOLCHAIN_BIN` (path to toolchain binaries depending on the platform the build is being performed on) need to be set.
 
-API levels from 24 to 29 have been tested to work.
+The API-level range in the original build instructions was 24 to 29. This is
+historical build information, not current Nito V4 runtime validation.
 
 If the build includes Qt, environment variables `ANDROID_SDK` and `ANDROID_NDK` need to be set as well but can otherwise be omitted.
 This is an example command for a default build with no disabled dependencies:

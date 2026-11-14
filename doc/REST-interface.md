@@ -3,8 +3,8 @@ Unauthenticated REST Interface
 
 The REST API can be enabled with the `-rest` option.
 
-The interface runs on the same port as the JSON-RPC interface, by default port 8332 for mainnet, port 18332 for testnet,
-port 38332 for signet, and port 18443 for regtest.
+The interface runs on the same port as JSON-RPC: 8825 for mainnet, 8845 for
+testnet, 8865 for signet and 8885 for regtest by default.
 
 REST Interface consistency guarantees
 -------------------------------------
@@ -53,7 +53,7 @@ With the /notxdetails/ option JSON response will only contain the transaction ha
 Given a block hash: returns <COUNT> amount of blockheaders in upward direction.
 Returns empty if the block doesn't exist or it isn't in the active chain.
 
-*Deprecated (but not removed) since 24.0:*
+*Deprecated compatibility route:*
 `GET /rest/headers/<COUNT>/<BLOCK-HASH>.<bin|hex|json>`
 
 #### Blockfilter Headers
@@ -63,7 +63,7 @@ Given a block hash: returns <COUNT> amount of blockfilter headers in upward
 direction for the filter type <FILTERTYPE>.
 Returns empty if the block doesn't exist or it isn't in the active chain.
 
-*Deprecated (but not removed) since 24.0:*
+*Deprecated compatibility route:*
 `GET /rest/blockfilterheaders/<FILTERTYPE>/<COUNT>/<BLOCK-HASH>.<bin|hex|json>`
 
 #### Blockfilters
@@ -101,12 +101,12 @@ Refer to the `getdeploymentinfo` RPC help for details.
 
 The getutxos endpoint allows querying the UTXO set, given a set of outpoints.
 With the `/checkmempool/` option, the mempool is also taken into account.
-See [BIP64](https://github.com/nito/bips/blob/master/bip-0064.mediawiki) for
+See [BIP64](https://github.com/bitcoin/bips/blob/master/bip-0064.mediawiki) for
 input and output serialization (relevant for `bin` and `hex` output formats).
 
 Example:
 ```
-$ curl localhost:18332/rest/getutxos/checkmempool/b2cdfd7b89def827ff8af7cd9bff7627ff72e5e8b0f71210f92ea7a4000c5d75-0.json 2>/dev/null | json_pp
+$ curl localhost:8845/rest/getutxos/checkmempool/b2cdfd7b89def827ff8af7cd9bff7627ff72e5e8b0f71210f92ea7a4000c5d75-0.json 2>/dev/null | json_pp
 {
    "chainHeight" : 325347,
    "chaintipHash" : "00000000fb01a7f3745a717f8caebee056c484e6e0bfe4a9591c235bb70506fb",
@@ -117,7 +117,7 @@ $ curl localhost:18332/rest/getutxos/checkmempool/b2cdfd7b89def827ff8af7cd9bff76
          "value" : 8.8687,
          "scriptPubKey" : {
             "asm" : "OP_DUP OP_HASH160 1c7cebb529b86a04c683dfa87be49de35bcf589e OP_EQUALVERIFY OP_CHECKSIG",
-            "desc" : "addr(mi7as51dvLJsizWnTMurtRmrP8hG2m1XvD)#gj9tznmy"
+            "desc" : "addr(mi7as51dvLJsizWnTMurtRmrP8hG2m1XvD)#gj9tznmy",
             "hex" : "76a9141c7cebb529b86a04c683dfa87be49de35bcf589e88ac",
             "type" : "pubkeyhash",
             "address" : "mi7as51dvLJsizWnTMurtRmrP8hG2m1XvD"
@@ -141,9 +141,9 @@ Only supports JSON as output format.
 Refer to the `getrawmempool` RPC help for details. Defaults to setting
 `verbose=true` and `mempool_sequence=false`.
 
-*Query parameters for `verbose` and `mempool_sequence` available in 25.0 and up.*
-
-
 Risks
 -------------
-Running a web browser on the same node with a REST enabled nitod can be a risk. Accessing prepared XSS websites could read out tx/block data of your node by placing links like `<script src="http://127.0.0.1:8332/rest/tx/1234567890.json">` which might break the nodes privacy.
+The REST interface is unauthenticated. Keep it restricted to trusted clients,
+including when a browser runs on the same machine. See the
+[RPC security guidance](JSON-RPC-interface.md#security) before exposing the
+shared HTTP service.

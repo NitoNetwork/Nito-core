@@ -57,7 +57,7 @@ The following sections demonstrate how to initialize, run, and shut down a
 The `TestShell` forwards all functional test parameters of the parent
 `NitoTestFramework` object. The full set of argument keywords which can be
 used to initialize the `TestShell` can be found in [section
-#6](#custom-testshell-parameters) of this document.
+#6](#6-custom-testshell-parameters) of this document.
 
 **Note: Running multiple instances of `TestShell` is not allowed.** Running a
 single process also ensures that logging remains consolidated in the same
@@ -123,11 +123,11 @@ We can also log custom events to the logger.
 ```
 
 **Note: Please also consider the functional test
-[readme](../test/functional/README.md), which provides an overview of the
+[readme](README.md), which provides an overview of the
 test-framework**. Modules such as
-[key.py](../test/functional/test_framework/key.py),
-[script.py](../test/functional/test_framework/script.py) and
-[messages.py](../test/functional/test_framework/messages.py) are particularly
+[key.py](test_framework/key.py),
+[script.py](test_framework/script.py) and
+[messages.py](test_framework/messages.py) are particularly
 useful in constructing objects which can be passed to the nitod nodes managed
 by a running `TestShell` object.
 

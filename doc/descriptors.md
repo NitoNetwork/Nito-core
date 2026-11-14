@@ -1,7 +1,9 @@
 # Support for Output Descriptors in Nito Core
 
-Since Nito Core v0.17, there is support for Output Descriptors. This is a
-simple language which can be used to describe collections of output scripts.
+Output Descriptors describe collections of transparent output scripts.
+This guide covers the script descriptor language inherited from Bitcoin Core.
+Orchard descriptors and recovery authority are documented separately in the
+[Nito RPC reference](nito/rpc-reference.md).
 Supporting RPCs are:
 - `scantxoutset` takes as input descriptors to scan for, and also reports
   specialized descriptors for the matching UTXOs.
@@ -10,19 +12,16 @@ Supporting RPCs are:
 - `deriveaddresses` takes as input a descriptor and computes the corresponding
   addresses.
 - `listunspent` outputs a specialized descriptor for the reported unspent outputs.
-- `getaddressinfo` outputs a descriptor for solvable addresses (since v0.18).
-- `importmulti` takes as input descriptors to import into a legacy wallet
-  (since v0.18).
+- `getaddressinfo` outputs a descriptor for solvable addresses.
+- `importmulti` takes as input descriptors to import into a legacy wallet.
 - `generatetodescriptor` takes as input a descriptor and generates coins to it
-  (`regtest` only, since v0.19).
-- `utxoupdatepsbt` takes as input descriptors to add information to the psbt
-  (since v0.19).
-- `createmultisig` and `addmultisigaddress` return descriptors as well (since v0.20).
-- `importdescriptors` takes as input descriptors to import into a descriptor wallet
-  (since v0.21).
-- `listdescriptors` outputs descriptors imported into a descriptor wallet (since v22).
+  (`regtest` only).
+- `utxoupdatepsbt` takes as input descriptors to add information to the PSBT.
+- `createmultisig` and `addmultisigaddress` return descriptors as well.
+- `importdescriptors` takes as input descriptors to import into a descriptor wallet.
+- `listdescriptors` outputs descriptors imported into a descriptor wallet.
 - `scanblocks` takes as input descriptors to scan for in blocks and returns the
-   relevant blockhashes (since v25).
+   relevant block hashes.
 
 This document describes the language. For the specifics on usage, see the RPC
 documentation for the functions mentioned above.
@@ -39,7 +38,7 @@ Output descriptors currently support:
 - Multisig scripts, through the `multi` function.
 - Multisig scripts where the public keys are sorted lexicographically, through the `sortedmulti` function.
 - Multisig scripts inside taproot script trees, through the `multi_a` (and `sortedmulti_a`) function.
-- Any type of supported address through the `addr` function.
+- Supported transparent addresses through the `addr` function.
 - Raw hex scripts through the `raw` function.
 - Public keys (compressed and uncompressed) in hex notation, or BIP32 extended pubkeys with derivation paths.
 
@@ -94,8 +93,8 @@ Descriptors consist of several types of expressions. The top level expression is
   - Hex encoded public keys (either 66 characters starting with `02` or `03` for a compressed pubkey, or 130 characters starting with `04` for an uncompressed pubkey).
     - Inside `wpkh` and `wsh`, only compressed public keys are permitted.
     - Inside `tr` and `rawtr`, x-only pubkeys are also permitted (64 hex characters).
-  - [WIF](https://en.nito.it/wiki/Wallet_import_format) encoded private keys may be specified instead of the corresponding public key, with the same meaning.
-  - `xpub` encoded extended public key or `xprv` encoded extended private key (as defined in [BIP 32](https://github.com/nito/bips/blob/master/bip-0032.mediawiki)).
+  - Wallet Import Format (WIF) encoded private keys may be specified instead of the corresponding public key, with the same meaning.
+  - `xpub` encoded extended public key or `xprv` encoded extended private key (as defined in [BIP 32](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki)).
     - Followed by zero or more `/NUM` unhardened and `/NUM'` hardened BIP32 derivation steps.
     - Optionally followed by a single `/*` or `/*'` final step to denote all (direct) unhardened or hardened children.
     - The usage of hardened derivation steps requires providing the private key.
@@ -106,10 +105,10 @@ Descriptors consist of several types of expressions. The top level expression is
 - any `SCRIPT` expression
 - An open brace `{`, a `TREE` expression, a comma `,`, a `TREE` expression, and a closing brace `}`
 
-`ADDR` expressions are any type of supported address:
+`ADDR` expressions support transparent address types:
 - P2PKH addresses (base58, of the form `1...` for mainnet or `[nm]...` for testnet). Note that P2PKH addresses in descriptors cannot be used for P2PK outputs (use the `pk` function instead).
-- P2SH addresses (base58, of the form `3...` for mainnet or `2...` for testnet, defined in [BIP 13](https://github.com/nito/bips/blob/master/bip-0013.mediawiki)).
-- Segwit addresses (bech32 and bech32m, of the form `bc1...` for mainnet or `tb1...` for testnet, defined in [BIP 173](https://github.com/nito/bips/blob/master/bip-0173.mediawiki) and [BIP 350](https://github.com/nito/bips/blob/master/bip-0350.mediawiki)).
+- P2SH addresses (base58, of the form `3...` for mainnet or `2...` for testnet, defined in [BIP 13](https://github.com/bitcoin/bips/blob/master/bip-0013.mediawiki)).
+- Segwit addresses (bech32 and bech32m, of the form `nito1...` for Nito mainnet, defined by the Bech32 and Bech32m standards).
 
 ## Explanation
 
@@ -221,7 +220,7 @@ Instead, it should be written as `xpub.../1/*`, where xpub corresponds to
 `m/44'/0'/0'`.
 
 When interacting with a hardware device, it may be necessary to include
-the entire path from the master down. [BIP174](https://github.com/nito/bips/blob/master/bip-0174.mediawiki) standardizes this by
+the entire path from the master down. [BIP174](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki) standardizes this by
 providing the master key *fingerprint* (first 32 bit of the Hash160 of
 the master pubkey), plus all derivation steps. To support constructing
 these, we permit providing this key origin information inside the

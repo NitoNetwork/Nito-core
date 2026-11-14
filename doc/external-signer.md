@@ -1,171 +1,115 @@
-# Support for signing transactions outside of Nito Core
+# External Signers
 
-Nito Core can be launched with `-signer=<cmd>` where `<cmd>` is an external tool which can sign transactions and perform other functions. For example, it can be used to communicate with a hardware wallet.
+Nito Core can use an external command to enumerate signing devices, obtain
+transparent descriptors, display addresses and sign transparent PSBTs. Select
+the command with `-signer=<command>` in a build with external-signer support.
 
-## Example usage
+The signer must support Nito's network parameters, address encoding and
+transaction rules. An implementation of this command interface alone does not
+establish hardware-wallet compatibility. These examples do not provide Orchard
+spending-key support or certify any device.
 
-The following example is based on the [HWI](https://github.com/nito-core/HWI) tool. Version 2.0 or newer is required. Although this tool is hosted under the Nito Core GitHub organization and maintained by Nito Core developers, it should be used with caution. It is considered experimental and has far less review than Nito Core itself. Be particularly careful when running tools such as these on a computer with private keys on it.
+## Create And Use A Wallet
 
-When using a hardware wallet, consult the manufacturer website for (alternative) software they recommend. As long as their software conforms to the standard below, it should be able to work with Nito Core.
+Start the node with your installed signer command:
 
-Start Nito Core:
-
-```sh
-$ nitod -signer=../HWI/hwi.py
+```bash
+nitod -signer=/path/to/nito-compatible-signer
+nito-cli enumeratesigners
+nito-cli -named createwallet wallet_name=hww disable_private_keys=true \
+  blank=true descriptors=true external_signer=true
 ```
 
-### Device setup
+Nito Core imports the descriptors returned by the signer. Check that they cover
+the intended network and key paths before accepting deposits. Back up the
+signing device according to its recovery procedure and retain a backup of the
+Nito wallet for its public descriptors and local metadata.
 
-Follow the hardware manufacturers instructions for the initial device setup, as well as their instructions for creating a backup. Alternatively, for some devices, you can use the `setup`, `restore` and `backup` commands provided by [HWI](https://github.com/nito-core/HWI).
+Generate an address, then compare it with the address shown on the device:
 
-### Create wallet and import keys
-
-Get a list of signing devices / services:
-
-```
-$ nito-cli enumeratesigners
-{
-  "signers": [
-    {
-      "fingerprint": "c8df832a"
-    }
-]
+```bash
+nito-cli -rpcwallet=hww getnewaddress
+nito-cli -rpcwallet=hww walletdisplayaddress <address>
 ```
 
-The master key fingerprint is used to identify a device.
+For a normal transparent payment:
 
-Create a wallet, this automatically imports the public keys:
-
-```sh
-$ nito-cli createwallet "hww" true true "" true true true
+```bash
+nito-cli -rpcwallet=hww sendtoaddress <transparent-address> <amount>
 ```
 
-### Verify an address
+Review the destination, amount and fee on the signing device. A successful
+ordinary `sendtoaddress` call returns the transaction ID; an unavailable signer
+or rejected signature produces an error.
 
-Display an address on the device:
+## Command Interface
 
-```sh
-$ nito-cli -rpcwallet=<wallet> getnewaddress
-$ nito-cli -rpcwallet=<wallet> walletdisplayaddress <address>
+The current interface is implemented in
+[`src/external_signer.cpp`](../src/external_signer.cpp). Commands return JSON on
+standard output. For network-specific commands, Nito passes `--chain` with
+`main`, `test`, `signet` or `regtest`.
+
+### Enumerate
+
+```text
+<command> enumerate
 ```
 
-Replace `<address>` with the result of `getnewaddress`.
+Return an array, empty when there are no devices. Each entry must provide a
+string `fingerprint`; an optional string `model` identifies the device:
 
-### Spending
-
-Under the hood this uses a [Partially Signed Nito Transaction](psbt.md).
-
-```sh
-$ nito-cli -rpcwallet=<wallet> sendtoaddress <address> <amount>
+```json
+[{"fingerprint":"00000000","model":"Example signer"}]
 ```
 
-This prompts your hardware wallet to sign, and fail if it's not connected. If successful
-it automatically broadcasts the transaction.
+The fingerprint identifies a master key, not an authenticated device identity.
 
-```sh
-{"complete": true, "txid": <txid>}
+### Get Descriptors
+
+```text
+<command> --fingerprint <fingerprint> --chain <chain> getdescriptors --account 0
 ```
 
-## Signer API
+Return an object with `receive` and `internal` arrays of descriptor strings.
+Descriptors must contain the correct network's extended keys, derivation paths
+and checksums. Public descriptors disclose the corresponding address set and
+should be handled as sensitive viewing data.
 
-In order to be compatible with Nito Core any signer command should conform to the specification below. This specification is subject to change. Ideally a BIP should propose a standard so that other wallets can also make use of it.
+### Display An Address
 
-Prerequisite knowledge:
-* [Output Descriptors](descriptors.md)
-* Partially Signed Nito Transaction ([PSBT](psbt.md))
-
-### `enumerate` (required)
-
-Usage:
-```
-$ <cmd> enumerate
-[
-    {
-        "fingerprint": "00000000"
-    }
-]
+```text
+<command> --fingerprint <fingerprint> --chain <chain> displayaddress --desc <descriptor>
 ```
 
-The command MUST return an (empty) array with at least a `fingerprint` field.
+Return an object with an `address` string, or an `error` string on failure.
+The device must verify the descriptor against its keys and display the address
+for the selected Nito network.
 
-A future extension could add an optional return field with device capabilities. Perhaps a descriptor with wildcards. For example: `["pkh("44'/0'/$'/{0,1}/*"), sh(wpkh("49'/0'/$'/{0,1}/*")), wpkh("84'/0'/$'/{0,1}/*")]`. This would indicate the device supports legacy, wrapped SegWit and native SegWit. In addition it restricts the derivation paths that can used for those, to maintain compatibility with other wallet software. It also indicates the device, or the driver, doesn't support multisig.
+### Sign A Transaction
 
-A future extension could add an optional return field `reachable`, in case `<cmd>` knows a signer exists but can't currently reach it.
+Nito starts the signer with:
 
-### `signtransaction` (required)
-
-Usage:
-```
-$ <cmd> --fingerprint=<fingerprint> (--testnet) signtransaction <psbt>
-base64_encode_signed_psbt
+```text
+<command> --stdin --fingerprint <fingerprint> --chain <chain>
 ```
 
-The command returns a psbt with any signatures.
+It supplies the following command through standard input:
 
-The `psbt` SHOULD include bip32 derivations. The command SHOULD fail if none of the bip32 derivations match a key owned by the device.
-
-The command SHOULD fail if the user cancels.
-
-The command MAY complain if `--testnet` is set, but any of the BIP32 derivation paths contain a coin type other than `1h` (and vice versa).
-
-### `getdescriptors` (optional)
-
-Usage:
-
-```
-$ <cmd> --fingerprint=<fingerprint> (--testnet) getdescriptors <account>
-<xpub>
+```text
+signtx "<base64-psbt>"
 ```
 
-Returns descriptors supported by the device. Example:
+Return an object containing a base64 `psbt` string with the signatures added,
+or an `error` string. Nito first requires the signer's fingerprint to match a
+BIP32 or Taproot derivation in at least one input. The signer must independently
+review the transaction and refuse a request the user rejects.
 
-```
-$ <cmd> --fingerprint=00000000 --testnet getdescriptors
-{
-  "receive": [
-    "pkh([00000000/44h/0h/0h]xpub6C.../0/*)#fn95jwmg",
-    "sh(wpkh([00000000/49h/0h/0h]xpub6B..../0/*))#j4r9hntt",
-    "wpkh([00000000/84h/0h/0h]xpub6C.../0/*)#qw72dxa9"
-  ],
-  "internal": [
-    "pkh([00000000/44h/0h/0h]xpub6C.../1/*)#c8q40mts",
-    "sh(wpkh([00000000/49h/0h/0h]xpub6B..../1/*))#85dn0v75",
-    "wpkh([00000000/84h/0h/0h]xpub6C..../1/*)#36mtsnda"
-  ]
-}
-```
+The returned PSBT must preserve the transaction the user reviewed. Normal
+wallet processing attempts to finalize and broadcast it when all required
+signatures are available.
 
-### `displayaddress` (optional)
+## Related Guides
 
-Usage:
-```
-<cmd> --fingerprint=<fingerprint> (--testnet) displayaddress --desc descriptor
-```
-
-Example, display the first native SegWit receive address on Testnet:
-
-```
-<cmd> --fingerprint=00000000 --testnet displayaddress --desc "wpkh([00000000/84h/1h/0h]tpubDDUZ..../0/0)"
-```
-
-The command MUST be able to figure out the address type from the descriptor.
-
-If <descriptor> contains a master key fingerprint, the command MUST fail if it does not match the fingerprint known by the device.
-
-If <descriptor> contains an xpub, the command MUST fail if it does not match the xpub known by the device.
-
-The command MAY complain if `--testnet` is set, but the BIP32 coin type is not `1h` (and vice versa).
-
-## How Nito Core uses the Signer API
-
-The `enumeratesigners` RPC simply calls `<cmd> enumerate`.
-
-The `createwallet` RPC calls:
-
-* `<cmd> --fingerprint=00000000 getdescriptors 0`
-
-It then imports descriptors for all support address types, in a BIP44/49/84 compatible manner.
-
-The `walletdisplayaddress` RPC reuses some code from `getaddressinfo` on the provided address and obtains the inferred descriptor. It then calls `<cmd> --fingerprint=00000000 displayaddress --desc=<descriptor>`.
-
-`sendtoaddress` and `sendmany` check `inputs->bip32_derivs` to see if any inputs have the same `master_fingerprint` as the signer. If so, it calls `<cmd> --fingerprint=00000000 signtransaction <psbt>`. It waits for the device to return a (partially) signed psbt, tries to finalize it and broadcasts the transaction.
+- [PSBT workflow](psbt.md)
+- [Offline transparent signing](offline-signing-tutorial.md)
+- [Descriptors](descriptors.md)

@@ -4,6 +4,10 @@
 
 This guide describes how to build nitod, command-line utilities, and GUI on FreeBSD.
 
+FreeBSD is a development/community target, not part of the official four-OS
+release artifact matrix. Release and exchange deployments should use a
+profile documented in [nito/source-builds.md](nito/source-builds.md).
+
 ## Preparation
 
 ### 1. Install Required Dependencies
@@ -16,10 +20,16 @@ pkg install autoconf automake boost-libs git gmake libevent libtool pkgconf
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
-### 2. Clone Nito Repo
-Now that `git` and all the required dependencies are installed, let's clone the Nito Core repository to a directory. All build scripts and commands will run from this directory.
-``` bash
-git clone https://github.com/nito/nito.git
+### 2. Obtain The Source And Rust Toolchain
+
+Obtain an exact revision using the
+[source checkout instructions](nito/source-builds.md#supported-build-contract).
+From that source directory, select the Orchard toolchain:
+
+```bash
+rustup toolchain install 1.97.0 --profile minimal
+rustup override set 1.97.0
+git rev-parse HEAD
 ```
 
 ### 3. Install Optional Dependencies
@@ -62,11 +72,11 @@ sh/bash: export BDB_PREFIX=[path displayed above]
 ```
 
 #### GUI Dependencies
-###### Qt5
+###### Qt6
 
-Nito Core includes a GUI built with the cross-platform Qt Framework. To compile the GUI, we need to install `qt5`. Skip if you don't intend to use the GUI.
+Nito Core includes a GUI built with the cross-platform Qt Framework. To compile the GUI, install Qt 6. Skip if you don't intend to use the GUI.
 ```bash
-pkg install qt5
+pkg install qt6-base qt6-tools
 ```
 ###### libqrencode
 
@@ -120,7 +130,7 @@ This enables support for both wallet types and disables the GUI, assuming
 ##### No Wallet or GUI
 ``` bash
 ./autogen.sh
-./configure --without-wallet --with-gui=no MAKE=gmake
+./configure --disable-wallet --with-gui=no MAKE=gmake
 ```
 
 ### 2. Compile

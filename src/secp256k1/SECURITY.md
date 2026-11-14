@@ -2,14 +2,10 @@
 
 ## Reporting a Vulnerability
 
-To report security issues send an email to secp256k1-security@nitocore.org (not for support).
+To report libsecp256k1 security issues, follow the
+[upstream security policy](https://github.com/bitcoin-core/secp256k1/blob/master/SECURITY.md)
+for current contacts and encryption keys. The upstream contact is
+secp256k1-security@bitcoincore.org (not for support).
 
-The following keys may be used to communicate sensitive information to developers:
-
-| Name | Fingerprint |
-|------|-------------|
-| Pieter Wuille | 133E AC17 9436 F14A 5CF1  B794 860F EB80 4E66 9320 |
-| Jonas Nick | 36C7 1A37 C9D9 88BD E825  08D9 B1A7 0E4F 8DCD 0366 |
-| Tim Ruffing | 09E0 3F87 1092 E40E 106E  902B 33BC 86AB 80FF 5516 |
-
-You can import a key by running the following command with that individual’s fingerprint: `gpg --keyserver hkps://keys.openpgp.org --recv-keys "<fingerprint>"` Ensure that you put quotes around fingerprints containing spaces.
+For security issues in Nito Core integration, use the
+[Nito Core security contact](../../SECURITY.md).

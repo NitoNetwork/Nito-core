@@ -1,203 +1,160 @@
 # Nito Core
 
-![imagenito](https://github.com/user-attachments/assets/41389ade-1a8e-4b9b-9f3a-2572bd1aadbb)
+<p align="center">
+  <img src="doc/nito/assets/nito-v4-header.svg" alt="Nito Core v4 - Nito x Bech32x (Orchard)" width="100%">
+</p>
 
-Nito Core connects to the Nito peer-to-peer network to download and fully validate blocks and transactions. It also includes a wallet and graphical user interface, which can be optionally built.
+**V4 source preview:** the `v4.0` branch is available for review and testing.
+V3.0.1 remains the [latest stable release](https://github.com/NitoNetwork/Nito-core/releases/latest).
+No V4 binary release has been published yet. To test this branch, follow the
+[source-build guide](doc/nito/source-builds.md).
 
-- **Latest Release:** [Download](https://github.com/NitoNetwork/Nito-core/releases/latest)
-- **Whitepaper:** [Nito Whitepaper v3.0](https://nitonetwork.github.io/Nito-Whitepaper/)
+Nito Core 4.0.0 is the next version of the full node and wallet for Nito.network. It
+preserves the existing transparent chain, wallet and SHA-256 mining interfaces
+and adds opt-in Bech32x private transactions backed by Orchard cryptography.
 
-Contact: help@nito.network
+## Upgrade Requirement
 
----
+This code activates Orchard on mainnet at block `1,165,432`. Publishing or
+selecting a Git branch does not change that consensus rule. The existing block
+reward and subsidy schedule are unchanged.
 
-## Installation from Binaries
+Before activation, v3 peers and transparent traffic remain compatible. Once
+the activation block is connected, peers must advertise protocol version
+`70017` or later and the `NITO_PRIVATE` service capability. Nodes, pools,
+explorers and indexers must upgrade their backing daemon before that height.
+Mining keeps the existing SHA-256 hardware, block-header and transparent
+coinbase format.
 
-Download the latest release for your platform from the [Releases](https://github.com/NitoNetwork/Nito-core/releases) page.
+## Download And Verify
 
-### Linux (x86_64 or ARM64)
+When V4 binaries are published, obtain them from the
+[official release page](https://github.com/NitoNetwork/Nito-core/releases) and
+verify the selected file against that release's `SHA256SUMS`. The commands below
+describe verification of those future artifacts; substitute their exact version
+and filenames. The current stable V3.0.1 downloads do not contain V4 features.
 
-```bash
-# Download and extract (replace with correct filename)
-tar -xzf nito-3.0.1-x86_64-linux-gnu.tar.gz
-
-# Install binaries
-sudo cp nito-3.0.1-x86_64-linux-gnu/bin/* /usr/local/bin/
-
-# Create data directory and config
-mkdir -p ~/.nito
-cat > ~/.nito/nito.conf << EOF
-server=1
-daemon=1
-rpcuser=nitorpc
-rpcpassword=$(openssl rand -hex 32)
-rpcallowip=127.0.0.1
-EOF
-
-# Start the daemon
-nitod
-
-# Or start the GUI wallet
-nito-qt
-```
-
-### Windows
-
-**Option A — Installer:**
-1. Download `nito-3.0.1-win64-setup.exe`
-2. Run the installer
-3. Launch **Nito Core** from the Start Menu or Desktop shortcut
-
-**Option B — Portable ZIP:**
-1. Download `nito-3.0.1-win64.zip`
-2. Extract to a folder of your choice
-3. Run `nito-qt.exe` for the GUI wallet
-
-### macOS
+Linux:
 
 ```bash
-tar -xzf nito-3.0.1-x86_64-apple-darwin.tar.gz
-sudo cp nito-3.0.1/bin/* /usr/local/bin/
-nito-qt
+sha256sum --ignore-missing -c SHA256SUMS
 ```
 
----
-
-## Verify Downloads (SHA256)
-
-```
-sha256sum nito-3.0.1-*.tar.gz nito-3.0.1-*.zip nito-3.0.1-*-setup.exe
-```
-
-Compare the output with the checksums listed on the [release page](https://github.com/NitoNetwork/Nito-core/releases/latest).
-
----
-
-## Building from Source
-
-### Prerequisites
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get update
-sudo apt-get install -y build-essential libtool autotools-dev automake pkg-config \
-    bsdmainutils python3 curl git bison
-```
-
-For cross-compilation (optional):
-```bash
-# Windows cross-compile
-sudo apt-get install -y g++-mingw-w64-x86-64 nsis zip
-
-# ARM64 cross-compile
-sudo apt-get install -y g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
-```
-
-**macOS:**
-```bash
-brew install automake libtool pkg-config
-```
-
-### Build with depends (recommended)
-
-The `depends` system downloads and builds all dependencies locally, ensuring reproducible builds.
+macOS:
 
 ```bash
-git clone https://github.com/NitoNetwork/Nito-core.git
-cd Nito-core
-
-# Download Qt sources (required for GUI)
-mkdir -p depends/sources && cd depends/sources
-curl -L -O https://download.qt.io/archive/qt/5.15/5.15.11/submodules/qtbase-everywhere-opensource-src-5.15.11.tar.xz
-curl -L -O https://download.qt.io/archive/qt/5.15/5.15.11/submodules/qttranslations-everywhere-opensource-src-5.15.11.tar.xz
-curl -L -O https://download.qt.io/archive/qt/5.15/5.15.11/submodules/qttools-everywhere-opensource-src-5.15.11.tar.xz
-cd ../..
-
-# Build dependencies
-cd depends && make HOST=x86_64-pc-linux-gnu -j$(nproc) && cd ..
-
-# Build Nito
-./autogen.sh
-CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site \
-    ./configure --prefix=/ --disable-tests --disable-bench
-make -j$(nproc)
+shasum -a 256 nito-VERSION-arm64-apple-darwin.dmg
 ```
 
-Binaries will be in `src/` (`nitod`, `nito-cli`, `nito-qt`, etc.)
+Windows PowerShell:
 
-### Build without GUI
+```powershell
+Get-FileHash .\nito-VERSION-win64.zip -Algorithm SHA256
+```
+
+Compare the complete reported hash with the matching line in `SHA256SUMS`.
+Portable archives contain a single top-level `bin/` directory. Executables,
+`LICENSE.txt` and the consolidated `THIRD_PARTY_LICENSES.txt` are kept directly
+inside it.
+
+## Start A Node
 
 ```bash
-cd depends && make HOST=x86_64-pc-linux-gnu NO_QT=1 -j$(nproc) && cd ..
-./autogen.sh
-CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site \
-    ./configure --prefix=/ --disable-tests --disable-bench
-make -j$(nproc)
+nitod -daemon
+nito-cli getblockchaininfo
+nito-cli getorchardpools
+nito-cli getindexinfo
 ```
 
-### Cross-Compile for Windows
+Wait for the chain and required indexes to synchronize before using the
+wallet. The [quick-start guide](doc/nito/quick-start.md) covers Windows,
+Linux, macOS and the available networks.
+
+## Wallets And Bech32x
+
+Bech32 remains the default receive type. Bech32x is an explicit private receive
+type with `nito1x...` mainnet addresses:
 
 ```bash
-cd depends && make HOST=x86_64-w64-mingw32 -j$(nproc) && cd ..
-./autogen.sh
-CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site \
-    ./configure --prefix=/ --disable-tests --disable-bench
-make -j$(nproc)
+nito-cli -named createwallet wallet_name=main descriptors=true
+nito-cli -rpcwallet=main getnewaddress "" bech32
+nito-cli -rpcwallet=main getnewaddress "" bech32x
 ```
 
-### Cross-Compile for ARM64 (Raspberry Pi, ARM servers)
+Normal sends use transparent funds. Use `sendprivate` or the Qt private-balance
+control when private notes should fund a transaction.
+
+Supported v3 Berkeley DB and SQLite wallet files open directly and keep their
+transparent keys, labels and address sequence. Adding Orchard to a v3 wallet is
+an explicit operation:
 
 ```bash
-cd depends && make HOST=aarch64-linux-gnu -j$(nproc) && cd ..
-./autogen.sh
-CONFIG_SITE=$PWD/depends/aarch64-linux-gnu/share/config.site \
-    ./configure --prefix=/ --disable-tests --disable-bench --enable-reduce-exports
-make -j$(nproc)
+nito-cli -rpcwallet=legacy upgradeorchardwallet
 ```
 
----
+Keep both the reported pre-upgrade backup and the returned `orchard_only`
+phrase. That phrase covers the added Orchard authority; it does not replace the
+original v3 wallet backup. Retain that `wallet.dat` backup for life for the
+original transparent keys.
 
-## Nito Specifications
+An encrypted wallet opened in Qt asks for its passphrase before showing wallet
+data. Qt then locks the spending key while keeping an authenticated viewing
+session. Every Bech32x address creation or send that needs private keys asks
+for the passphrase again.
 
-| Parameter | Value |
-|-----------|-------|
-| **Launch Date** | Wednesday, August 21, 2024 |
-| **Genesis Block** | "Nito/Core Genesis 8-4" |
-| **Algorithm** | SHA-256 (Proof-of-Work) |
-| **Block Time** | 60 seconds |
-| **Difficulty Adjustment** | Every block (damped retarget) |
-| **Max Supply** | 1,284,565,890 NITO (~200 years) |
-| **Smallest Unit** | 1 Nitoshi = 0.00000001 NITO |
-| **P2P Port** | 8820 |
-| **RPC Port** | 8821 |
-| **Address Formats** | Bech32 (nito1...), Legacy, P2SH, Taproot (nito1p...) |
+## Backup And Recovery
 
----
+A wallet-file backup preserves keys and wallet metadata. A native v4
+`full_wallet` phrase restores deterministic transparent and Orchard authority,
+but it does not restore labels, comments or imported keys. An optional BIP39
+passphrase must also be backed up and supplied for phrase recovery if used. It
+is a separate secret rather than a 13th or 25th word, is distinct from the
+wallet encryption password, is never stored, and cannot be
+recovered or reset. A different passphrase derives another valid wallet.
+`backupwallet` and `restorewallet` preserve the derived seed record, never this
+passphrase; `dumpmnemonic` does not return it. See the
+[passphrase rules](doc/nito/wallet-backup-restore.md#optional-bip39-passphrase)
+before creating or restoring a wallet.
 
-## Supply Schedule
+Phrase recovery reconstructs chain-derived funds and history before reporting
+success. On an existing chain it requires unpruned blocks,
+`transparenthistoryindex=1`, and `orchardindex=1` after private activation when
+the wallet has Orchard authority.
 
-| Period | Reward/Block | Block Range | Period Total | Cumulative |
-|--------|-------------|-------------|-------------|------------|
-| Year 1 | 512 | 0 - 529,999 | 271,359,488 | 271,359,488 |
-| Year 2 | 256 | 530,000 - 1,042,399 | 131,174,400 | 402,533,888 |
-| Year 3 | 128 | 1,042,400 - 1,576,799 | 68,403,200 | 470,937,088 |
-| Years 4-10 | 64 | 1,576,800 - 5,255,999 | 235,468,800 | 706,405,888 |
-| Years 11-20 | 32 | 5,256,000 - 10,511,999 | 168,192,000 | 874,597,888 |
-| Years 21-50 | 16 → 2 | 10,512,000 - 26,279,999 | 252,288,000 | 1,126,885,888 |
-| Years 51-200 | 2 → 0 | 26,280,000 - 105,120,000 | 157,680,002 | 1,284,565,890 |
+A synchronized pruned node can continue using wallet state it already knows.
+With the default `orchardindex=1` built before block deletion, it can also keep
+using Orchard funds. Complete phrase recovery and missing transparent history
+still require an unpruned indexed node. Nito Core never starts a full
+redownload automatically in response to a recovery request.
 
----
+Read [wallet backup and restore](doc/nito/wallet-backup-restore.md) before
+upgrading or restoring a wallet.
 
-## Resources
+## Network Ports
 
-- **Website:** [https://nito.network](https://nito.network)
-- **Explorer:** [https://explorer.nito.network](https://explorer.nito.network)
-- **Whitepaper:** [https://nitonetwork.github.io/Nito-Whitepaper/](https://nitonetwork.github.io/Nito-Whitepaper/)
-- **Easy Node:** [https://nito.network/tools/easynode/](https://nito.network/tools/easynode/)
-- **Komodo Wallet (DEX):** [https://komodoplatform.com/](https://komodoplatform.com/)
+| Network | P2P | RPC | Onion target |
+| --- | ---: | ---: | ---: |
+| Mainnet | `8820` | `8825` | `8821` |
+| Testnet | `8840` | `8845` | `8841` |
+| Signet | `8860` | `8865` | `8861` |
+| Regtest | `8880` | `8885` | `8881` |
 
----
+Testnet coins have no value. Orchard is active from testnet genesis. See the
+[community testnet guide](doc/nito/community-testnet.md).
+
+## Documentation
+
+- [Nito Core v4 user and operator documentation](doc/nito/README.md)
+- [Build Nito Core from source](doc/nito/source-builds.md)
+- [RPC additions in v4](doc/nito/rpc-reference.md)
+- [Activation and peer rules](doc/nito/consensus-activation.md)
+- [Mining and pool compatibility](doc/nito/mining-pool-compatibility.md)
+- [Security and privacy model](doc/nito/security-privacy-model.md)
+- [Complete technical documentation index](doc/README.md)
 
 ## License
 
-Nito Core is released under the terms of the MIT license. See [COPYING](COPYING) for more information or see [https://opensource.org/licenses/MIT](https://opensource.org/licenses/MIT).
+Nito Core is released under the MIT license. See [LICENSE](LICENSE) and
+[COPYING](COPYING). Third-party components retain their own notices and license
+terms. Release downloads include the matching source archive and notices; see
+[release sources and third-party notices](doc/release-sources.md).

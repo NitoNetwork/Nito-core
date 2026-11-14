@@ -16,30 +16,24 @@ pkgin install autoconf automake libtool pkg-config git gmake boost libevent
 
 ```
 
-NetBSD currently ships with an older version of `gcc` than is needed to build. You should upgrade your `gcc` and then pass this new version to the configure script.
-
-For example, grab `gcc9`:
-```
-pkgin install gcc9
-```
-
-Then, when configuring, pass the following:
-```bash
-./configure
-    ...
-    CC="/usr/pkg/gcc9/bin/gcc" \
-    CXX="/usr/pkg/gcc9/bin/g++" \
-    ...
-```
+Install a compiler that meets the requirements in
+[dependencies.md](dependencies.md), including C++20 support. If it is not the
+default compiler, select its absolute executable paths with `CC` and `CXX`
+when running `./configure`.
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
-### 2. Clone Nito Repo
+### 2. Obtain The Source And Rust Toolchain
 
-Clone the Nito Core repository to a directory. All build scripts and commands will run from this directory.
+NetBSD is a development/community target, not part of the official four-OS
+release artifact matrix. Obtain an exact revision using the
+[source checkout instructions](nito/source-builds.md#supported-build-contract),
+then select the Orchard toolchain:
 
 ```bash
-git clone https://github.com/nito/nito.git
+rustup toolchain install 1.97.0 --profile minimal
+rustup override set 1.97.0
+git rev-parse HEAD
 ```
 
 ### 3. Install Optional Dependencies
@@ -50,7 +44,7 @@ It is not necessary to build wallet functionality to run nitod or the GUI.
 
 ###### Descriptor Wallet Support
 
-`sqlite3` is required to enable support for [descriptor wallets](https://github.com/nito/nito/blob/master/doc/descriptors.md).
+`sqlite3` is required to enable support for [descriptor wallets](descriptors.md).
 
 ```bash
 pkgin install sqlite3
@@ -66,10 +60,10 @@ pkgin install db4
 
 #### GUI Dependencies
 
-Nito Core includes a GUI built with the cross-platform Qt Framework. To compile the GUI, we need to install `qt5`.
+Nito Core includes a GUI built with the cross-platform Qt Framework. To compile the GUI, install Qt 6.
 
 ```bash
-pkgin install qt5
+pkgin install qt6-qtbase qt6-qttools
 ```
 
 The GUI can encode addresses in a QR Code. To build in QR support for the GUI, install `qrencode`.
@@ -81,11 +75,8 @@ pkgin install qrencode
 #### Test Suite Dependencies
 
 There is an included test suite that is useful for testing code changes when developing.
-To run the test suite (recommended), you will need to have Python 3 installed:
-
-```bash
-pkgin install python37
-```
+To run the test suite, install Python 3.9 or later from the package collection
+for your NetBSD release and make it available as `python3`.
 
 ### Building Nito Core
 
@@ -99,7 +90,7 @@ explicitly disables the wallet and GUI:
 
 ```bash
 ./autogen.sh
-./configure --without-wallet --with-gui=no \
+./configure --disable-wallet --with-gui=no \
     CPPFLAGS="-I/usr/pkg/include" \
     MAKE=gmake
 ```

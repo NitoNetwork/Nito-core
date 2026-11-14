@@ -38,7 +38,7 @@ Chat history logs can be found at https://gnusha.org/secp256k1/.
 
 ## Contributor workflow & peer review
 
-The Contributor Workflow & Peer Review in libsecp256k1 are similar to Nito Core's workflow and review processes described in its [CONTRIBUTING.md](https://github.com/nito/nito/blob/master/CONTRIBUTING.md).
+The Contributor Workflow & Peer Review in libsecp256k1 are similar to Bitcoin Core's workflow and review processes described in its [CONTRIBUTING.md](https://github.com/bitcoin/bitcoin/blob/master/CONTRIBUTING.md).
 
 ### Coding conventions
 
@@ -48,7 +48,7 @@ In addition, libsecp256k1 tries to maintain the following coding conventions:
 * The tests should cover all lines and branches of the library (see [Test coverage](#coverage)).
 * Operations involving secret data should be tested for being constant time with respect to the secrets (see [src/ctime_tests.c](src/ctime_tests.c)).
 * Local variables containing secret data should be cleared explicitly to try to delete secrets from memory.
-* Use `secp256k1_memcmp_var` instead of `memcmp` (see [#823](https://github.com/nito-core/secp256k1/issues/823)).
+* Use `secp256k1_memcmp_var` instead of `memcmp` (see [#823](https://github.com/bitcoin-core/secp256k1/issues/823)).
 
 #### Style conventions
 

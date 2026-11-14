@@ -126,6 +126,12 @@ The following can be set when running make: `make FOO=bar`
 If some packages are not built, for example `make NO_WALLET=1`, the appropriate
 options will be passed to nito's configure. In this case, `--disable-wallet`.
 
+For release and exchange builds, use `NO_QT=1` together with an explicit
+`./configure --with-gui=no` when building a headless daemon. Do not add
+`NO_WALLET=1` unless wallet binaries and wallet RPCs are intentionally
+excluded. Complete Qt, headless-wallet and validation-only examples are in the
+[Nito source-build guide](../doc/nito/source-builds.md).
+
 ### Additional targets
 
     download: run 'make download' to fetch all sources without building them

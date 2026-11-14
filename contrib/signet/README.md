@@ -1,83 +1,76 @@
-Contents
-========
-This directory contains tools related to Signet, both for running a Signet yourself and for using one.
+# Nito Signet tools
 
-getcoins.py
-===========
+Signet is a separate test chain whose blocks require Nito proof of work and a
+signature satisfying the configured `signetchallenge`. Participants must use
+the same challenge. For ordinary community testing, use the
+[testnet guide](../../doc/nito/community-testnet.md). Test coins have no value.
 
-A script to call a faucet to get Signet coins.
+## Mining
 
-Syntax: `getcoins.py [-h|--help] [-c|--cmd=<nito-cli path>] [-f|--faucet=<faucet URL>] [-a|--addr=<signet bech32 address>] [-p|--password=<faucet password>] [--] [<nito-cli args>]`
+Run `nitod -signet` with your signing challenge configured and load a wallet
+containing the keys and scripts needed to satisfy it. The miner obtains a block
+template, asks the wallet to sign a PSBT, adds the solution to the coinbase,
+finds proof of work and submits the completed block.
 
-* `--cmd` lets you customize the nito-cli path. By default it will look for it in the PATH
-* `--faucet` lets you specify which faucet to use; the faucet is assumed to be compatible with https://github.com/kallewoof/nito-faucet
-* `--addr` lets you specify a Signet address; by default, the address must be a bech32 address. This and `--cmd` above complement each other (i.e. you do not need `nito-cli` if you use `--addr`)
-* `--password` lets you specify a faucet password; this is handy if you are in a classroom and set up your own faucet for your students; (above faucet does not limit by IP when password is enabled)
+From a source build with Python 3 available:
 
-If using the default network, invoking the script with no arguments should be sufficient under normal
-circumstances, but if multiple people are behind the same IP address, the faucet will by default only
-accept one claim per day. See `--password` above.
+```bash
+CLI="./src/nito-cli -conf=/absolute/path/to/signet.conf"
+MINER="./contrib/signet/miner"
+GRIND="./src/nito-util grind"
+ADDR=$($CLI -signet getnewaddress)
+$MINER --cli="$CLI" generate --grind-cmd="$GRIND" --address="$ADDR" --min-nbits
+```
 
-miner
-=====
+These examples use paths without spaces. Use `--cli` before the subcommand.
+Add `--ongoing` to keep mining, or
+`--max-blocks=N` to stop after N blocks.
 
-You will first need to pick a difficulty target. Since signet chains are primarily protected by a signature rather than proof of work, there is no need to spend as much energy as possible mining, however you may wish to choose to spend more time than the absolute minimum. The calibrate subcommand can be used to pick a target appropriate for your hardware, eg:
+`--min-nbits` targets Signet's easiest permitted difficulty, `1e0fffff`.
+`--nbits=<8 hex digits>` selects another desired target. These options steer
+block timestamps; they do not override consensus difficulty. Nito adjusts
+difficulty every block using a damped 60-second target. The first blocks can
+therefore require substantially more work than the desired target.
 
-    cd src/
-    MINER="../contrib/signet/miner"
-    GRIND="./nito-util grind"
-    $MINER calibrate --grind-cmd="$GRIND"
-    nbits=1e00f403 for 25s average mining time
+Use `calibrate --grind-cmd="$GRIND" --seconds=25` to estimate a target for your
+hardware. `--set-block-time=<Unix timestamp>` sets the time for a single block
+and does not require `--nbits`; the node's timestamp rules still apply.
 
-It defaults to estimating an nbits value resulting in 25s average time to find a block, but the --seconds parameter can be used to pick a different target, or the --nbits parameter can be used to estimate how long it will take for a given difficulty.
+Other options include `--poisson` for variable intervals, `--multiminer=1/3`
+for the first of three cooperating miners, and `--backup-delay` or
+`--standby-delay` for backups. `--max-interval` must be at least 300 seconds.
+Run `generate --help` for all options.
 
-To mine the first block in your custom chain, you can run:
+## Separate signing stages
 
-    CLI="./nito-cli -conf=mysignet.conf"
-    ADDR=$($CLI -signet getnewaddress)
-    NBITS=1e00f403
-    $MINER --cli="$CLI" generate --grind-cmd="$GRIND" --address="$ADDR" --nbits=$NBITS
+The `genpsbt` and `solvepsbt` subcommands expose the signing pipeline. When
+calling `walletprocesspsbt` yourself, specify `ALL`, matching the stored sighash:
 
-This will mine a single block with a backdated timestamp designed to allow 100 blocks to be mined as quickly as possible, so that it is possible to do transactions.
+```bash
+$CLI -signet getblocktemplate '{"rules":["signet","segwit"]}' |
+  $MINER --cli="$CLI" genpsbt --address="$ADDR" |
+  { IFS= read -r psbt; printf '%s\ntrue\nALL\n' "$psbt"; } |
+  $CLI -signet -stdin walletprocesspsbt |
+  jq -r .psbt |
+  $MINER --cli="$CLI" solvepsbt --grind-cmd="$GRIND" |
+  $CLI -signet -stdin submitblock
+```
 
-Adding the --ongoing parameter will then cause the signet miner to create blocks indefinitely. It will pick the time between blocks so that difficulty is adjusted to match the provided --nbits value.
+## Test coins
 
-    $MINER --cli="$CLI" generate --grind-cmd="$GRIND" --address="$ADDR" --nbits=$NBITS --ongoing
+`getcoins.py` requires Python's `requests` package and an explicit `--faucet`
+URL supplied by your Nito Signet operator. It has no default public faucet.
+Bitcoin Signet faucets do not supply Nito coins. The endpoint must accept the
+request fields implemented by this script.
 
-Other options
--------------
+Use `--addr` to supply a receive address or `--cmd` to select `nito-cli`.
+Use `--captcha` only if your operator provides a captcha endpoint; image
+rendering requires ImageMagick. Run `getcoins.py --help` for all options.
 
-The --debug and --quiet options are available to control how noisy the signet miner's output is. Note that the --debug, --quiet and --cli parameters must all appear before the subcommand (generate, calibrate, etc) if used.
+## Tests
 
-Instead of specifying --ongoing, you can specify --max-blocks=N to mine N blocks and stop.
-
-The --set-block-time option is available to manually move timestamps forward or backward (subject to the rules that blocktime must be greater than mediantime, and dates can't be more than two hours in the future). It can only be used when mining a single block (ie, not when using --ongoing or --max-blocks greater than 1).
-
-Instead of using a single address, a ranged descriptor may be provided via the --descriptor parameter, with the reward for the block at height H being sent to the H'th address generated from the descriptor.
-
-Instead of calculating a specific nbits value, --min-nbits can be specified instead, in which case the minimum signet difficulty will be targeted. Signet's minimum difficulty corresponds to --nbits=1e0377ae.
-
-By default, the signet miner mines blocks at fixed intervals with minimal variation. If you want blocks to appear more randomly, as they do in mainnet, specify the --poisson option.
-
-Using the --multiminer parameter allows mining to be distributed amongst multiple miners. For example, if you have 3 miners and want to share blocks between them, specify --multiminer=1/3 on one, --multiminer=2/3 on another, and --multiminer=3/3 on the last one. If you want one to do 10% of blocks and two others to do 45% each, --multiminer=1-10/100 on the first, and --multiminer=11-55 and --multiminer=56-100 on the others. Note that which miner mines which block is determined by the previous block hash, so occasional runs of one miner doing many blocks in a row is to be expected.
-
-When --multiminer is used, if a miner is down and does not mine a block within five minutes of when it is due, the other miners will automatically act as redundant backups ensuring the chain does not halt. The --backup-delay parameter can be used to change how long a given miner waits, allowing one to be the primary backup (after five minutes) and another to be the secondary backup (after six minutes, eg).
-
-The --standby-delay parameter can be used to make a backup miner that only mines if a block doesn't arrive on time. This can be combined with --multiminer if desired. Setting --standby-delay also prevents the first block from being mined immediately.
-
-Advanced usage
---------------
-
-The process generate follows internally is to get a block template, convert that into a PSBT, sign the PSBT, move the signature from the signed PSBT into the block template's coinbase, grind proof of work for the block, and then submit the block to the network.
-
-These steps can instead be done explicitly:
-
-    $CLI -signet getblocktemplate '{"rules": ["signet","segwit"]}' |
-      $MINER --cli="$CLI" genpsbt --address="$ADDR" |
-      $CLI -signet -stdin walletprocesspsbt |
-      jq -r .psbt |
-      $MINER --cli="$CLI" solvepsbt --grind-cmd="$GRIND" |
-      $CLI -signet -stdin submitblock
-
-This is intended to allow you to replace part of the pipeline for further experimentation (eg, to sign the block with a hardware wallet).
-
+`feature_signet.py` checks a mined Nito block against matching and different
+signing challenges and verifies peer synchronization. `tool_signet_miner.py`
+rebuilds and signs that block through the miner's command line before reusing
+its verified nonce. The node still validates the complete proof of work and
+signature, while routine tests avoid a fresh difficulty-one search.

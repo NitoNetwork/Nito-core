@@ -2,6 +2,10 @@
 
 _This document describes usage of the multiprocess feature. For design information, see the [design/multiprocess.md](design/multiprocess.md) file._
 
+This is an experimental development target inherited from Bitcoin Core. It is
+not part of Nito's official release artifact matrix. The design discussion and
+upstream proposals do not certify separate-process Orchard wallet operation.
+
 ## Build Option
 
 On unix systems, the `--enable-multiprocess` build option can be passed to `./configure` to build new `nito-node`, `nito-wallet`, and `nito-gui` executables alongside existing `nitod` and `nito-qt` executables.
@@ -15,7 +19,8 @@ The `-debug=ipc` command line option can be used to see requests and responses b
 The multiprocess feature requires [Cap'n Proto](https://capnproto.org/) and [libmultiprocess](https://github.com/chaincodelabs/libmultiprocess) as dependencies. A simple way to get started using it without installing these dependencies manually is to use the [depends system](../depends) with the `MULTIPROCESS=1` [dependency option](../depends#dependency-options) passed to make:
 
 ```
-cd <BITCOIN_SOURCE_DIRECTORY>
+cd <NITO_SOURCE_DIRECTORY>
+./autogen.sh
 make -C depends NO_QT=1 MULTIPROCESS=1
 CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure
 make
@@ -29,6 +34,6 @@ Alternately, you can install [Cap'n Proto](https://capnproto.org/) and [libmulti
 
 ## Usage
 
-`nito-node` is a drop-in replacement for `nitod`, and `nito-gui` is a drop-in replacement for `nito-qt`, and there are no differences in use or external behavior between the new and old executables. But internally after [#10102](https://github.com/nito/nito/pull/10102), `nito-gui` will spawn a `nito-node` process to run P2P and RPC code, communicating with it across a socket pair, and `nito-node` will spawn `nito-wallet` to run wallet code, also communicating over a socket pair. This will let node, wallet, and GUI code run in separate address spaces for better isolation, and allow future improvements like being able to start and stop components independently on different machines and environments.
-[#19460](https://github.com/nito/nito/pull/19460) also adds a new `nito-node` `-ipcbind` option and an `nitod-wallet` `-ipcconnect` option to allow new wallet processes to connect to an existing node process.
-And [#19461](https://github.com/nito/nito/pull/19461) adds a new `nito-gui` `-ipcconnect` option to allow new GUI processes to connect to an existing node process.
+`nito-node` is a drop-in replacement for `nitod`, and `nito-gui` is a drop-in replacement for `nito-qt`, and there are no differences in use or external behavior between the new and old executables. But internally after [#10102](https://github.com/bitcoin/bitcoin/pull/10102), `nito-gui` will spawn a `nito-node` process to run P2P and RPC code, communicating with it across a socket pair, and `nito-node` will spawn `nito-wallet` to run wallet code, also communicating over a socket pair. This will let node, wallet, and GUI code run in separate address spaces for better isolation, and allow future improvements like being able to start and stop components independently on different machines and environments.
+[#19460](https://github.com/bitcoin/bitcoin/pull/19460) also adds a new `nito-node` `-ipcbind` option and an `nitod-wallet` `-ipcconnect` option to allow new wallet processes to connect to an existing node process.
+And [#19461](https://github.com/bitcoin/bitcoin/pull/19461) adds a new `nito-gui` `-ipcconnect` option to allow new GUI processes to connect to an existing node process.

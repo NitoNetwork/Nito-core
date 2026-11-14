@@ -1,217 +1,132 @@
-Nito Core version 27.0 is now available from:
+# Nito Core 4.0.0 Preview Notes
 
-  <https://nitocore.org/bin/nito-core-27.0/>
+These notes describe the public `v4.0` source preview. V3.0.1 remains the stable
+release; V4 binaries have not been published yet. See the
+[source-build guide](nito/source-builds.md) to review or test V4.
 
-This release includes new features, various bug fixes and performance
-improvements, as well as updated translations.
+Nito Core 4.0.0 adds opt-in Bech32x private transactions to Nito.network while
+preserving transparent wallet, block, mining and pool behavior.
 
-Please report bugs using the issue tracker at GitHub:
+## Required Node Upgrade
 
-  <https://github.com/nito/nito/issues>
+All node, pool, explorer and indexer operators must upgrade their backing Nito
+daemon before mainnet block `1,165,432`. Through block `H-1`, ordinary v3 peers
+remain eligible for transparent traffic. While a v4 node's active tip is below
+`H`, a v3 peer may supply a transparent-only block `H` so the node can reach
+the boundary. An activation block containing Orchard transactions requires a
+compatible v4 source.
+Immediately after `H` connects, later block traffic requires peers using
+protocol `70017` or later and advertising `NITO_PRIVATE`.
 
-To receive security and update notifications, please subscribe to:
+After activation, incompatible peers are disconnected and remain ineligible
+after restart or a reorganization below `H`. Orchard activation is independent
+of the existing subsidy schedule, including the reduction from 256 NITO to
+128 NITO at block `1,042,400`. V4 does not alter that schedule, the block header,
+SHA-256 proof of work or transparent
+coinbase construction. The activation height is compiled into the official
+chain parameters and reported by `getorchardpools`.
 
-  <https://nitocore.org/en/list/announcements/join/>
+## Community Testnet
 
-How to Upgrade
-==============
+The separate v4 testnet activates Orchard from its genesis block. Testnet nodes
+advertise `NITO_PRIVATE`, require protocol `70017` or later from every peer and
+use P2P port `8840`. This lets users and integrators exercise Bech32x wallet,
+transaction, validation and mining behavior without waiting for mainnet
+activation. Testnet coins have no value.
+Shared testing also requires reachable v4 peers and ongoing block production;
+see the [testnet discovery guide](nito/community-testnet.md#peer-discovery).
 
-If you are running an older version, shut it down. Wait until it has completely
-shut down (which might take a few minutes in some cases), then run the
-installer (on Windows) or just copy over `/Applications/Nito-Qt` (on macOS)
-or `nitod`/`nito-qt` (on Linux).
+## Transparent Compatibility
 
-Upgrading directly from a version of Nito Core that has reached its EOL is
-possible, but it might take some time if the data directory needs to be migrated. Old
-wallet versions of Nito Core are generally supported.
+- Block headers and SHA-256 proof of work keep their established format.
+- Transparent-only blocks remain valid before and after activation.
+- Transparent coinbase, subsidy, fees and normal GBT behavior remain intact.
+- Existing v3 Berkeley DB and SQLite wallet files open directly.
+- Bundled Berkeley DB clears newly allocated pages completely, preventing
+  previous cache contents from leaking into unused database file space.
+- Qt includes upstream fixes for XML recursion and network header offset
+  handling. Linux builds use Expat 2.8.5; see the [dependency list](dependencies.md).
+- Transparent keys, descriptors, labels, next-address sequence and default
+  Bech32 receive behavior are preserved.
+- Incoming transparent payments show their input addresses in Qt transaction
+  details. Multiple addresses appear as an expandable list. Resolved addresses
+  are saved with the wallet; missing historical data is explicitly indicated.
+- Miners do not need different SHA-256 hardware.
 
-Compatibility
-==============
+Compatibility covers migration from v3 to v4. V3 cannot validate Orchard or
+remain connected to the v4 network after activation. Opening v4-updated wallet
+or chain data in v3 is not a supported rollback procedure; keep separate
+backups as described in the [wallet recovery guide](nito/wallet-backup-restore.md#upgrade-and-rollback-boundaries).
 
-Nito Core is supported and extensively tested on operating systems
-using the Linux Kernel 3.17+, macOS 11.0+, and Windows 7 and newer. Nito
-Core should also work on most other Unix-like systems but is not as
-frequently tested on them. It is not recommended to use Nito Core on
-unsupported systems.
+## Bech32x And Orchard
 
-Notable changes
-===============
+- Direct Bech32x addresses use the `nito1x...` prefix.
+- Transparent-to-Bech32x, Bech32x-to-transparent and Bech32x-to-Bech32x flows
+  are supported after activation.
+- Private notes are selected only through an explicit private-source action.
+- `orchardindex` provides compact note discovery and recovery data.
+- The cryptographic baseline is `orchard 0.15.0` with the explicitly selected
+  fixed post-NU6.2 Orchard V2 circuit.
 
-libnitoconsensus
--------------------
+## Wallet Backup And Recovery
 
-- libnitoconsensus is deprecated and will be removed for v28. This library has
-  existed for nearly 10 years with very little known uptake or impact. It has
-  become a maintenance burden.
+Native v4 phrases report scope `full_wallet` and cover deterministic
+transparent and Orchard authority. Existing v3 wallets can add Orchard with
+`upgradeorchardwallet`; the operation creates a pre-upgrade backup and returns
+an `orchard_only` phrase that does not replace the v3 backup.
 
-  The underlying functionality does not change between versions, so any users of
-  the library can continue to use the final release indefinitely, with the
-  understanding that Taproot is its final consensus update.
+Phrase restore automatically reconstructs complete chain-derived history and
+current spendable funds. Existing chains require unpruned block data and the
+wallet history indexes; recovery waits for enabled indexes that are still
+catching up. Wallet files remain authoritative for labels, comments, imported
+keys, watch-only data and other local metadata.
 
-  In the future, libnitokernel will provide a much more useful API that is
-  aware of the UTXO set, and therefore be able to fully validate transactions and
-  blocks. (#29189)
+Complete phrase recovery against existing pruned history is unavailable.
+Already synchronized transparent wallets can continue operating unless they
+need a rescan across deleted transparent blocks. Bech32x wallet features also
+support pruning with `orchardindex=1` built before block deletion. The index
+retains compact data, Merkle paths and public Orchard transaction history;
+its storage is additional to the prune target.
+Orchard indexing is now enabled by default on pruned nodes as well, while
+respecting explicit `orchardindex=0`. Switching to pruning preserves the index.
+Missing required historical blocks stop recovery/index catch-up with clear Qt
+and RPC guidance, without automatically downloading the chain again. See the
+[recovery procedure](nito/wallet-backup-restore.md#recovering-after-required-blocks-were-pruned).
 
-mempool.dat compatibility
--------------------------
+## Mining And Pools
 
-- The `mempool.dat` file created by -persistmempool or the savemempool RPC will
-  be written in a new format. This new format includes the XOR'ing of transaction
-  contents to mitigate issues where external programs (such as anti-virus) attempt
-  to interpret and potentially modify the file.
+Pools use the standard complete transaction entries returned by
+`getblocktemplate`. Orchard bytes are opaque to pool software. Pools must honor
+`depends`, preserve transaction bytes, distinguish `txid` from witness hash and
+recompute the witness commitment when transaction selection changes.
 
-  This new format can not be read by previous software releases. To allow for a
-  downgrade, a temporary setting `-persistmempoolv1` has been added to fall back
-  to the legacy format. (#28207)
+Orchard proofs and private coinbase fields are never generated by a pool.
 
-P2P and network changes
------------------------
+## Release Validation
 
-- BIP324 v2 transport is now enabled by default. It remains possible to disable v2
-  by running with `-v2transport=0`. (#29347)
-- Manual connection options (`-connect`, `-addnode` and `-seednode`) will
-  now follow `-v2transport` to connect with v2 by default. They will retry with
-  v1 on failure. (#29058)
+The release workflow targets Linux x86_64, Linux aarch64, Windows win64
+and macOS arm64. The release path uses pinned dependencies, warning-free
+`-Werror` builds, native and Qt tests, the locked Orchard test suite, Berkeley DB v3
+wallet backup/restore, binary inspection, checksums and an aggregate manifest.
 
-- Network-adjusted time has been removed from consensus code. It is replaced
-  with (unadjusted) system time. The warning for a large median time offset
-  (70 minutes or more) is kept. This removes the implicit security assumption of
-  requiring an honest majority of outbound peers, and increases the importance
-  of the node operator ensuring their system time is (and stays) correct to not
-  fall out of consensus with the network. (#28956)
+## Downloads And Verification
 
-Mempool Policy Changes
-----------------------
+When V4 binaries are published, download the archive or installer for your platform from the
+[official release page](https://github.com/NitoNetwork/Nito-core/releases),
+together with `SHA256SUMS` and `release-manifest.txt`. The manifest identifies
+the source commit and whether the release checksums are signed. Follow the
+[verification instructions](../README.md#download-and-verify) before running
+the downloaded files.
 
-- Opt-in Topologically Restricted Until Confirmation (TRUC) Transactions policy
-  (aka v3 transaction policy) is available for use on test networks when
-  `-acceptnonstdtxn=1` is set. By setting the transaction version number to 3, TRUC transactions
-  request the application of limits on spending of their unconfirmed outputs. These
-  restrictions simplify the assessment of incentive compatibility of accepting or
-  replacing TRUC transactions, thus ensuring any replacements are more profitable for
-  the node and making fee-bumping more reliable. TRUC transactions are currently
-  nonstandard and can only be used on test networks where the standardness rules are
-  relaxed or disabled (e.g. with `-acceptnonstdtxn=1`). (#28948)
+The matching `nito-VERSION-sources.tar.gz` includes Nito, pinned dependencies,
+locked Rust crates and their notices. Keep it available when redistributing
+the binaries. See [source and license information](release-sources.md) for
+rebuilding and redistribution requirements.
 
-External Signing
-----------------
+Back up your wallet files before upgrading and shut down the old node cleanly.
+Start v4 with your existing data directory to retain the downloaded chain,
+wallets and completed indexes. Additional v4 indexes can take time to catch up;
+their progress is available through `getindexinfo`.
 
-- Support for external signing on Windows has been disabled. It will be re-enabled
-  once the underlying dependency (Boost Process), has been replaced with a different
-  library. (#28967)
-
-Updated RPCs
-------------
-
-- The addnode RPC now follows the `-v2transport` option (now on by default, see above) for making connections.
-  It remains possible to specify the transport type manually with the v2transport argument of addnode. (#29239)
-
-Build System
-------------
-
-- A C++20 capable compiler is now required to build Nito Core. (#28349)
-- MacOS releases are configured to use the hardened runtime libraries (#29127)
-
-Wallet
-------
-
-- The CoinGrinder coin selection algorithm has been introduced to mitigate unnecessary
-  large input sets and lower transaction costs at high feerates. CoinGrinder
-  searches for the input set with minimal weight. Solutions found by
-  CoinGrinder will produce a change output. CoinGrinder is only active at
-  elevated feerates (default: 30+ sat/vB, based on `-consolidatefeerate`×3). (#27877)
-- The Branch And Bound coin selection algorithm will be disabled when the subtract fee
-  from outputs feature is used. (#28994)
-- If the birth time of a descriptor is detected to be later than the first transaction
-  involving that descriptor, the birth time will be reset to the earlier time. (#28920)
-
-Low-level changes
-=================
-
-Pruning
--------
-
-- When pruning during initial block download, more blocks will be pruned at each
-  flush in order to speed up the syncing of such nodes. (#20827)
-
-Init
-----
-
-- Various fixes to prevent issues where subsequent instances of Nito Core would
-  result in deletion of files in use by an existing instance. (#28784, #28946)
-- Improved handling of empty `settings.json` files. (#29144)
-
-Credits
-=======
-
-Thanks to everyone who directly contributed to this release:
-
-- 22388o⚡️
-- Aaron Clauson
-- Amiti Uttarwar
-- Andrew Toth
-- Anthony Towns
-- Antoine Poinsot
-- Ava Chow
-- Brandon Odiwuor
-- brunoerg
-- Chris Stewart
-- Cory Fields
-- dergoegge
-- djschnei21
-- Fabian Jahr
-- fanquake
-- furszy
-- Gloria Zhao
-- Greg Sanders
-- Hennadii Stepanov
-- Hernan Marino
-- iamcarlos94
-- ismaelsadeeq
-- Jameson Lopp
-- Jesse Barton
-- John Moffett
-- Jon Atack
-- josibake
-- jrakibi
-- Justin Dhillon
-- Kashif Smith
-- kevkevin
-- Kristaps Kaupe
-- L0la L33tz
-- Luke Dashjr
-- Lőrinc
-- marco
-- MarcoFalke
-- Mark Friedenbach
-- Marnix
-- Martin Leitner-Ankerl
-- Martin Zumsande
-- Max Edwards
-- Murch
-- muxator
-- naiyoma
-- Nikodemas Tuckus
-- ns-xvrn
-- pablomartin4btc
-- Peter Todd
-- Pieter Wuille
-- Richard Myers
-- Roman Zeyde
-- Russell Yanofsky
-- Ryan Ofsky
-- Sebastian Falbesoner
-- Sergi Delgado Segura
-- Sjors Provoost
-- stickies-v
-- stratospher
-- Supachai Kheawjuy
-- TheCharlatan
-- UdjinM6
-- Vasil Dimov
-- w0xlt
-- willcl-ark
-
-
-As well as to everyone that helped with translations on
-[Transifex](https://www.transifex.com/nito/nito/).
+Start with [doc/nito/README.md](nito/README.md) for the complete product
+documentation.

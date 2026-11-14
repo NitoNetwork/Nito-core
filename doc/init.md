@@ -79,8 +79,10 @@ files out-of-the-box. This is because the command line options specified in the
 init files take precedence over the configurations in
 `/etc/nito/nito.conf`. However, some init systems have their own
 configuration mechanisms that would allow for overriding the command line
-options specified in the init files (e.g. setting `BITCOIND_DATADIR` for
-OpenRC).
+options specified in the init files (for example, setting
+`BITCOIND_DATADIR` for OpenRC). The supplied scripts retain these historical
+`BITCOIND_*` environment-variable names for compatibility; they configure
+Nito Core and do not refer to a separate Bitcoin process.
 
 ### macOS
 
@@ -125,8 +127,10 @@ use old versions of Upstart and do not supply the start-stop-daemon utility.
 Copy nitod.init to /etc/init.d/nitod. Test by running `service nitod start`.
 
 Using this script, you can adjust the path and flags to the nitod program by
-setting the BITCOIND and FLAGS environment variables in the file
-/etc/sysconfig/nitod. You can also use the DAEMONOPTS environment variable here.
+setting the `BITCOIND_BIN`, `BITCOIND_OPTS` and `BITCOIND_LOCKFILE`
+environment variables in `/etc/sysconfig/nitod`. These historical variable
+names are the names read by the supplied script. You can also use the
+`DAEMONOPTS` environment variable there.
 
 ### macOS
 

@@ -26,13 +26,13 @@ To run all the lint checks in the test runner outside the docker, use:
 
 | Lint test | Dependency |
 |-----------|:----------:|
-| [`lint-python.py`](lint/lint-python.py) | [flake8](https://gitlab.com/pycqa/flake8)
-| [`lint-python.py`](lint/lint-python.py) | [lief](https://github.com/lief-project/LIEF)
-| [`lint-python.py`](lint/lint-python.py) | [mypy](https://github.com/python/mypy)
-| [`lint-python.py`](lint/lint-python.py) | [pyzmq](https://github.com/zeromq/pyzmq)
-| [`lint-python-dead-code.py`](lint/lint-python-dead-code.py) | [vulture](https://github.com/jendrikseipp/vulture)
-| [`lint-shell.py`](lint/lint-shell.py) | [ShellCheck](https://github.com/koalaman/shellcheck)
-| [`lint-spelling.py`](lint/lint-spelling.py) | [codespell](https://github.com/codespell-project/codespell)
+| [`lint-python.py`](lint-python.py) | [flake8](https://gitlab.com/pycqa/flake8) |
+| [`lint-python.py`](lint-python.py) | [lief](https://github.com/lief-project/LIEF) |
+| [`lint-python.py`](lint-python.py) | [mypy](https://github.com/python/mypy) |
+| [`lint-python.py`](lint-python.py) | [pyzmq](https://github.com/zeromq/pyzmq) |
+| [`lint-python-dead-code.py`](lint-python-dead-code.py) | [vulture](https://github.com/jendrikseipp/vulture) |
+| [`lint-shell.py`](lint-shell.py) | [ShellCheck](https://github.com/koalaman/shellcheck) |
+| [`lint-spelling.py`](lint-spelling.py) | [codespell](https://github.com/codespell-project/codespell) |
 
 In use versions and install instructions are available in the [CI setup](../../ci/lint/04_install.sh).
 
@@ -72,14 +72,14 @@ Usage: test/lint/git-subtree-check.sh [-r] DIR [COMMIT]
 
 To do a full check with `-r`, make sure that you have fetched the upstream repository branch in which the subtree is
 maintained:
-* for `src/secp256k1`: https://github.com/nito-core/secp256k1.git (branch master)
-* for `src/leveldb`: https://github.com/nito-core/leveldb-subtree.git (branch nito-fork)
-* for `src/crypto/ctaes`: https://github.com/nito-core/ctaes.git (branch master)
-* for `src/crc32c`: https://github.com/nito-core/crc32c-subtree.git (branch nito-fork)
+* for `src/secp256k1`: https://github.com/bitcoin-core/secp256k1.git (branch master)
+* for `src/leveldb`: https://github.com/bitcoin-core/leveldb-subtree.git (branch bitcoin-fork)
+* for `src/crypto/ctaes`: https://github.com/bitcoin-core/ctaes.git (branch master)
+* for `src/crc32c`: https://github.com/bitcoin-core/crc32c-subtree.git (branch bitcoin-fork)
 * for `src/minisketch`: https://github.com/sipa/minisketch.git (branch master)
 
 To do so, add the upstream repository as remote:
 
 ```
-git remote add --fetch secp256k1 https://github.com/nito-core/secp256k1.git
+git remote add --fetch secp256k1 https://github.com/bitcoin-core/secp256k1.git
 ```

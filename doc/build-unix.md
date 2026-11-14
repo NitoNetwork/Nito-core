@@ -14,9 +14,30 @@ make # use "-j N" for N parallel jobs
 make install # optional
 ```
 
+Exchange, custody and release builds should follow the pinned
+[`depends/` source-build profiles](nito/source-builds.md). The package-manager
+instructions below are convenient for development, but they do not reproduce
+the official dependency or legacy-wallet compatibility contract.
+
 See below for instructions on how to [install the dependencies on popular Linux
 distributions](#linux-distribution-specific-instructions), or the
 [dependencies](#dependencies) section for a complete overview.
+
+## Rust Toolchain
+
+Nito Core v4 always builds its Orchard proof engine, including in headless and
+wallet-disabled configurations. Install the pinned Rust toolchain before
+running `make`:
+
+```bash
+rustup toolchain install 1.97.0 --profile minimal
+rustup override set 1.97.0
+rustc --version
+cargo --version
+```
+
+Cross-builds require the matching Rust target and linker described in the
+[source-build guide](nito/source-builds.md).
 
 ## Memory Requirements
 
@@ -44,7 +65,7 @@ Finally, clang (often less resource hungry) can be used instead of gcc, which is
 
 Build requirements:
 
-    sudo apt-get install build-essential libtool autotools-dev automake pkg-config bsdmainutils python3
+    sudo apt-get install build-essential libtool autotools-dev automake pkg-config bsdmainutils python3 bison cmake gperf ninja-build perl
 
 Now, you can either build from self-compiled [depends](#dependencies) or install the required dependencies:
 
@@ -54,10 +75,12 @@ SQLite is required for the descriptor wallet:
 
     sudo apt install libsqlite3-dev
 
-Berkeley DB is only required for the legacy wallet. Ubuntu and Debian have their own `libdb-dev` and `libdb++-dev` packages,
-but these will install Berkeley DB 5.3 or later. This will break binary wallet compatibility with the distributed
-executables, which are based on BerkeleyDB 4.8. If you do not care about wallet compatibility, pass
-`--with-incompatible-bdb` to configure. Otherwise, you can build Berkeley DB [yourself](#berkeley-db).
+Berkeley DB is only required for the legacy wallet. Build the patched Berkeley DB
+4.8 provided by [depends](#berkeley-db) to preserve wallet-file compatibility and
+the page-clearing protection used by official releases. Distribution packages
+such as `libdb-dev` and `libdb++-dev` may use a different version and omit this
+patch. `--with-incompatible-bdb` only bypasses the version check; it does not
+provide either guarantee.
 
 To build Nito Core without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
 
@@ -76,16 +99,17 @@ User-Space, Statically Defined Tracing (USDT) dependencies:
 GUI dependencies:
 
 If you want to build nito-qt, make sure that the required packages for Qt development
-are installed. Qt 5 is necessary to build the GUI.
-To build without GUI pass `--without-gui`.
+are installed. Qt 6 is necessary to build the GUI.
+To build without GUI pass `--with-gui=no`. This disables Qt only; wallet RPCs
+remain enabled unless `--disable-wallet` is also specified.
 
-To build with Qt 5 you need the following:
+To build with Qt 6 you need the following:
 
-    sudo apt-get install qtbase5-dev qttools5-dev qttools5-dev-tools
+    sudo apt-get install qt6-base-dev qt6-tools-dev qt6-tools-dev-tools
 
 Additionally, to support Wayland protocol for modern desktop environments:
 
-    sudo apt install qtwayland5
+    sudo apt install qt6-wayland
 
 libqrencode (optional) can be installed with:
 
@@ -101,7 +125,7 @@ built by default.
 
 Build requirements:
 
-    sudo dnf install gcc-c++ libtool make autoconf automake python3
+    sudo dnf install gcc-c++ libtool make autoconf automake python3 bison cmake gperf ninja-build perl
 
 Now, you can either build from self-compiled [depends](#dependencies) or install the required dependencies:
 
@@ -111,10 +135,10 @@ SQLite is required for the descriptor wallet:
 
     sudo dnf install sqlite-devel
 
-Berkeley DB is only required for the legacy wallet. Fedora releases have only `libdb-devel` and `libdb-cxx-devel` packages, but these will install
-Berkeley DB 5.3 or later. This will break binary wallet compatibility with the distributed executables, which
-are based on Berkeley DB 4.8. If you do not care about wallet compatibility,
-pass `--with-incompatible-bdb` to configure. Otherwise, you can build Berkeley DB [yourself](#berkeley-db).
+Berkeley DB is only required for the legacy wallet. Use the patched Berkeley DB
+4.8 from [depends](#berkeley-db). Fedora's `libdb-devel` and `libdb-cxx-devel`
+packages may use a different version and omit the page-clearing protection used
+by official releases. `--with-incompatible-bdb` only bypasses the version check.
 
 To build Nito Core without wallet, see [*Disable-wallet mode*](#disable-wallet-mode)
 
@@ -133,16 +157,17 @@ User-Space, Statically Defined Tracing (USDT) dependencies:
 GUI dependencies:
 
 If you want to build nito-qt, make sure that the required packages for Qt development
-are installed. Qt 5 is necessary to build the GUI.
-To build without GUI pass `--without-gui`.
+are installed. Qt 6 is necessary to build the GUI.
+To build without GUI pass `--with-gui=no`. This disables Qt only; wallet RPCs
+remain enabled unless `--disable-wallet` is also specified.
 
-To build with Qt 5 you need the following:
+To build with Qt 6 you need the following:
 
-    sudo dnf install qt5-qttools-devel qt5-qtbase-devel
+    sudo dnf install qt6-qttools-devel qt6-qtbase-devel
 
 Additionally, to support Wayland protocol for modern desktop environments:
 
-    sudo dnf install qt5-qtwayland
+    sudo dnf install qt6-qtwayland
 
 libqrencode (optional) can be installed with:
 
@@ -159,9 +184,10 @@ not use the packages of your Linux distribution.
 
 ### Berkeley DB
 
-The legacy wallet uses Berkeley DB. To ensure backwards compatibility it is
-recommended to use Berkeley DB 4.8. If you have to build it yourself, and don't
-want to use any other libraries built in depends, you can do:
+The legacy wallet uses Berkeley DB 4.8 with the repository's security patches.
+These patches clear newly allocated cache pages so unused database space does
+not disclose previous page contents. The native database tests check this
+property. To build only Berkeley DB from depends, run:
 ```bash
 make -C depends NO_BOOST=1 NO_LIBEVENT=1 NO_QT=1 NO_SQLITE=1 NO_NATPMP=1 NO_UPNP=1 NO_ZMQ=1 NO_USDT=1
 ...
@@ -200,13 +226,14 @@ A list of additional configure flags can be displayed with:
 
 Setup and Build Example: Arch Linux
 -----------------------------------
-This example lists the steps necessary to setup and build a command line only distribution of the latest changes on Arch Linux:
+This development example assumes you already obtained an exact source revision
+using the [source checkout instructions](nito/source-builds.md#supported-build-contract):
 
-    pacman --sync --needed autoconf automake boost gcc git libevent libtool make pkgconf python sqlite
-    git clone https://github.com/nito/nito.git
-    cd nito/
+    pacman --sync --needed autoconf automake boost gcc git libevent libtool make pkgconf python rustup sqlite
+    rustup toolchain install 1.97.0 --profile minimal
+    rustup override set 1.97.0
     ./autogen.sh
-    ./configure
+    ./configure --with-gui=no --with-sqlite=yes
     make check
     ./src/nitod
 

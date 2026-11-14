@@ -2,13 +2,15 @@
 
 \section intro_sec Introduction
 
-This is the developer documentation of the reference client for an experimental new digital currency called Nito,
-which enables instant payments to anyone, anywhere in the world. Nito uses peer-to-peer technology to operate
-with no central authority: managing transactions and issuing money are carried out collectively by the network.
+This is the source documentation for Nito Core, the reference node and wallet
+for Nito.network. Nito validates and relays transactions over a peer-to-peer
+network. Blocks confirm transactions through SHA-256 proof of work.
 
 The software is a community-driven open source project, released under the MIT license.
 
-See https://github.com/NitoNetwork/Nito-core and https://nito.network/ for further information about the project.
+See https://nito.network/ and the
+[official source repository](https://github.com/NitoNetwork/Nito-core/tree/v4.0)
+for further information about the project.
 
 \section Navigation
 Use <a href="modules.html"><code>Modules</code></a>, <a href="namespaces.html"><code>Namespaces</code></a>, <a href="classes.html"><code>Classes</code></a>, or <a href="files.html"><code>Files</code></a> at the top of the page to start navigating the code.

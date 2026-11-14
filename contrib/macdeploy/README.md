@@ -1,5 +1,10 @@
 # MacOS Deployment
 
+The current Nito release workflow builds macOS natively and applies ad-hoc
+signatures, as described in the [release process](../../doc/release-process.md).
+The SDK extraction and Guix notes below are optional upstream tooling references;
+they do not provide Apple Developer ID signatures for Nito releases.
+
 The `macdeployqtplus` script should not be run manually. Instead, after building as usual:
 
 ```bash
@@ -29,7 +34,7 @@ To extract the `.xip` on Linux:
 ```bash
 # Install/clone tools needed for extracting Xcode.app
 apt install cpio
-git clone https://github.com/nito-core/apple-sdk-tools.git
+git clone https://github.com/bitcoin-core/apple-sdk-tools.git
 
 # Unpack the .xip and place the resulting Xcode.app in your current
 # working directory
@@ -96,6 +101,8 @@ deterministic. Here's how it works:
   users may choose to bless and run. It also outputs an unsigned app structure in the form
   of a tarball.
 - The Apple keyholder uses this unsigned app to create a detached signature, using the
-  script that is also included there. Detached signatures are available from this [repository](https://github.com/nito-core/nito-detached-sigs).
+  script that is also included there. The upstream
+  [Bitcoin detached-signatures repository](https://github.com/bitcoin-core/bitcoin-detached-sigs)
+  is an example of this process; those signatures do not authenticate Nito binaries.
 - Builders feed the unsigned app + detached signature back into Guix. It uses the
   pre-built tools to recombine the pieces into a deterministic ZIP.

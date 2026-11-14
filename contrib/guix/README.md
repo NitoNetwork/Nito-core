@@ -106,11 +106,13 @@ worktree to save disk space:
 
 ## Attesting to build outputs
 
-Much like how Gitian build outputs are attested to in a `gitian.sigs`
-repository, Guix build outputs are attested to in the [`guix.sigs`
-repository](https://github.com/nito-core/guix.sigs).
+The upstream [Bitcoin Core `guix.sigs` repository](https://github.com/bitcoin-core/guix.sigs)
+illustrates Guix attestations. Its signatures authenticate Bitcoin builds, not
+Nito builds. Using this workflow for Nito requires a separately configured
+attestation repository and signer policy. For Nito releases, follow the
+[release verification instructions](../../README.md#download-and-verify).
 
-After you've cloned the `guix.sigs` repository, to attest to the current
+After you've cloned your configured attestation repository, to attest to the current
 worktree's commit/tag:
 
 ```

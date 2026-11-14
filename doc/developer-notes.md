@@ -332,7 +332,7 @@ Recommendations:
 - Avoid linking to external documentation; links can break.
 
 - Javadoc and all valid Doxygen comments are stripped from Doxygen source code
-  previews (`STRIP_CODE_COMMENTS = YES` in [Doxyfile.in](doc/Doxyfile.in)). If
+  previews (`STRIP_CODE_COMMENTS = YES` in [Doxyfile.in](Doxyfile.in)). If
   you want a comment to be preserved, it must instead use `//` or `/* */`.
 
 ### Generating Documentation
@@ -465,7 +465,7 @@ other input.
 
 Valgrind is a programming tool for memory debugging, memory leak detection, and
 profiling. The repo contains a Valgrind suppressions file
-([`valgrind.supp`](https://github.com/nito/nito/blob/master/contrib/valgrind.supp))
+([`valgrind.supp`](../contrib/valgrind.supp))
 which includes known Valgrind warnings in our dependencies that cannot be fixed
 in-tree. Example use:
 
@@ -592,7 +592,7 @@ Additional resources:
  * [UndefinedBehaviorSanitizer](https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html)
  * [GCC Instrumentation Options](https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html)
  * [Google Sanitizers Wiki](https://github.com/google/sanitizers/wiki)
- * [Issue #12691: Enable -fsanitize flags in Travis](https://github.com/nito/nito/issues/12691)
+ * [Issue #12691: Enable -fsanitize flags in Travis](https://github.com/bitcoin/bitcoin/issues/12691)
 
 Locking/mutex usage notes
 -------------------------
@@ -614,55 +614,55 @@ and its `cs_KeyStore` lock for example).
 Threads
 -------
 
-- [Main thread (`nitod`)](https://doxygen.nitocore.org/nitod_8cpp.html#a0ddf1224851353fc92bfbff6f499fa97)
+- Main thread (`nitod`, `nitod.cpp`)
   : Started from `main()` in `nitod.cpp`. Responsible for starting up and
   shutting down the application.
 
-- [Init load (`b-initload`)](https://doxygen.nitocore.org/namespacenode.html#ab4305679079866f0f420f7dbf278381d)
+- Init load (`b-initload`, node initialization)
   : Performs various loading tasks that are part of init but shouldn't block the node from being started: external block import,
    reindex, reindex-chainstate, main chain activation, spawn indexes background sync threads and mempool load.
 
-- [CCheckQueue::Loop (`b-scriptch.x`)](https://doxygen.nitocore.org/class_c_check_queue.html#a6e7fa51d3a25e7cb65446d4b50e6a987)
+- `CCheckQueue::Loop` (`b-scriptch.x`)
   : Parallel script validation threads for transactions in blocks.
 
-- [ThreadHTTP (`b-http`)](https://doxygen.nitocore.org/httpserver_8cpp.html#abb9f6ea8819672bd9a62d3695070709c)
+- `ThreadHTTP` (`b-http`, `httpserver.cpp`)
   : Libevent thread to listen for RPC and REST connections.
 
-- [HTTP worker threads(`b-httpworker.x`)](https://doxygen.nitocore.org/httpserver_8cpp.html#aa6a7bc27265043bc0193220c5ae3a55f)
+- HTTP worker threads (`b-httpworker.x`, `httpserver.cpp`)
   : Threads to service RPC and REST requests.
 
-- [Indexer threads (`b-txindex`, etc)](https://doxygen.nitocore.org/class_base_index.html#a96a7407421fbf877509248bbe64f8d87)
+- Indexer threads (`b-txindex`, etc.)
   : One thread per indexer.
 
-- [SchedulerThread (`b-scheduler`)](https://doxygen.nitocore.org/class_c_scheduler.html#a14d2800815da93577858ea078aed1fba)
+- `SchedulerThread` (`b-scheduler`)
   : Does asynchronous background tasks like dumping wallet contents, dumping
   addrman and running asynchronous validationinterface callbacks.
 
-- [TorControlThread (`b-torcontrol`)](https://doxygen.nitocore.org/torcontrol_8cpp.html#a52a3efff23634500bb42c6474f306091)
+- `TorControlThread` (`b-torcontrol`, `torcontrol.cpp`)
   : Libevent thread for tor connections.
 
 - Net threads:
 
-  - [ThreadMessageHandler (`b-msghand`)](https://doxygen.nitocore.org/class_c_connman.html#aacdbb7148575a31bb33bc345e2bf22a9)
+  - `ThreadMessageHandler` (`b-msghand`)
     : Application level message handling (sending and receiving). Almost
     all net_processing and validation logic runs on this thread.
 
-  - [ThreadDNSAddressSeed (`b-dnsseed`)](https://doxygen.nitocore.org/class_c_connman.html#aa7c6970ed98a4a7bafbc071d24897d13)
+  - `ThreadDNSAddressSeed` (`b-dnsseed`)
     : Loads addresses of peers from the DNS.
 
   - ThreadMapPort (`b-mapport`)
     : Universal plug-and-play startup/shutdown.
 
-  - [ThreadSocketHandler (`b-net`)](https://doxygen.nitocore.org/class_c_connman.html#a765597cbfe99c083d8fa3d61bb464e34)
-    : Sends/Receives data from peers on port 8333.
+  - `ThreadSocketHandler` (`b-net`)
+    : Sends and receives data on peer connections (mainnet P2P port 8820 by default).
 
-  - [ThreadOpenAddedConnections (`b-addcon`)](https://doxygen.nitocore.org/class_c_connman.html#a0b787caf95e52a346a2b31a580d60a62)
+  - `ThreadOpenAddedConnections` (`b-addcon`)
     : Opens network connections to added nodes.
 
-  - [ThreadOpenConnections (`b-opencon`)](https://doxygen.nitocore.org/class_c_connman.html#a55e9feafc3bab78e5c9d408c207faa45)
+  - `ThreadOpenConnections` (`b-opencon`)
     : Initiates new connections to peers.
 
-  - [ThreadI2PAcceptIncoming (`b-i2paccept`)](https://doxygen.nitocore.org/class_c_connman.html#a57787b4f9ac847d24065fbb0dd6e70f8)
+  - `ThreadI2PAcceptIncoming` (`b-i2paccept`)
     : Listens for and accepts incoming I2P connections through the I2P SAM proxy.
 
 Ignoring IDE/editor files
@@ -1197,7 +1197,7 @@ to check a subtree directory for consistency with its upstream repository.
 Current subtrees include:
 
 - src/leveldb
-  - Subtree at https://github.com/nito-core/leveldb-subtree ; maintained by Core contributors.
+  - Subtree at https://github.com/bitcoin-core/leveldb-subtree ; maintained by Core contributors.
   - Upstream at https://github.com/google/leveldb ; maintained by Google. Open
     important PRs to the subtree to avoid delay.
   - **Note**: Follow the instructions in [Upgrading LevelDB](#upgrading-leveldb) when
@@ -1205,14 +1205,14 @@ Current subtrees include:
 
 - src/crc32c
   - Used by leveldb for hardware acceleration of CRC32C checksums for data integrity.
-  - Subtree at https://github.com/nito-core/crc32c-subtree ; maintained by Core contributors.
+  - Subtree at https://github.com/bitcoin-core/crc32c-subtree ; maintained by Core contributors.
   - Upstream at https://github.com/google/crc32c ; maintained by Google.
 
 - src/secp256k1
-  - Upstream at https://github.com/nito-core/secp256k1/ ; maintained by Core contributors.
+  - Upstream at https://github.com/bitcoin-core/secp256k1/ ; maintained by Core contributors.
 
 - src/crypto/ctaes
-  - Upstream at https://github.com/nito-core/ctaes ; maintained by Core contributors.
+  - Upstream at https://github.com/bitcoin-core/ctaes ; maintained by Core contributors.
 
 - src/minisketch
   - Upstream at https://github.com/sipa/minisketch ; maintained by Core contributors.
@@ -1306,13 +1306,13 @@ introduce accidental changes.
 
 Some good examples of scripted-diff:
 
-- [scripted-diff: Rename InitInterfaces to NodeContext](https://github.com/nito/nito/commit/301bd41a2e6765b185bd55f4c541f9e27aeea29d)
+- [scripted-diff: Rename InitInterfaces to NodeContext](https://github.com/bitcoin/bitcoin/commit/301bd41a2e6765b185bd55f4c541f9e27aeea29d)
 uses an elegant script to replace occurrences of multiple terms in all source files.
 
-- [scripted-diff: Remove g_connman, g_banman globals](https://github.com/nito/nito/commit/8922d7f6b751a3e6b3b9f6fb7961c442877fb65a)
+- [scripted-diff: Remove g_connman, g_banman globals](https://github.com/bitcoin/bitcoin/commit/8922d7f6b751a3e6b3b9f6fb7961c442877fb65a)
 replaces specific terms in a list of specific source files.
 
-- [scripted-diff: Replace fprintf with tfm::format](https://github.com/nito/nito/commit/fac03ec43a15ad547161e37e53ea82482cc508f9)
+- [scripted-diff: Replace fprintf with tfm::format](https://github.com/bitcoin/bitcoin/commit/fac03ec43a15ad547161e37e53ea82482cc508f9)
 does a global replacement but excludes certain directories.
 
 To find all previous uses of scripted diffs in the repository, do:
@@ -1557,4 +1557,4 @@ communication:
 
   Note: This last convention isn't generally followed outside of
   [`src/interfaces/`](../src/interfaces/), though it did come up for discussion
-  before in [#14635](https://github.com/nito/nito/pull/14635).
+  before in [#14635](https://github.com/bitcoin/bitcoin/pull/14635).

@@ -8,7 +8,7 @@ This directory contains the following sets of tests:
 - [fuzz](/test/fuzz) A runner to execute all fuzz targets from
   [/src/test/fuzz](/src/test/fuzz).
 - [functional](/test/functional) which test the functionality of
-nitod and nito-qt by interacting with them through the RPC and P2P
+nitod by interacting with it through the RPC and P2P
 interfaces.
 - [util](/test/util) which tests the utilities (nito-util, nito-tx, ...).
 - [lint](/test/lint/) which perform various static analysis checks.
@@ -101,7 +101,53 @@ In order to run backwards compatibility tests, first run:
 test/get_previous_releases.py -b
 ```
 
-to download the necessary previous release binaries.
+to download and verify the official Nito V3.0.1 archive for the host platform.
+This installs the command-line binaries under `releases/v3.0.1/bin`; use
+`--target-dir` or `PREVIOUS_RELEASES_DIR` to select another directory. To use a
+previously downloaded archive, pass `--archive-dir=/path/to/archives`. The pinned
+archive checksum is checked before extraction, and later invocations verify the
+extracted files against the saved manifest. Only V3.0.1 is supported; Bitcoin
+release versions are not Nito releases.
+
+The Nito V3.0.1 migration test uses the official V3.0.1 binaries directly:
+
+```sh
+test/functional/wallet_v3_migration.py --descriptors --v3-bindir=/path/to/v3.0.1/binaries
+test/functional/wallet_v3_migration.py --legacy-wallet --v3-bindir=/path/to/v3.0.1/binaries
+```
+
+The directory must contain `nitod` and `nito-cli` (`.exe` on Windows), extracted
+from the official V3.0.1 archive after verifying its published checksum. Set
+`NITO_V3_BINDIR` to that directory when running through `test_runner.py`.
+For the default download location:
+
+```sh
+export NITO_V3_BINDIR="$PWD/releases/v3.0.1/bin"
+test/functional/test_runner.py --previous-releases
+```
+
+The test covers encrypted and unencrypted wallets, metadata and address-sequence
+preservation, backup restoration, transparent spending, and explicit Orchard-only
+upgrade followed by shielding and unshielding. It uses an isolated regtest chain.
+
+The transparent mempool round-trip test uses the same V3 directory:
+
+```sh
+test/functional/mempool_compatibility.py --v3-bindir=/path/to/v3.0.1/binaries
+```
+
+It checks both persisted mempool formats and the unbroadcast transaction set.
+Files are transferred between stopped nodes; V4's peer-version gate remains
+enabled. This does not establish compatibility of Orchard transactions with V3.
+
+`wallet_backwards_compatibility.py` checks V3 watch-only wallets, imported keys,
+multisig, blank wallets, and fee replacement metadata in V4. The wallet upgrade
+and inactive-HD-chain tests use V3 wallets and explicitly constructed metadata
+fixtures for older supported storage formats. `feature_unsupported_utxo_db.py`
+constructs an obsolete chainstate record and checks rejection and reindex
+recovery; it does not require an obsolete Bitcoin binary. These tests do not
+promise that a V4 wallet can be downgraded to V3, or that a recovery phrase covers
+imported keys.
 
 By default, up to 4 tests will be run in parallel by test_runner. To specify
 how many jobs to run, append `--jobs=n`

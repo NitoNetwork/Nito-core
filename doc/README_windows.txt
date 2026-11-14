@@ -1,23 +1,34 @@
-Nito Core
-=============
+Nito Core for Windows
+=====================
 
-Intro
------
-Nito is a free open source peer-to-peer electronic cash system that is
-completely decentralized, without the need for a central server or trusted
-parties.  Users hold the crypto keys to their own money and transact directly
-with each other, with the help of a P2P network to check for double-spending.
+Extract the release archive and open bin\nito-qt.exe. For command-line use,
+bin\nitod.exe runs the node and bin\nito-cli.exe sends local RPC commands.
+If you used the installer, nito-qt.exe is in the installation directory and
+the command-line tools are under daemon\ instead. The installer includes
+nito-cli, nito-tx, nito-wallet and nito-util alongside nitod.
 
+On first start, choose a data directory with enough free space for the chain,
+wallets and indexes. Initial synchronization downloads and verifies blocks;
+index construction can continue after those blocks have been downloaded.
+Pruning reduces retained block data, but indexes and wallets use additional space.
 
-Setup
------
-Unpack the files into a directory and run nito-qt.exe.
+Back up existing wallets before upgrading. Keep recovery phrases and wallet
+backups private. A recovery phrase does not replace a wallet-file backup for
+imported keys or every wallet's metadata.
 
-Nito Core is the original Nito client and it builds the backbone of the network.
-However, it downloads and stores the entire history of Nito transactions;
-depending on the speed of your computer and network connection, the synchronization
-process can take anywhere from a few hours to a day or more.
+V4 supports transparent transactions and Orchard private transactions.
+Orchard availability depends on activation on the selected network and on
+the local Orchard index being ready. Opening an encrypted wallet asks for its
+passphrase, then keeps spending locked while the authenticated Qt session can
+display wallet data. Each Bech32x address creation or send that requires
+private keys asks for the passphrase again.
 
-See the nito wiki at:
-  https://en.nito.it/wiki/Main_Page
-for more help and information.
+Licenses and matching source:
+Portable archives contain only bin\ at their root. LICENSE.txt and
+THIRD_PARTY_LICENSES.txt are inside bin\ with the executables.
+The installer places the same two files in the installation directory.
+The matching nito-VERSION-sources.tar.gz is available with the release downloads.
+
+Documentation and source:
+https://github.com/NitoNetwork/Nito-core
+https://github.com/NitoNetwork/Nito-core/blob/main/doc/nito/bech32x-private-wallet.md

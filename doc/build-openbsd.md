@@ -4,6 +4,10 @@
 
 This guide describes how to build nitod, command-line utilities, and GUI on OpenBSD.
 
+OpenBSD is a development/community target, not part of the official four-OS
+release artifact matrix. Release and exchange deployments should use a
+profile documented in [nito/source-builds.md](nito/source-builds.md).
+
 ## Preparation
 
 ### 1. Install Required Dependencies
@@ -17,10 +21,16 @@ pkg_add autoconf automake python
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
-### 2. Clone Nito Repo
-Clone the Nito Core repository to a directory. All build scripts and commands will run from this directory.
-``` bash
-git clone https://github.com/nito/nito.git
+### 2. Obtain The Source And Rust Toolchain
+
+Obtain an exact revision using the
+[source checkout instructions](nito/source-builds.md#supported-build-contract).
+From that source directory, select the Orchard toolchain:
+
+```bash
+rustup toolchain install 1.97.0 --profile minimal
+rustup override set 1.97.0
+git rev-parse HEAD
 ```
 
 ### 3. Install Optional Dependencies
@@ -58,12 +68,12 @@ export BDB_PREFIX="/path/to/nito/depends/x86_64-unknown-openbsd"
 ```
 
 #### GUI Dependencies
-###### Qt5
+###### Qt6
 
-Nito Core includes a GUI built with the cross-platform Qt Framework. To compile the GUI, Qt 5 is required.
+Nito Core includes a GUI built with the cross-platform Qt Framework. To compile the GUI, Qt 6 is required.
 
 ```bash
-pkg_add qt5
+pkg_add qt6
 ```
 
 ## Building Nito Core
@@ -85,7 +95,7 @@ export AUTOMAKE_VERSION=1.16
 There are many ways to configure Nito Core, here are a few common examples:
 
 ##### Descriptor Wallet and GUI:
-This enables the GUI and descriptor wallet support, assuming `sqlite` and `qt5` are installed.
+This enables the GUI and descriptor wallet support, assuming `sqlite` and `qt6` are installed.
 
 ```bash
 ./configure MAKE=gmake
@@ -120,7 +130,7 @@ data(kbytes)         1572864
 ```
 
 This is, unfortunately, in some cases not enough to compile some `.cpp` files in the project,
-(see issue [#6658](https://github.com/nito/nito/issues/6658)).
+(see issue [#6658](https://github.com/bitcoin/bitcoin/issues/6658)).
 If your user is in the `staff` group the limit can be raised with:
 ```bash
 ulimit -d 3000000

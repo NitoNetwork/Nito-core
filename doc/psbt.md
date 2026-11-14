@@ -1,8 +1,8 @@
 # PSBT Howto for Nito Core
 
-Since Nito Core 0.17, an RPC interface exists for Partially Signed Nito
-Transactions (PSBTs, as specified in
-[BIP 174](https://github.com/nito/bips/blob/master/bip-0174.mediawiki)).
+Nito Core provides an RPC interface for the Partially Signed Bitcoin
+Transaction format (PSBT), adapted to Nito transactions and specified in
+[BIP 174](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki).
 
 This document describes the overall workflow for producing signed transactions
 through the use of PSBT, and the specific RPC commands used in typical
@@ -14,7 +14,7 @@ PSBT is an interchange format for Nito transactions that are not fully signed
 yet, together with relevant metadata to help entities work towards signing it.
 It is intended to simplify workflows where multiple parties need to cooperate to
 produce a transaction. Examples include hardware wallets, multisig setups, and
-[CoinJoin](https://nitotalk.org/?topic=279249) transactions.
+CoinJoin transactions.
 
 ### Overall workflow
 
@@ -66,7 +66,10 @@ hardware implementations will typically implement multiple roles simultaneously.
 - **`walletprocesspsbt` (Updater, Signer, Finalizer)** is a wallet RPC that takes as
   input a PSBT, adds UTXO, key, and script data to inputs and outputs that miss
   it, and optionally signs inputs. Where possible it also finalizes the partial
-  signatures.
+  signatures. When Nito Orchard signing material is present, first review the
+  `nito_private_intent` returned by `decodepsbt` and pass its `hash` as the
+  `private_intent_hash` argument. Signing is refused when this reviewed hash is
+  absent or does not match the current PSBT.
 - **`utxoupdatepsbt` (Updater)** is a node RPC that takes a PSBT and updates it
   to include information available from the UTXO set (works only for SegWit
   inputs).
@@ -82,6 +85,10 @@ hardware implementations will typically implement multiple roles simultaneously.
   transactions.
 - **`decodepsbt`** is a diagnostic utility RPC which will show all information in
   a PSBT in human-readable form, as well as compute its eventual fee if known.
+  For a private PSBT it also returns `nito_private_intent`, which decodes the
+  anchor, value balance, consumed notes, private recipients and amounts, and a
+  hash committing to the unsigned transaction plus all proprietary Orchard
+  signing material.
 - **`analyzepsbt`** is a utility RPC that examines a PSBT and reports the
   current status of its inputs, the next step in the workflow if known, and if
   possible, computes the fee of the resulting transaction and estimates the
@@ -92,7 +99,7 @@ hardware implementations will typically implement multiple roles simultaneously.
 
 #### Multisig with multiple Nito Core instances
 
-For a quick start see [Basic M-of-N multisig example using descriptor wallets and PSBTs](./descriptors.md#basic-multisig-example).
+For a quick start see the [descriptor multisig tutorial](multisig-tutorial.md).
 If you are using legacy wallets feel free to continue with the example provided here.
 
 Alice, Bob, and Carol want to create a 2-of-3 multisig address. They're all using
@@ -121,7 +128,7 @@ Setup:
   initiate transactions later, however.
 - They can now give out *Amulti* as address others can pay to.
 
-Later, when *V* BTC has been received on *Amulti*, and Bob and Carol want to
+Later, when *V* NITO has been received on *Amulti*, and Bob and Carol want to
 move the coins in their entirety to address *Asend*, with no change. Alice
 does not need to be involved.
 - One of them - let's assume Carol here - initiates the creation. She runs

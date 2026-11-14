@@ -43,12 +43,13 @@ related to the DNS seed operation.
 
 If these expectations cannot be satisfied the operator should
 discontinue providing services and contact the active Nito
-Core development team as well as posting on
-[nito-dev](https://groups.google.com/g/nitodev).
+Core maintainers through the contact channels listed in the official project
+repository.
 
 Behavior outside of these expectations may be reasonable in some
 situations but should be discussed in public in advance.
 
 See also
 ----------
-- [nito-seeder](https://github.com/sipa/nito-seeder) is a reference implementation of a DNS seed.
+- Nito's [community testnet guide](nito/community-testnet.md#peer-discovery)
+  describes the required network and service capabilities for testnet seeds.

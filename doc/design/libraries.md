@@ -96,9 +96,9 @@ class nito-qt,nitod,nito-cli,nito-wallet bold
 
 - The only thing that should depend on *libnito_kernel* internally should be *libnito_node*. GUI and wallet libraries *libnitoqt* and *libnito_wallet* in particular should not depend on *libnito_kernel* and the unneeded functionality it would pull in, like block validation. To the extent that GUI and wallet code need scripting and signing functionality, they should be get able it from *libnito_consensus*, *libnito_common*, and *libnito_util*, instead of *libnito_kernel*.
 
-- GUI, node, and wallet code internal implementations should all be independent of each other, and the *libnitoqt*, *libnito_node*, *libnito_wallet* libraries should never reference each other's symbols. They should only call each other through [`src/interfaces/`](`../../src/interfaces/`) abstract interfaces.
+- GUI, node, and wallet code internal implementations should all be independent of each other, and the *libnitoqt*, *libnito_node*, *libnito_wallet* libraries should never reference each other's symbols. They should only call each other through [`src/interfaces/`](../../src/interfaces/) abstract interfaces.
 
-## Work in progress
+## Upstream Design References
 
-- Validation code is moving from *libnito_node* to *libnito_kernel* as part of [The libnitokernel Project #24303](https://github.com/nito/nito/issues/24303)
-- Source code organization is discussed in general in [Library source code organization #15732](https://github.com/nito/nito/issues/15732)
+- [The upstream libbitcoinkernel project #24303](https://github.com/bitcoin/bitcoin/issues/24303) discusses separation of validation code from node infrastructure.
+- Source code organization is discussed in general in [Library source code organization #15732](https://github.com/bitcoin/bitcoin/issues/15732)

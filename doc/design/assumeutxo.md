@@ -1,7 +1,14 @@
 # assumeutxo
 
-Assumeutxo is a feature that allows fast bootstrapping of a validating nitod
-instance.
+Assumeutxo can bootstrap a validating node from an authenticated UTXO snapshot.
+The design below is inherited from Bitcoin Core. Nito Core V4 does not publish
+an accepted mainnet or testnet snapshot hash, so this is not an available
+shortcut for synchronizing either public network.
+
+Nito's current snapshot format contains transparent UTXOs only. Export and
+import at or after Orchard activation are rejected because the format does not
+authenticate Orchard state. A snapshot cannot replace the Orchard index or
+wallet recovery. See [the activation contract](../nito/consensus-activation.md).
 
 ## Loading a snapshot
 
@@ -16,8 +23,8 @@ load it.
 A pruned node can load a snapshot. To save space, it's possible to delete the
 snapshot file as soon as `loadtxoutset` finishes.
 
-The minimum `-dbcache` setting is 550 MiB, but this functionality ignores that
-minimum and uses at least 1100 MiB.
+Snapshot loading and background validation share the configured database cache.
+Pruning targets apply to block storage and are separate from `-dbcache`.
 
 As the background sync continues there will be temporarily two chainstate
 directories, each multiple gigabytes in size (likely growing larger than the
@@ -46,8 +53,8 @@ The utility script
 ## General background
 
 - [assumeutxo proposal](https://github.com/jamesob/assumeutxo-docs/tree/2019-04-proposal/proposal)
-- [Github issue](https://github.com/nito/nito/issues/15605)
-- [draft PR](https://github.com/nito/nito/pull/15606)
+- [Github issue](https://github.com/bitcoin/bitcoin/issues/15605)
+- [draft PR](https://github.com/bitcoin/bitcoin/pull/15606)
 
 ## Design notes
 
