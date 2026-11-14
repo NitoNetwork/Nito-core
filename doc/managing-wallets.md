@@ -52,11 +52,16 @@ records. It does not encrypt the entire wallet database: some transaction
 metadata, labels and comments remain readable. Backups made before encryption
 remain unencrypted. See the [privacy model](nito/security-privacy-model.md#sensitive-wallet-data).
 
-The wallet's private key can also be encrypted in the `createwallet` command via the `passphrase` argument:
+For terminal use, create an encrypted descriptor wallet with the guided mode.
+It confirms the wallet encryption passphrase and the distinct BIP39 passphrase
+without exposing either secret in shell history or process arguments:
 
 ```
-$ nito-cli -named createwallet wallet_name="wallet-01" passphrase="passphrase"
+$ nito-cli -named -interactive createwallet wallet_name="wallet-01" descriptors=true
 ```
+
+Use `-named -stdin` only for protected automation; never place either secret
+directly in a command-line argument.
 
 Keep the passphrase safe. A separate recovery phrase can restore only the key
 domains it covers; it cannot restore imported keys or the older transparent

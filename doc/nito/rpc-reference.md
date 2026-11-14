@@ -92,7 +92,18 @@ It is never stored, recoverable or resettable. A different valid passphrase
 derives another valid wallet, so a typing error is not detected as an incorrect
 password. See [backup and restore](wallet-backup-restore.md#optional-bip39-passphrase).
 
-To create a wallet with this option without exposing it in command arguments:
+For an operator creating a wallet at a terminal, use the guided mode:
+
+```bash
+nito-cli -named -interactive createwallet wallet_name=main descriptors=true load_on_startup=true
+```
+
+It requires and confirms both the wallet encryption passphrase and the distinct
+BIP39 passphrase without terminal echo. Neither secret is placed in shell
+history or process arguments. Empty or mismatched entries are rejected before
+the wallet RPC is sent.
+
+Protected automation can instead supply named arguments on standard input:
 
 ```bash
 nito-cli -named -stdin createwallet wallet_name=main descriptors=true

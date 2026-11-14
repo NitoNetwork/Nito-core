@@ -94,7 +94,7 @@ backup. The phrase does not replace the v3 backup.
 ## Create A Native V4 Wallet
 
 ```bash
-nito-cli -named createwallet wallet_name=main descriptors=true
+nito-cli -named -interactive createwallet wallet_name=main descriptors=true
 ```
 
 Export its canonical phrase and verify the returned scope:
@@ -110,6 +110,8 @@ Nito Core never stores it and cannot recover or reset it. `dumpmnemonic` reports
 whether one is required but never returns it. Review the
 [passphrase rules](wallet-backup-restore.md#optional-bip39-passphrase) and
 [RPC input examples](rpc-reference.md#optional-bip39-passphrase) before use.
+The interactive command requires and confirms both a wallet encryption
+passphrase and a distinct BIP39 passphrase without displaying either secret.
 
 ## Restore A Native V4 Phrase
 

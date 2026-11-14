@@ -116,6 +116,49 @@ class TestNitoCli(NitoTestFramework):
             assert_equal(cli_bip39_wallet.dumpmnemonic()['bip39_passphrase_required'], True)
             cli_bip39_wallet.unloadwallet()
 
+            self.log.info("Test interactive encrypted BIP39 wallet creation")
+            result = self.nodes[0].cli(
+                '-interactive',
+                input='wallet secret\nwallet secret\nBIP39 secret\nBIP39 secret\n',
+            ).createwallet(wallet_name='cli_bip39_interactive', descriptors=True)
+            assert_equal(result['name'], 'cli_bip39_interactive')
+            interactive_wallet = self.nodes[0].get_wallet_rpc('cli_bip39_interactive')
+            assert_equal(interactive_wallet.getwalletinfo()['bip39_passphrase_enabled'], True)
+            interactive_wallet.walletpassphrase('wallet secret', 60)
+            assert_equal(interactive_wallet.dumpmnemonic()['bip39_passphrase_required'], True)
+            interactive_wallet.walletlock()
+            interactive_wallet.unloadwallet()
+
+            self.log.info("Test interactive wallet creation rejects missing and mismatched secrets")
+            assert_raises_process_error(
+                1,
+                'Wallet encryption passphrase must not be empty in interactive mode',
+                self.nodes[0].cli('-interactive', input='\n\nBIP39 secret\nBIP39 secret\n').createwallet,
+                wallet_name='cli_interactive_empty',
+                descriptors=True,
+            )
+            assert_raises_process_error(
+                1,
+                'Wallet encryption passphrases do not match',
+                self.nodes[0].cli('-interactive', input='first\nsecond\nBIP39 secret\nBIP39 secret\n').createwallet,
+                wallet_name='cli_interactive_mismatch',
+                descriptors=True,
+            )
+            assert_raises_process_error(
+                1,
+                'BIP39 passphrases do not match',
+                self.nodes[0].cli('-interactive', input='wallet secret\nwallet secret\nfirst\nsecond\n').createwallet,
+                wallet_name='cli_interactive_bip39_mismatch',
+                descriptors=True,
+            )
+            assert_raises_process_error(
+                1,
+                'BIP39 passphrase must not be empty in interactive mode',
+                self.nodes[0].cli('-interactive', input='wallet secret\nwallet secret\n\n\n').createwallet,
+                wallet_name='cli_interactive_bip39_empty',
+                descriptors=True,
+            )
+
         self.log.info("Test connecting to a non-existing server")
         assert_raises_process_error(1, "Could not connect to the server", self.nodes[0].cli('-rpcport=1').echo)
 

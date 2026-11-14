@@ -91,7 +91,7 @@ Bech32 remains the default receive type. Bech32x is an explicit private receive
 type with `nito1x...` mainnet addresses:
 
 ```bash
-nito-cli -named createwallet wallet_name=main descriptors=true
+nito-cli -named -interactive createwallet wallet_name=main descriptors=true
 nito-cli -rpcwallet=main getnewaddress "" bech32
 nito-cli -rpcwallet=main getnewaddress "" bech32x
 ```
@@ -130,6 +130,10 @@ recovered or reset. A different passphrase derives another valid wallet.
 passphrase; `dumpmnemonic` does not return it. See the
 [passphrase rules](doc/nito/wallet-backup-restore.md#optional-bip39-passphrase)
 before creating or restoring a wallet.
+
+Interactive creation requires and confirms both secrets without terminal echo
+and keeps them out of shell history and process arguments. Use the documented
+`-stdin` form only for protected automation.
 
 Phrase recovery reconstructs chain-derived funds and history before reporting
 success. On an existing chain it requires unpruned blocks,
