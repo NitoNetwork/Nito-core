@@ -18,17 +18,15 @@ RPCHelpMan walletpassphrase()
             "Issuing the walletpassphrase command while the wallet is already unlocked will set a new unlock\n"
             "time that overrides the old one.\n",
                 {
-                    {"passphrase", RPCArg::Type::STR, RPCArg::Optional::NO, "The wallet passphrase"},
+                    {"passphrase", RPCArg::Type::STR, RPCArg::Optional::NO, "The wallet passphrase. At a terminal, use -named -interactive with nito-cli to receive a labeled hidden-input prompt instead of placing this secret in process arguments. -stdinwalletpassphrase remains available for protected automation and compatibility."},
                     {"timeout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The time to keep the decryption key in seconds; capped at 100000000 (~3 years)."},
                 },
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
-            "\nUnlock the wallet for 60 seconds\n"
-            + HelpExampleCli("walletpassphrase", "\"my pass phrase\" 60") +
+            "\nUnlock the wallet for 60 seconds. The CLI prompts for the passphrase without echo.\n"
+            + HelpExampleCli("-named -interactive walletpassphrase", "timeout=60") +
             "\nLock the wallet again (before 60 seconds)\n"
-            + HelpExampleCli("walletlock", "") +
-            "\nAs a JSON-RPC call\n"
-            + HelpExampleRpc("walletpassphrase", "\"my pass phrase\", 60")
+            + HelpExampleCli("walletlock", "")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -124,13 +122,12 @@ RPCHelpMan walletpassphrasechange()
     return RPCHelpMan{"walletpassphrasechange",
                 "\nChanges the wallet passphrase from 'oldpassphrase' to 'newpassphrase'.\n",
                 {
-                    {"oldpassphrase", RPCArg::Type::STR, RPCArg::Optional::NO, "The current passphrase"},
-                    {"newpassphrase", RPCArg::Type::STR, RPCArg::Optional::NO, "The new passphrase"},
+                    {"oldpassphrase", RPCArg::Type::STR, RPCArg::Optional::NO, "The current passphrase. At a terminal, use -named -interactive with nito-cli to prompt for all secrets without echo."},
+                    {"newpassphrase", RPCArg::Type::STR, RPCArg::Optional::NO, "The new passphrase. Guided CLI mode confirms it before the RPC is sent."},
                 },
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
-                    HelpExampleCli("walletpassphrasechange", "\"old one\" \"new one\"")
-            + HelpExampleRpc("walletpassphrasechange", "\"old one\", \"new one\"")
+                    HelpExampleCli("-named -interactive walletpassphrasechange", "")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -187,8 +184,8 @@ RPCHelpMan walletlock()
                 {},
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
-            "\nSet the passphrase for 2 minutes to perform a transaction\n"
-            + HelpExampleCli("walletpassphrase", "\"my pass phrase\" 120") +
+            "\nUnlock the wallet for 2 minutes through the hidden-input prompt\n"
+            + HelpExampleCli("-named -interactive walletpassphrase", "timeout=120") +
             "\nPerform a send (requires passphrase set)\n"
             + HelpExampleCli("sendtoaddress", "\"" + EXAMPLE_ADDRESS[0] + "\" 1.0") +
             "\nClear the passphrase since we are done before 2 minutes is up\n"
@@ -232,20 +229,18 @@ RPCHelpMan encryptwallet()
                 "The encryption process keeps the current HD seed and address sequence unchanged.\n"
                 "Securely back up the encrypted wallet file using the backupwallet RPC.\n",
                 {
-                    {"passphrase", RPCArg::Type::STR, RPCArg::Optional::NO, "The pass phrase to encrypt the wallet with. It must be at least 1 character, but should be long."},
+                    {"passphrase", RPCArg::Type::STR, RPCArg::Optional::NO, "The pass phrase to encrypt the wallet with. It must be at least 1 character, but should be long. At a terminal, use -named -interactive with nito-cli so the new passphrase is prompted for, confirmed and kept out of process arguments."},
                 },
                 RPCResult{RPCResult::Type::STR, "", "A string with further instructions"},
                 RPCExamples{
-            "\nEncrypt your wallet\n"
-            + HelpExampleCli("encryptwallet", "\"my pass phrase\"") +
-            "\nNow set the passphrase to use the wallet, such as for signing or sending nito\n"
-            + HelpExampleCli("walletpassphrase", "\"my pass phrase\"") +
+            "\nEncrypt the wallet through a guided prompt that confirms the new passphrase\n"
+            + HelpExampleCli("-named -interactive encryptwallet", "") +
+            "\nUnlock the wallet for 120 seconds through the hidden-input prompt\n"
+            + HelpExampleCli("-named -interactive walletpassphrase", "timeout=120") +
             "\nNow we can do something like sign\n"
             + HelpExampleCli("signmessage", "\"address\" \"test message\"") +
             "\nNow lock the wallet again by removing the passphrase\n"
-            + HelpExampleCli("walletlock", "") +
-            "\nAs a JSON-RPC call\n"
-            + HelpExampleRpc("encryptwallet", "\"my pass phrase\"")
+            + HelpExampleCli("walletlock", "")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {

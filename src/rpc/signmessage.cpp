@@ -29,7 +29,7 @@ static RPCHelpMan verifymessage()
         },
         RPCExamples{
             "\nUnlock the wallet for 30 seconds\n"
-            + HelpExampleCli("walletpassphrase", "\"mypassphrase\" 30") +
+            + HelpExampleCli("-named -interactive walletpassphrase", "timeout=30") +
             "\nCreate the signature\n"
             + HelpExampleCli("signmessage", "\"1D1ZrZNe3JUo7ZycKEYQQiQAWd9y54F4XX\" \"my message\"") +
             "\nVerify the signature\n"
@@ -67,7 +67,7 @@ static RPCHelpMan signmessagewithprivkey()
     return RPCHelpMan{"signmessagewithprivkey",
         "\nSign a message with the private key of an address\n",
         {
-            {"privkey", RPCArg::Type::STR, RPCArg::Optional::NO, "The private key to sign the message with."},
+            {"privkey", RPCArg::Type::STR, RPCArg::Optional::NO, "The private key to sign the message with. At a terminal, use -named -interactive with nito-cli so the key is prompted for without echo and kept out of process arguments."},
             {"message", RPCArg::Type::STR, RPCArg::Optional::NO, "The message to create a signature of."},
         },
         RPCResult{
@@ -75,11 +75,10 @@ static RPCHelpMan signmessagewithprivkey()
         },
         RPCExamples{
             "\nCreate the signature\n"
-            + HelpExampleCli("signmessagewithprivkey", "\"privkey\" \"my message\"") +
+            + HelpExampleCli("-named -interactive signmessagewithprivkey", "message=\"my message\"") +
             "\nVerify the signature\n"
             + HelpExampleCli("verifymessage", "\"1D1ZrZNe3JUo7ZycKEYQQiQAWd9y54F4XX\" \"signature\" \"my message\"") +
-            "\nAs a JSON-RPC call\n"
-            + HelpExampleRpc("signmessagewithprivkey", "\"privkey\", \"my message\"")
+            "\nThe private key is intentionally omitted from command-line examples.\n"
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
         {

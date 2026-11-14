@@ -26,9 +26,9 @@ RPCHelpMan signmessage()
         },
         RPCExamples{
             "\nUnlock the wallet for 30 seconds\n"
-            + HelpExampleCli("walletpassphrase", "\"mypassphrase\" 30") +
+            + HelpExampleCli("-named -interactive walletpassphrase", "timeout=30") +
             "\nCreate the signature\n"
-            + HelpExampleCli("signmessage", "\"1D1ZrZNe3JUo7ZycKEYQQiQAWd9y54F4XX\" \"my message\"") +
+            + HelpExampleCli("-named -interactive signmessage", "address=1D1ZrZNe3JUo7ZycKEYQQiQAWd9y54F4XX message=\"my message\"") +
             "\nVerify the signature\n"
             + HelpExampleCli("verifymessage", "\"1D1ZrZNe3JUo7ZycKEYQQiQAWd9y54F4XX\" \"signature\" \"my message\"") +
             "\nAs a JSON-RPC call\n"

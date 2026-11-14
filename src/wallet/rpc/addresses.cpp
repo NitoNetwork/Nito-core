@@ -128,7 +128,7 @@ RPCHelpMan getprivatekeymaninfo()
 {
     return RPCHelpMan{"getprivatekeymaninfo",
                 std::string{"\nReturns the Nito.network OrchardKeyMan descriptor information for this wallet."} +
-                "\nBy default this returns safe wallet metadata only. Pass include_private=true to export private Orchard descriptors." +
+                "\nBy default this returns safe wallet metadata only. Pass include_private=true to export private Orchard descriptors. At a terminal, use -named -interactive with nito-cli for private export so disclosure requires explicit confirmation." +
                 HELP_REQUIRING_PASSPHRASE +
                 "\nFor a full_wallet seed, private descriptors carry the same full deterministic recovery authority as the recovery phrase, including transparent and Orchard keys." +
                 "\nFor an orchard_only seed added to a v3 wallet, they recover Orchard only and do not replace the original v3 wallet backup.\n",
@@ -157,7 +157,7 @@ RPCHelpMan getprivatekeymaninfo()
                 },
                 RPCExamples{
                     HelpExampleCli("getprivatekeymaninfo", "")
-                    + HelpExampleCli("getprivatekeymaninfo", "true")
+                    + HelpExampleCli("-named -interactive getprivatekeymaninfo", "")
                     + HelpExampleRpc("getprivatekeymaninfo", "")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
@@ -233,7 +233,7 @@ RPCHelpMan getprivateviewkey()
     return RPCHelpMan{"getprivateviewkey",
                 "\nReturns the Orchard full viewing key for the external or internal branch containing a wallet-owned Nito.network private address." +
                 HELP_REQUIRING_PASSPHRASE +
-                "\nThis is branch-wide voluntary disclosure, not a per-address key. It cannot spend funds, but it can reveal notes for every diversifier on the returned branch.\n",
+                "\nThis is branch-wide voluntary disclosure, not a per-address key. It cannot spend funds, but it can reveal notes for every diversifier on the returned branch. At a terminal, use -named -interactive with nito-cli so disclosure requires explicit confirmation.\n",
                 {
                     {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "A wallet-owned nito1x... private address."},
                 },
@@ -254,7 +254,7 @@ RPCHelpMan getprivateviewkey()
                     }
                 },
                 RPCExamples{
-                    HelpExampleCli("getprivateviewkey", "\"nito1x...\"")
+                    HelpExampleCli("-named -interactive getprivateviewkey", "address=nito1x...")
                     + HelpExampleRpc("getprivateviewkey", "\"nito1x...\"")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
@@ -456,6 +456,7 @@ RPCHelpMan addmultisigaddress()
 {
     return RPCHelpMan{"addmultisigaddress",
                 "\nAdd an nrequired-to-sign multisignature address to the wallet. Requires a new wallet backup.\n"
+                "At a terminal, use -named -interactive to approve the backup-changing mutation.\n"
                 "Each key is a Nito address or hex-encoded public key.\n"
                 "This functionality is only intended for use with non-watchonly addresses.\n"
                 "See `importaddress` for watchonly p2sh address support.\n"
@@ -485,6 +486,7 @@ RPCHelpMan addmultisigaddress()
                 },
                 RPCExamples{
             "\nAdd a multisig address from 2 addresses\n"
+            + HelpExampleCli("-named -interactive addmultisigaddress", "nrequired=2 keys='[\"" + EXAMPLE_ADDRESS[0] + "\",\"" + EXAMPLE_ADDRESS[1] + "\"]'")
             + HelpExampleCli("addmultisigaddress", "2 \"[\\\"" + EXAMPLE_ADDRESS[0] + "\\\",\\\"" + EXAMPLE_ADDRESS[1] + "\\\"]\"") +
             "\nAs a JSON-RPC call\n"
             + HelpExampleRpc("addmultisigaddress", "2, \"[\\\"" + EXAMPLE_ADDRESS[0] + "\\\",\\\"" + EXAMPLE_ADDRESS[1] + "\\\"]\"")
@@ -552,14 +554,15 @@ RPCHelpMan addmultisigaddress()
 RPCHelpMan keypoolrefill()
 {
     return RPCHelpMan{"keypoolrefill",
-                "\nFills the keypool."+
+                "\nFills the keypool. At a terminal, use -named -interactive to approve key generation and the resulting backup requirement for non-HD wallets."+
         HELP_REQUIRING_PASSPHRASE,
                 {
                     {"newsize", RPCArg::Type::NUM, RPCArg::DefaultHint{strprintf("%u, or as set by -keypool", DEFAULT_KEYPOOL_SIZE)}, "The new keypool size"},
                 },
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
-                    HelpExampleCli("keypoolrefill", "")
+                    HelpExampleCli("-named -interactive keypoolrefill", "newsize=1000")
+            + HelpExampleCli("keypoolrefill", "")
             + HelpExampleRpc("keypoolrefill", "")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
@@ -606,7 +609,7 @@ RPCHelpMan newkeypool()
                 {},
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
-            HelpExampleCli("newkeypool", "")
+            HelpExampleCli("-named -interactive newkeypool", "")
             + HelpExampleRpc("newkeypool", "")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue

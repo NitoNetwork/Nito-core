@@ -29,6 +29,11 @@ history or in process arguments. A mismatch or empty enabled secret is refused
 before the wallet is created. Answer `y`/`yes` to enable an option; `n`/`no` or
 an empty answer selects No.
 
+For `blank=true`, watch-only, legacy or external-signer creation, no native
+V4 recovery phrase is generated and the wizard therefore omits the BIP39
+question. A blank descriptor wallet can still be encrypted during creation and
+then initialized through the guided `sethdseed` recovery flow.
+
 `load_on_startup=true` adds the wallet to the persistent startup list. Set it to
 `false` to remove the wallet from that list, or omit it to leave the existing
 setting unchanged. Run `nito-cli help createwallet` for all creation options.
@@ -52,32 +57,25 @@ Wallet encryption may also not protect against more sophisticated attacks. An at
 After encrypting the wallet or changing the passphrase, a new backup needs to be created immediately. Encryption keeps the current HD seed and address sequence unchanged, but the wallet file now contains new encrypted key material and metadata that should be backed up.
 
 For a new wallet, enable encryption in the guided creator above. An existing
-unencrypted wallet can be encrypted from the GUI. Advanced CLI automation may
-use protected standard input with `encryptwallet`; never place the passphrase in
-the command line.
-
-The `walletpassphrasechange` RPC changes an existing encryption passphrase.
-Provide both old and new values through protected input or use the GUI; never
-place either value in shell history or process arguments.
-
-For advanced CLI automation, encrypt an existing wallet by running:
+unencrypted wallet can be encrypted from the GUI or through the guided CLI:
 
 ```bash
-nito-cli -stdin -rpcwallet="wallet-01" encryptwallet
+nito-cli -named -interactive -rpcwallet="wallet-01" encryptwallet
 ```
 
-Provide the new passphrase as the only standard-input line and then end input.
-To change it, run:
+The wizard confirms the operation, requests and confirms the new password
+without echo, and sends nothing if either confirmation fails. Create and verify
+a new backup immediately after successful encryption.
+
+Change an existing encryption password with:
 
 ```bash
-nito-cli -stdinwalletpassphrase -stdin -rpcwallet="wallet-01" walletpassphrasechange
+nito-cli -named -interactive -rpcwallet="wallet-01" walletpassphrasechange
 ```
 
-Provide the current passphrase when prompted, then the new passphrase as the
-next standard-input line, and end input. `-stdin` and
-`-stdinwalletpassphrase` disable terminal echo; redirected input must be
-protected from other users and removed securely after use. End terminal input
-with Ctrl-D on Linux/macOS or Ctrl-Z followed by Enter on Windows.
+The current password is requested once, the new password is requested and
+confirmed, and final approval is required before the change. No entered
+character or asterisk is displayed. This is intentional.
 
 The argument passed to `-rpcwallet` is the name of the wallet to be encrypted.
 
@@ -86,11 +84,16 @@ records. It does not encrypt the entire wallet database: some transaction
 metadata, labels and comments remain readable. Backups made before encryption
 remain unencrypted. See the [privacy model](nito/security-privacy-model.md#sensitive-wallet-data).
 
-For protected automation, `-named -stdin` accepts only the enabled named secrets,
-one per line: `passphrase=...`, `bip39_passphrase=...`, or both. Omit
-`passphrase` to leave the wallet file unencrypted and omit
-`bip39_passphrase` to use an empty BIP39 passphrase. This is an advanced
-interface; prefer the guided creator for an operator at a terminal.
+#### Advanced Automation
+
+For protected automation, `-named -stdin` accepts named secrets one per
+line. `createwallet` accepts `passphrase=...`,
+`bip39_passphrase=...`, or both. `encryptwallet` accepts
+`passphrase=...`; `walletpassphrasechange` accepts
+`oldpassphrase=...` and `newpassphrase=...`. End input with Ctrl-D on
+Linux/macOS or Ctrl-Z followed by Enter on Windows. There are no field prompts
+or confirmation in this automation mode. Protect redirected input and remove
+temporary sources securely; prefer `-interactive` for a person at a terminal.
 
 Keep the passphrase safe. A separate recovery phrase can restore only the key
 domains it covers; it cannot restore imported keys or the older transparent
@@ -113,7 +116,7 @@ To unlock the wallet and allow it to run these operations, the `walletpassphrase
 This command takes the passphrase and an argument called `timeout`, which specifies the time in seconds that the wallet decryption key is stored in memory. After this period expires, the user needs to execute this RPC again.
 
 ```bash
-nito-cli -stdinwalletpassphrase -rpcwallet="wallet-01" walletpassphrase 120
+nito-cli -named -interactive -rpcwallet="wallet-01" walletpassphrase timeout=120
 ```
 
 The CLI prompts without echo. No characters or asterisks appear while typing;
@@ -132,8 +135,12 @@ To backup the wallet, the `backupwallet` RPC or the `Backup Wallet` GUI menu ite
 In the RPC, the destination parameter must include the name of the file. Otherwise, the command will return an error message like "Error: Wallet backup failed!" for descriptor wallets. If it is a legacy wallet, it will be copied and a file will be created with the default file name `wallet.dat`.
 
 ```
-$ nito-cli -rpcwallet="wallet-01" backupwallet /home/node01/Backups/backup-01.dat
+$ nito-cli -named -interactive -rpcwallet="wallet-01" backupwallet destination=/home/node01/Backups/backup-01.dat
 ```
+
+The guided command identifies the destination and requires explicit approval
+because the resulting file contains private wallet authority. It does not
+overwrite an existing backup silently.
 
 In the GUI, the wallet is selected in the `Wallet` drop-down list in the upper right corner. If this list is not present, the wallet can be loaded in `File` ->`Open Wallet` if necessary. Then, the backup can be done in `File` -> `Backup Wallet…`.
 
@@ -161,9 +168,15 @@ verify regular wallet-file backups even when you hold a recovery phrase.
 
 To restore a wallet, the `restorewallet` RPC or the `Restore Wallet` GUI menu item (`File` -> `Restore Wallet…`) must be used.
 
+```bash
+nito-cli -named -interactive restorewallet wallet_name="restored-wallet" backup_file=/home/node01/Backups/backup-01.dat
 ```
-$ nito-cli restorewallet "restored-wallet" /home/node01/Backups/backup-01.dat
-```
+
+The guided form requires approval before loading private backup material. The
+same policy is available for `importwallet`, wallet version upgrades, keypool
+replacement/refill, multisignature creation and legacy watch-only imports.
+These operations can change what a valid wallet backup must contain; follow the
+RPC warning and create a verified backup immediately afterward.
 
 After that, `getwalletinfo` can be used to check if the wallet has been fully restored.
 
@@ -184,32 +197,26 @@ First make and verify a normal V3 wallet backup. If the wallet is encrypted,
 unlock it through the hidden-input CLI prompt:
 
 ```bash
-nito-cli -stdinwalletpassphrase -rpcwallet=legacy walletpassphrase 300
+nito-cli -named -interactive -rpcwallet=legacy walletpassphrase timeout=300
 ```
 
-An unencrypted wallet does not need that step. To generate a new Orchard phrase
-without a BIP39 passphrase, run:
+An unencrypted wallet does not need that step. Use the guided command for a new
+Orchard phrase, an optional BIP39 passphrase or restoration of a saved phrase:
 
 ```bash
-nito-cli -rpcwallet=legacy upgradeorchardwallet
+nito-cli -named -interactive -rpcwallet=legacy upgradeorchardwallet
 ```
 
-The result contains the new phrase, its `orchard_only` scope, the path of the
-automatic pre-upgrade backup and a warning. Save the phrase and keep both the
-original V3 backup and the automatic backup permanently: the Orchard phrase
-cannot restore pre-existing transparent or imported keys.
+The wizard requests and confirms a supplied phrase, confirms an optional BIP39
+passphrase, and asks for final approval before mutation. The result contains the
+phrase, its `orchard_only` scope, the path of the automatic pre-upgrade
+backup and a warning. Save the phrase and keep both the original V3 backup and
+the automatic backup permanently: the Orchard phrase cannot restore
+pre-existing transparent or imported keys.
 
-Supplying a BIP39 passphrase or a saved Orchard phrase uses the advanced
-protected-input form:
-
-```bash
-nito-cli -named -stdin -rpcwallet=legacy upgradeorchardwallet
-```
-
-Provide `bip39_passphrase=<value>` to protect a newly generated phrase. To
-restore an existing Orchard root, also provide `mnemonic=<12 or 24 words>`.
-Supply only the lines that apply and then end standard input. The BIP39
-passphrase is never stored and a different value derives a different wallet.
+Protected automation can instead provide optional `mnemonic=...` and
+`bip39_passphrase=...` lines through `-named -stdin`, as described in
+the [RPC reference](nito/rpc-reference.md#advanced-automation).
 
 Relock a wallet that was unlocked for the operation:
 
@@ -226,6 +233,17 @@ Nito Core refuses `migratewallet` after an Orchard recovery root has been added
 to a legacy wallet. Continue using that wallet directly to preserve its
 transparent and Orchard keys. Migration is optional for supported V3 legacy
 wallets and must take place before `upgradeorchardwallet` if you want both.
+
+For a person at a terminal, run:
+
+```bash
+nito-cli -named -interactive -rpcwallet=legacy migratewallet
+```
+
+The wizard confirms migration, asks whether the wallet is encrypted and requests
+the current password without echo only when required. It then sends one
+`migratewallet` request. A cancellation, missing password or unavailable RPC
+server causes no wallet mutation.
 
 Legacy wallets (traditional non-descriptor wallets) can be migrated to become Descriptor wallets
 through the use of the `migratewallet` RPC. Migrated wallets will have all of their addresses and private keys added to

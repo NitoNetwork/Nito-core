@@ -113,10 +113,23 @@ Send RPC for non\-default wallet on RPC server (needs to exactly match
 corresponding \fB\-wallet\fR option passed to nitod). This changes the
 RPC endpoint used, e.g. http://127.0.0.1:8332/wallet/<walletname>
 .HP
+\fB\-interactive\fR
+.IP
+Guide the audited recovery, private\-authority, signing, descriptor and
+backup\-changing operations through labeled prompts while keeping secrets out
+of shell history and process arguments. Requires \fB\-named\fR. New secrets,
+recovery phrases, private keys, private descriptors and protected request
+objects are confirmed before use; signing, private disclosure and
+backup\-changing operations require explicit approval. Secret input is not echoed;
+seeing no characters or asterisks while typing is intentional. Cannot be
+combined with \fB\-stdin\fR or \fB\-stdinwalletpassphrase\fR. Use
+\fBnito\-cli help\fR and the RPC reference for the finite supported command list.
+.HP
 \fB\-stdin\fR
 .IP
-Read extra arguments from standard input, one per line until EOF/Ctrl\-D
-(recommended for sensitive information such as passphrases). When
+Read extra arguments from standard input without terminal echo, one per line
+until EOF/Ctrl\-D. This is the advanced automation interface; prefer
+\fB\-interactive\fR for supported human wallet operations. When
 combined with \fB\-stdinrpcpass\fR, the first line from standard input
 is used for the RPC password.
 .HP
@@ -132,7 +145,9 @@ consumes the second.
 .IP
 Read wallet passphrase from standard input as a single line. When
 combined with \fB\-stdin\fR, the first line from standard input is used
-for the wallet passphrase.
+for the wallet passphrase. Input is not echoed, but this compatibility option
+does not provide a labeled field prompt. It remains available for protected
+automation; prefer \fB\-named \-interactive\fR for a person at a terminal.
 .HP
 \fB\-version\fR
 .IP

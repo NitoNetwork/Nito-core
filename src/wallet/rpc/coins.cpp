@@ -1083,7 +1083,7 @@ RPCHelpMan getprivatenoteproof()
         "\nExports a voluntary Nito.network private note proof for a locally decrypted note.\n"
         "\nThe proof opens one private note commitment to its amount and private address without revealing the spending key.\n"
         "Anyone who receives the proof can run checkprivatenoteproof and compare the cmx/txid/action_index with the public transaction.\n"
-        "Treat the proof as sensitive: it reveals the selected private note amount, recipient and note opening.\n",
+        "Treat the proof as sensitive: it reveals the selected private note amount, recipient and note opening. At a terminal, use -named -interactive with nito-cli so disclosure requires explicit confirmation.\n",
         {
             {"cmx", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The private note commitment from listprivateunspent."},
         },
@@ -1109,8 +1109,7 @@ RPCHelpMan getprivatenoteproof()
             }
         },
         RPCExamples{
-            HelpExampleCli("getprivatenoteproof", "\"<cmx-from-listprivateunspent>\"")
-            + HelpExampleRpc("getprivatenoteproof", "\"<cmx-from-listprivateunspent>\"")
+            HelpExampleCli("-named -interactive getprivatenoteproof", "cmx=CMX_FROM_LISTPRIVATEUNSPENT")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -1166,7 +1165,7 @@ RPCHelpMan checkprivatenoteproof()
         "\nThis verifies that the disclosed recipient, amount and note randomness recompute the disclosed Orchard commitment.\n"
         "If the creating transaction is present in the current wallet, the RPC also checks that txid/action_index contains the same cmx.\n",
         {
-            {"proof", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Serialized private note proof from getprivatenoteproof."},
+            {"proof", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Serialized private note proof from getprivatenoteproof. It discloses private note details; at a terminal use -named -interactive with nito-cli so it is entered without echo."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "",
@@ -1193,8 +1192,7 @@ RPCHelpMan checkprivatenoteproof()
             }
         },
         RPCExamples{
-            HelpExampleCli("checkprivatenoteproof", "\"<proof-hex>\"")
-            + HelpExampleRpc("checkprivatenoteproof", "\"<proof-hex>\"")
+            HelpExampleCli("-named -interactive checkprivatenoteproof", "")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {

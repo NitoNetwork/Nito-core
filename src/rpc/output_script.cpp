@@ -200,7 +200,7 @@ static RPCHelpMan getdescriptorinfo()
     return RPCHelpMan{"getdescriptorinfo",
         {"\nAnalyses a descriptor.\n"},
         {
-            {"descriptor", RPCArg::Type::STR, RPCArg::Optional::NO, "The descriptor."},
+            {"descriptor", RPCArg::Type::STR, RPCArg::Optional::NO, "The descriptor. At a terminal, use -named -interactive with nito-cli when it may contain xprv data so it is entered without echo."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "",
@@ -215,6 +215,7 @@ static RPCHelpMan getdescriptorinfo()
         RPCExamples{
             "Analyse a descriptor\n" +
             HelpExampleCli("getdescriptorinfo", "\"" + EXAMPLE_DESCRIPTOR + "\"") +
+            HelpExampleCli("-named -interactive getdescriptorinfo", "") +
             HelpExampleRpc("getdescriptorinfo", "\"" + EXAMPLE_DESCRIPTOR + "\"")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
@@ -253,7 +254,7 @@ static RPCHelpMan deriveaddresses()
          "or more path elements separated by \"/\", where \"h\" represents a hardened child key.\n"
          "For more information on output descriptors, see the documentation in the doc/descriptors.md file.\n"},
         {
-            {"descriptor", RPCArg::Type::STR, RPCArg::Optional::NO, "The descriptor."},
+            {"descriptor", RPCArg::Type::STR, RPCArg::Optional::NO, "The descriptor. At a terminal, use -named -interactive with nito-cli when it may contain xprv data so it is entered without echo."},
             {"range", RPCArg::Type::RANGE, RPCArg::Optional::OMITTED, "If a ranged descriptor is used, this specifies the end or the range (in [begin,end] notation) to derive."},
         },
         RPCResult{
@@ -265,6 +266,7 @@ static RPCHelpMan deriveaddresses()
         RPCExamples{
             "First three native segwit receive addresses\n" +
             HelpExampleCli("deriveaddresses", "\"" + EXAMPLE_DESCRIPTOR + "\" \"[0,2]\"") +
+            HelpExampleCli("-named -interactive deriveaddresses", "range='[0,2]'") +
             HelpExampleRpc("deriveaddresses", "\"" + EXAMPLE_DESCRIPTOR + "\", \"[0,2]\"")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue

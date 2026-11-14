@@ -133,22 +133,18 @@ RPCHelpMan importprivkey()
             "Note: Use \"getwalletinfo\" to query the scanning progress.\n"
             "Note: This command is only compatible with legacy wallets. Use \"importdescriptors\" with \"combo(X)\" for descriptor wallets.\n",
                 {
-                    {"privkey", RPCArg::Type::STR, RPCArg::Optional::NO, "The private key (see dumpprivkey)"},
+                    {"privkey", RPCArg::Type::STR, RPCArg::Optional::NO, "The private key (see dumpprivkey). At a terminal, use -named -interactive with nito-cli so the key is prompted for and confirmed without echo."},
                     {"label", RPCArg::Type::STR, RPCArg::DefaultHint{"current label if address exists, otherwise \"\""}, "An optional label"},
                     {"rescan", RPCArg::Type::BOOL, RPCArg::Default{true}, "Scan the chain and mempool for wallet transactions."},
                 },
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
             "\nDump a private key\n"
-            + HelpExampleCli("dumpprivkey", "\"myaddress\"") +
+            + HelpExampleCli("-named -interactive dumpprivkey", "address=myaddress") +
             "\nImport the private key with rescan\n"
-            + HelpExampleCli("importprivkey", "\"mykey\"") +
+            + HelpExampleCli("-named -interactive importprivkey", "rescan=true") +
             "\nImport using a label and without rescan\n"
-            + HelpExampleCli("importprivkey", "\"mykey\" \"testing\" false") +
-            "\nImport using default blank label and without rescan\n"
-            + HelpExampleCli("importprivkey", "\"mykey\" \"\" false") +
-            "\nAs a JSON-RPC call\n"
-            + HelpExampleRpc("importprivkey", "\"mykey\", \"testing\", false")
+            + HelpExampleCli("-named -interactive importprivkey", "label=testing rescan=false")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -228,6 +224,7 @@ RPCHelpMan importaddress()
 {
     return RPCHelpMan{"importaddress",
             "\nAdds an address or script (in hex) that can be watched as if it were in your wallet but cannot be used to spend. Requires a new wallet backup.\n"
+            "At a terminal, use -named -interactive to approve the backup-changing import.\n"
             "\nNote: This call can take over an hour to complete if rescan is true, during that time, other rpc calls\n"
             "may report that the imported address exists but related transactions are still missing, leading to temporarily incorrect/bogus balances and unspent outputs until rescan completes.\n"
             "The rescan parameter can be set to false if the key was never used to create transactions. If it is set to false,\n"
@@ -247,6 +244,7 @@ RPCHelpMan importaddress()
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
             "\nImport an address with rescan\n"
+            + HelpExampleCli("-named -interactive importaddress", "address=\"myaddress\" rescan=true")
             + HelpExampleCli("importaddress", "\"myaddress\"") +
             "\nImport using a label without rescan\n"
             + HelpExampleCli("importaddress", "\"myaddress\" \"testing\" false") +
@@ -418,6 +416,7 @@ RPCHelpMan importpubkey()
 {
     return RPCHelpMan{"importpubkey",
                 "\nAdds a public key (in hex) that can be watched as if it were in your wallet but cannot be used to spend. Requires a new wallet backup.\n"
+                "At a terminal, use -named -interactive to approve the backup-changing import.\n"
                 "Hint: use importmulti to import more than one public key.\n"
             "\nNote: This call can take over an hour to complete if rescan is true, during that time, other rpc calls\n"
             "may report that the imported pubkey exists but related transactions are still missing, leading to temporarily incorrect/bogus balances and unspent outputs until rescan completes.\n"
@@ -433,6 +432,7 @@ RPCHelpMan importpubkey()
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
             "\nImport a public key with rescan\n"
+            + HelpExampleCli("-named -interactive importpubkey", "pubkey=\"mypubkey\" rescan=true")
             + HelpExampleCli("importpubkey", "\"mypubkey\"") +
             "\nImport using a label without rescan\n"
             + HelpExampleCli("importpubkey", "\"mypubkey\" \"testing\" false") +
@@ -510,11 +510,9 @@ RPCHelpMan importwallet()
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
             "\nDump the wallet\n"
-            + HelpExampleCli("dumpwallet", "\"test\"") +
+            + HelpExampleCli("-named -interactive dumpwallet", "filename=test") +
             "\nImport the wallet\n"
-            + HelpExampleCli("importwallet", "\"test\"") +
-            "\nImport using the json rpc call\n"
-            + HelpExampleRpc("importwallet", "\"test\"")
+            + HelpExampleCli("-named -interactive importwallet", "filename=test")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -649,7 +647,7 @@ RPCHelpMan importwallet()
 RPCHelpMan dumpprivkey()
 {
     return RPCHelpMan{"dumpprivkey",
-                "\nReveals the private key corresponding to 'address'.\n"
+                "\nReveals the private key corresponding to 'address'. At a terminal, use -named -interactive with nito-cli to require explicit disclosure confirmation.\n"
                 "Then the importprivkey can be used with this output\n"
                 "Note: This command is only compatible with legacy wallets.\n",
                 {
@@ -659,9 +657,8 @@ RPCHelpMan dumpprivkey()
                     RPCResult::Type::STR, "key", "The private key"
                 },
                 RPCExamples{
-                    HelpExampleCli("dumpprivkey", "\"myaddress\"")
-            + HelpExampleCli("importprivkey", "\"mykey\"")
-            + HelpExampleRpc("dumpprivkey", "\"myaddress\"")
+                    HelpExampleCli("-named -interactive dumpprivkey", "address=myaddress")
+            + HelpExampleCli("-named -interactive importprivkey", "rescan=true")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -696,7 +693,7 @@ RPCHelpMan dumpprivkey()
 RPCHelpMan dumpwallet()
 {
     return RPCHelpMan{"dumpwallet",
-                "\nDumps all wallet keys in a human-readable format to a server-side file. This does not allow overwriting existing files.\n"
+                "\nDumps all wallet keys in a human-readable format to a server-side file. This does not allow overwriting existing files. At a terminal, use -named -interactive with nito-cli to require explicit disclosure confirmation.\n"
                 "Imported scripts are included in the dumpfile, but corresponding BIP173 addresses, etc. may not be added automatically by importwallet.\n"
                 "Note that if your wallet contains keys which are not derived from your HD seed (e.g. imported keys), these are not covered by\n"
                 "only backing up the seed itself, and must be backed up too (e.g. ensure you back up the whole dumpfile).\n"
@@ -712,8 +709,7 @@ RPCHelpMan dumpwallet()
                     }
                 },
                 RPCExamples{
-                    HelpExampleCli("dumpwallet", "\"test\"")
-            + HelpExampleRpc("dumpwallet", "\"test\"")
+                    HelpExampleCli("-named -interactive dumpwallet", "filename=test")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -1258,6 +1254,7 @@ RPCHelpMan importmulti()
 {
     return RPCHelpMan{"importmulti",
                 "\nImport addresses/scripts (with private or public keys, redeem script (P2SH)), optionally rescanning the blockchain from the earliest creation time of the imported scripts. Requires a new wallet backup.\n"
+                "At a terminal, use -named -interactive with nito-cli to enter and confirm the complete request array without echo; it may contain private keys or private descriptors.\n"
                 "If an address/script is imported without all of the private keys required to spend from that address, it will be watchonly. The 'watchonly' option must be set to true in this case or a warning will be returned.\n"
                 "Conversely, if all the private keys are provided and the address/script is spendable, the watchonly option must be set to false, or a warning will be returned.\n"
             "\nNote: This call can take over an hour to complete if rescan is true, during that time, other rpc calls\n"
@@ -1328,9 +1325,7 @@ RPCHelpMan importmulti()
                     }
                 },
                 RPCExamples{
-                    HelpExampleCli("importmulti", "'[{ \"scriptPubKey\": { \"address\": \"<my address>\" }, \"timestamp\":1455191478 }, "
-                                          "{ \"scriptPubKey\": { \"address\": \"<my 2nd address>\" }, \"label\": \"example 2\", \"timestamp\": 1455191480 }]'") +
-                    HelpExampleCli("importmulti", "'[{ \"scriptPubKey\": { \"address\": \"<my address>\" }, \"timestamp\":1455191478 }]' '{ \"rescan\": false}'")
+                    HelpExampleCli("-named -interactive importmulti", "")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& mainRequest) -> UniValue
 {
@@ -1608,6 +1603,7 @@ RPCHelpMan importdescriptors()
 {
     return RPCHelpMan{"importdescriptors",
                 "\nImport descriptors. This will trigger a rescan of the blockchain based on the earliest timestamp of all descriptors being imported. Requires a new wallet backup.\n"
+            "At a terminal, use -named -interactive with nito-cli to enter and confirm the complete request array without echo because descriptors may contain private extended keys.\n"
             "\nNote: This call can take over an hour to complete if using an early timestamp; during that time, other rpc calls\n"
             "may report that the imported keys, addresses or scripts exist but related transactions are still missing.\n"
             "The rescan is significantly faster if block filters are available (using startup option \"-blockfilterindex=1\").\n",
@@ -1652,9 +1648,7 @@ RPCHelpMan importdescriptors()
                     }
                 },
                 RPCExamples{
-                    HelpExampleCli("importdescriptors", "'[{ \"desc\": \"<my descriptor>\", \"timestamp\":1455191478, \"internal\": true }, "
-                                          "{ \"desc\": \"<my descriptor 2>\", \"label\": \"example 2\", \"timestamp\": 1455191480 }]'") +
-                    HelpExampleCli("importdescriptors", "'[{ \"desc\": \"<my descriptor>\", \"timestamp\":1455191478, \"active\": true, \"range\": [0,100], \"label\": \"<my bech32 wallet>\" }]'")
+                    HelpExampleCli("-named -interactive importdescriptors", "")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& main_request) -> UniValue
 {
@@ -1766,7 +1760,7 @@ RPCHelpMan listdescriptors()
     return RPCHelpMan{
         "listdescriptors",
         "\nList transparent descriptors imported into a descriptor-enabled wallet.\n"
-        "Use getprivatekeymaninfo true to export Orchard private descriptors.\n",
+        "Use getprivatekeymaninfo true to export Orchard private descriptors. At a terminal, use -named -interactive for private descriptor export so disclosure requires explicit confirmation.\n",
         {
             {"private", RPCArg::Type::BOOL, RPCArg::Default{false}, "Show private descriptors."}
         },
@@ -1790,7 +1784,7 @@ RPCHelpMan listdescriptors()
         }},
         RPCExamples{
             HelpExampleCli("listdescriptors", "") + HelpExampleRpc("listdescriptors", "")
-            + HelpExampleCli("listdescriptors", "true") + HelpExampleRpc("listdescriptors", "true")
+            + HelpExampleCli("-named -interactive listdescriptors", "") + HelpExampleRpc("listdescriptors", "true")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -1885,14 +1879,14 @@ RPCHelpMan listdescriptors()
 RPCHelpMan backupwallet()
 {
     return RPCHelpMan{"backupwallet",
-                "\nSafely copies the current wallet file to the specified destination, which can either be a directory or a path with a filename.\n",
+                "\nSafely copies the current wallet file to the specified destination, which can either be a directory or a path with a filename.\n"
+                "The backup contains private wallet authority. At a terminal, use -named -interactive with nito-cli to require explicit confirmation before writing it.\n",
                 {
                     {"destination", RPCArg::Type::STR, RPCArg::Optional::NO, "The destination directory or file"},
                 },
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
-                    HelpExampleCli("backupwallet", "\"backup.dat\"")
-            + HelpExampleRpc("backupwallet", "\"backup.dat\"")
+                    HelpExampleCli("-named -interactive backupwallet", "destination=backup.dat")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -1939,10 +1933,8 @@ RPCHelpMan restorewallet()
             }
         },
         RPCExamples{
-            HelpExampleCli("restorewallet", "\"testwallet\" \"home\\backups\\backup-file.bak\"")
-            + HelpExampleRpc("restorewallet", "\"testwallet\" \"home\\backups\\backup-file.bak\"")
-            + HelpExampleCliNamed("restorewallet", {{"wallet_name", "testwallet"}, {"backup_file", "home\\backups\\backup-file.bak\""}, {"load_on_startup", true}})
-            + HelpExampleRpcNamed("restorewallet", {{"wallet_name", "testwallet"}, {"backup_file", "home\\backups\\backup-file.bak\""}, {"load_on_startup", true}})
+            HelpExampleCli("-named -interactive restorewallet", "wallet_name=testwallet backup_file=home/backups/backup-file.bak load_on_startup=true")
+            + HelpExampleRpcNamed("restorewallet", {{"wallet_name", "testwallet"}, {"backup_file", "home\\backups\\backup-file.bak"}, {"load_on_startup", true}})
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {

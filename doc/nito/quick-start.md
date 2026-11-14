@@ -83,25 +83,39 @@ The wallet keeps its transparent keys, labels, address sequence and default
 Bech32 behavior, including its existing wallet-file encryption state. No
 Orchard conversion is required for transparent use.
 
-Before adding Orchard, make a separate wallet backup. For an unencrypted v3
-wallet, generate a new Orchard phrase without a BIP39 passphrase with:
+Legacy-to-descriptor migration is optional. If wanted, perform it before adding
+Orchard:
 
 ```bash
-nito-cli -rpcwallet=legacy upgradeorchardwallet
+nito-cli -named -interactive -rpcwallet=legacy migratewallet
 ```
 
-For an encrypted v3 wallet, first unlock it without placing its wallet password
-in shell history or process arguments:
+The wizard asks for confirmation and requests the current wallet encryption
+password without echo only if the wallet is encrypted. Migration creates a
+legacy backup and may create separate watch-only or solvable wallets. Verify
+the returned backup path before continuing.
+
+Before adding Orchard, make a separate wallet backup. For an encrypted v3
+wallet, first unlock it without placing its wallet password in shell history or
+process arguments:
 
 ```bash
-nito-cli -stdinwalletpassphrase -rpcwallet=legacy walletpassphrase 300
+nito-cli -named -interactive -rpcwallet=legacy walletpassphrase timeout=300
 ```
 
-Type the wallet encryption password at the prompt. It is not displayed. Then
-run the Orchard upgrade shown above. To add a BIP39 passphrase or restore a
-saved Orchard phrase, use the protected named-input procedure in
-[the RPC reference](rpc-reference.md#add-orchard-to-an-existing-v3-wallet). If the wallet was
-encrypted, lock it again after the operation:
+Type the wallet encryption password at the prompt. It is not displayed. An
+unencrypted wallet skips this step. Use the guided Orchard command in every
+case:
+
+```bash
+nito-cli -named -interactive -rpcwallet=legacy upgradeorchardwallet
+```
+
+Choose whether to restore an existing Orchard phrase and whether that phrase
+uses a separate BIP39 passphrase. Every supplied phrase or new secret is
+confirmed without echo, followed by final confirmation before the backup and
+wallet mutation. If the wallet was encrypted, lock it again after the
+operation:
 
 ```bash
 nito-cli -rpcwallet=legacy walletlock
@@ -142,18 +156,24 @@ wallet for the current process. Protected non-interactive input is intended for
 automation and is documented in the
 [RPC reference](rpc-reference.md#optional-bip39-passphrase).
 
+The same guided mode has a finite audited command set for private descriptors,
+signing, sensitive exports, backup/restore and legacy mutations that change
+backup requirements. See the complete
+[guided human input table](rpc-reference.md#guided-human-input); ordinary RPC
+forms remain unchanged for services and automation.
+
 If wallet-file encryption was selected, unlock the wallet through the secure
 prompt before exporting its canonical phrase:
 
 ```bash
-nito-cli -stdinwalletpassphrase -rpcwallet=main walletpassphrase 300
+nito-cli -named -interactive -rpcwallet=main walletpassphrase timeout=300
 ```
 
 Skip that command for an unencrypted wallet. Export the phrase and verify the
 returned scope:
 
 ```bash
-nito-cli -rpcwallet=main dumpmnemonic
+nito-cli -named -interactive -rpcwallet=main dumpmnemonic
 ```
 
 After recording and verifying the phrase, lock an encrypted wallet again:
@@ -175,16 +195,26 @@ Local validation or RPC errors return a nonzero exit status.
 ## Restore A Native V4 Phrase
 
 ```bash
-nito-cli -named createwallet wallet_name=restore blank=true descriptors=true
-nito-cli -named -stdin -rpcwallet=restore sethdseed newkeypool=true
+nito-cli -named -interactive createwallet wallet_name=restore blank=true descriptors=true
+nito-cli -named -interactive -rpcwallet=restore walletpassphrase timeout=600
+nito-cli -named -interactive -rpcwallet=restore sethdseed newkeypool=true
+nito-cli -rpcwallet=restore walletlock
 ```
 
-Enter `seed=` followed by the complete phrase on one standard-input line. If
-used, enter `bip39_passphrase=` followed by its exact value on another line.
-Then end input with Ctrl-D on Linux/macOS or Ctrl-Z followed by Enter on Windows.
-Keep both secrets off the command line. `-stdin` disables terminal echo when
-reading from a terminal; protect redirected input and its source. Qt also
-provides a recovery-phrase import form.
+The wizard requests and confirms the complete phrase without echo, asks whether
+it used a BIP39 passphrase, confirms that secret when selected, and requires
+final approval before initializing the blank wallet. Keep both secrets off the
+command line. Qt also provides a recovery-phrase import form. The protected
+`-stdin` form is reserved for advanced automation and is documented in the
+[RPC reference](rpc-reference.md#advanced-automation).
+
+The first command asks whether to encrypt the restored wallet file. It omits the
+BIP39 question because the blank wallet has no recovery phrase yet. If you
+selected encryption, run the second line to unlock the blank wallet, restore
+with `sethdseed`, then run `walletlock`. Skip both password lines for an
+unencrypted wallet. The restore wizard can generate a new random BIP39 phrase,
+accept an existing BIP39 phrase, or accept a legacy WIF seed only for a legacy
+wallet; native V4 recovery uses the existing-BIP39 choice.
 
 Restore automatically reconstructs complete chain-derived transparent and
 Orchard history together with current spendable funds. On an existing chain it
@@ -207,6 +237,13 @@ An `orchard_only` phrase must be combined with its original v3 wallet backup:
 restore the v3 file first, then pass the saved phrase to
 `upgradeorchardwallet`, with its BIP39 passphrase if used. Keep the original v3
 `wallet.dat` backup for life for its transparent keys.
+
+For private-key imports, standalone-key signing, phrase/key/viewing-key
+disclosure, descriptor-private export, wallet dumps and wallet-file backups,
+use the guided forms in
+[the RPC reference](rpc-reference.md#private-key-input-signing-and-sensitive-exports).
+They request hidden secrets without process arguments and require explicit
+confirmation before mutation or disclosure.
 
 ## Receive Funds
 

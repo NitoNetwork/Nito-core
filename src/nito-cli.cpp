@@ -34,8 +34,10 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <tuple>
 
@@ -106,10 +108,10 @@ static void SetupCliArgs(ArgsManager& argsman)
     argsman.AddArg("-rpcwait", "Wait for RPC server to start", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-rpcwaittimeout=<n>", strprintf("Timeout in seconds to wait for the RPC server to start, or 0 for no timeout. (default: %d)", DEFAULT_WAIT_CLIENT_TIMEOUT), ArgsManager::ALLOW_ANY | ArgsManager::DISALLOW_NEGATION, OptionsCategory::OPTIONS);
     argsman.AddArg("-rpcwallet=<walletname>", "Send RPC for non-default wallet on RPC server (needs to exactly match corresponding -wallet option passed to nitod). This changes the RPC endpoint used, e.g. http://127.0.0.1:8332/wallet/<walletname>", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-stdin", "Read extra arguments from standard input without terminal echo, one per line until EOF/Ctrl-D (recommended for sensitive information such as passphrases). When combined with -stdinrpcpass, the first line from standard input is used for the RPC password.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-interactive", "Guide -named createwallet through optional wallet encryption and optional BIP39 passphrase choices. Selected secrets are prompted for and confirmed without terminal echo, and are never placed in command-line arguments. This option cannot be combined with -stdin.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-stdin", "Read extra arguments from standard input without terminal echo, one per line until EOF/Ctrl-D. This compatibility mode is intended for protected automation; human terminal use should prefer -named -interactive for supported sensitive RPCs. When combined with -stdinrpcpass, the first line from standard input is used for the RPC password.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-interactive", "Guide the documented sensitive or high-impact RPCs through human-readable choices, hidden private-authority entry, and explicit confirmation. Use with -named. Protected values are never placed in command-line arguments. This finite mode covers recovery, signing, descriptor-bearing, disclosure, backup, and backup-changing wallet operations; it is not a prompt wrapper for every RPC. It cannot be combined with -stdin or -stdinwalletpassphrase.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-stdinrpcpass", "Read RPC password from standard input as a single line. When combined with -stdin, the first line from standard input is used for the RPC password. When combined with -stdinwalletpassphrase, -stdinrpcpass consumes the first line, and -stdinwalletpassphrase consumes the second.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-stdinwalletpassphrase", "Read wallet passphrase from standard input as a single line. When combined with -stdin, the first line from standard input is used for the wallet passphrase.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-stdinwalletpassphrase", "Read wallet passphrase from standard input as a single line for protected automation and compatibility. Human terminal use should prefer -named -interactive walletpassphrase. When combined with -stdin, the first line from standard input is used for the wallet passphrase.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 }
 
 /** libevent event log callback */
@@ -1150,23 +1152,370 @@ static int CommandLineRPC(int argc, char *argv[])
         }
         std::vector<std::string> args = std::vector<std::string>(&argv[1], &argv[argc]);
         if (gArgs.GetBoolArg("-interactive", false)) {
-            if (gArgs.GetBoolArg("-stdin", false)) {
-                throw std::runtime_error("-interactive cannot be combined with -stdin");
+            if (gArgs.GetBoolArg("-stdin", false) || gArgs.GetBoolArg("-stdinwalletpassphrase", false)) {
+                throw std::runtime_error("-interactive cannot be combined with -stdin or -stdinwalletpassphrase");
             }
-            if (!gArgs.GetBoolArg("-named", false) || args.empty() || args[0] != "createwallet") {
-                throw std::runtime_error("-interactive is only applicable to -named createwallet");
+            if (!gArgs.GetBoolArg("-named", false) || args.empty()) {
+                throw std::runtime_error("-interactive requires -named and a supported RPC");
             }
-            if (std::any_of(args.begin() + 1, args.end(), [](const std::string& arg) {
-                    return arg.rfind("passphrase=", 0) == 0 || arg.rfind("bip39_passphrase=", 0) == 0;
-                })) {
-                throw std::runtime_error("Do not provide passphrase or bip39_passphrase arguments with -interactive");
+
+            const std::string interactive_method{args[0]};
+            static const std::set<std::string> supported_interactive_methods{
+                "createwallet",
+                "migratewallet",
+                "upgradeorchardwallet",
+                "sethdseed",
+                "encryptwallet",
+                "walletpassphrase",
+                "walletpassphrasechange",
+                "importprivkey",
+                "importmulti",
+                "importdescriptors",
+                "signmessagewithprivkey",
+                "signrawtransactionwithkey",
+                "descriptorprocesspsbt",
+                "getdescriptorinfo",
+                "deriveaddresses",
+                "utxoupdatepsbt",
+                "scantxoutset",
+                "scanblocks",
+                "generatetodescriptor",
+                "generateblock",
+                "pruneblockchain",
+                "preciousblock",
+                "invalidateblock",
+                "reconsiderblock",
+                "loadtxoutset",
+                "signmessage",
+                "signrawtransactionwithwallet",
+                "walletprocesspsbt",
+                "fundrawtransaction",
+                "send",
+                "sendall",
+                "walletcreatefundedpsbt",
+                "dumpprivkey",
+                "dumpmnemonic",
+                "getprivateviewkey",
+                "getprivatenoteproof",
+                "checkprivatenoteproof",
+                "listdescriptors",
+                "getprivatekeymaninfo",
+                "dumpwallet",
+                "backupwallet",
+                "importwallet",
+                "restorewallet",
+                "upgradewallet",
+                "newkeypool",
+                "keypoolrefill",
+                "addmultisigaddress",
+                "importaddress",
+                "importpubkey",
+            };
+            if (!supported_interactive_methods.count(interactive_method)) {
+                throw std::runtime_error("-interactive is not supported for this RPC; use it only with a documented sensitive or high-impact RPC");
+            }
+
+            const auto has_named_argument = [&](const std::string& name) {
+                return std::any_of(args.begin() + 1, args.end(), [&](const std::string& arg) {
+                    return arg == name || arg.rfind(name + "=", 0) == 0;
+                });
+            };
+            const auto get_named_argument = [&](const std::string& name) -> std::optional<std::string> {
+                std::optional<std::string> value;
+                const std::string prefix{name + "="};
+                for (auto it = args.begin() + 1; it != args.end(); ++it) {
+                    if (it->rfind(prefix, 0) != 0) continue;
+                    if (value) throw std::runtime_error(strprintf("Duplicate named argument: %s", name));
+                    value = it->substr(prefix.size());
+                }
+                return value;
+            };
+            const auto get_named_bool = [&](const std::string& name, bool default_value) {
+                const std::optional<std::string> value{get_named_argument(name)};
+                if (!value) return default_value;
+                if (*value == "true") return true;
+                if (*value == "false") return false;
+                throw std::runtime_error(strprintf("%s must be true or false with -interactive", name));
+            };
+            const auto require_named_string = [&](const std::string& name) {
+                const std::optional<std::string> value{get_named_argument(name)};
+                if (!value || value->empty()) {
+                    throw std::runtime_error(strprintf("%s must be provided and non-empty with -interactive %s", name, interactive_method));
+                }
+                return *value;
+            };
+            const auto ensure_only_named_arguments = [&](std::initializer_list<const char*> allowed_names) {
+                std::set<std::string> allowed;
+                for (const char* name : allowed_names) allowed.emplace(name);
+                std::set<std::string> seen;
+                for (auto it = args.begin() + 1; it != args.end(); ++it) {
+                    const size_t separator{it->find('=')};
+                    if (separator == std::string::npos || separator == 0) {
+                        throw std::runtime_error("Every argument after the RPC name must use name=value syntax with -interactive");
+                    }
+                    const std::string name{it->substr(0, separator)};
+                    if (!allowed.count(name)) {
+                        throw std::runtime_error(strprintf("Unknown named argument for -interactive %s: %s", interactive_method, name));
+                    }
+                    if (!seen.emplace(name).second) {
+                        throw std::runtime_error(strprintf("Duplicate named argument: %s", name));
+                    }
+                }
+            };
+            const auto reject_named_arguments = [&](std::initializer_list<const char*> names) {
+                for (const char* name : names) {
+                    if (has_named_argument(name)) {
+                        throw std::runtime_error(strprintf("Do not provide %s on the command line with -interactive", name));
+                    }
+                }
+            };
+
+            if (interactive_method == "createwallet") {
+                ensure_only_named_arguments({"wallet_name", "disable_private_keys", "blank", "passphrase", "avoid_reuse", "descriptors", "load_on_startup", "external_signer", "bip39_passphrase"});
+                reject_named_arguments({"passphrase", "bip39_passphrase"});
+                const std::optional<std::string> wallet_name{get_named_argument("wallet_name")};
+                if (!wallet_name || wallet_name->empty()) {
+                    throw std::runtime_error("wallet_name must be provided and non-empty with -interactive createwallet");
+                }
+                const bool disable_private_keys{get_named_bool("disable_private_keys", false)};
+                const bool blank{get_named_bool("blank", false)};
+                const bool descriptors{get_named_bool("descriptors", true)};
+                const bool external_signer{get_named_bool("external_signer", false)};
+                get_named_bool("avoid_reuse", false);
+                if (const std::optional<std::string> load_on_startup{get_named_argument("load_on_startup")};
+                    load_on_startup && *load_on_startup != "true" && *load_on_startup != "false" && *load_on_startup != "null") {
+                    throw std::runtime_error("load_on_startup must be true, false, or null with -interactive");
+                }
+                if (external_signer && (!disable_private_keys || !descriptors)) {
+                    throw std::runtime_error("external_signer=true requires disable_private_keys=true and descriptors=true");
+                }
+            } else if (interactive_method == "migratewallet") {
+                ensure_only_named_arguments({"wallet_name", "passphrase"});
+                reject_named_arguments({"passphrase"});
+                const std::optional<std::string> wallet_name{get_named_argument("wallet_name")};
+                const bool rpc_wallet_set{gArgs.IsArgSet("-rpcwallet")};
+                if (!rpc_wallet_set && !wallet_name) {
+                    throw std::runtime_error("migratewallet requires -rpcwallet=<wallet> or wallet_name=<wallet>");
+                }
+                if (rpc_wallet_set && wallet_name && *wallet_name != gArgs.GetArg("-rpcwallet", "")) {
+                    throw std::runtime_error("-rpcwallet and wallet_name must identify the same wallet");
+                }
+            } else if (interactive_method == "upgradeorchardwallet") {
+                ensure_only_named_arguments({"mnemonic", "bip39_passphrase"});
+                reject_named_arguments({"mnemonic", "bip39_passphrase"});
+            } else if (interactive_method == "sethdseed") {
+                ensure_only_named_arguments({"newkeypool", "seed", "bip39_passphrase"});
+                reject_named_arguments({"seed", "bip39_passphrase"});
+                get_named_bool("newkeypool", true);
+            } else if (interactive_method == "encryptwallet") {
+                ensure_only_named_arguments({"passphrase"});
+                reject_named_arguments({"passphrase"});
+            } else if (interactive_method == "walletpassphrase") {
+                ensure_only_named_arguments({"passphrase", "timeout"});
+                reject_named_arguments({"passphrase"});
+                const std::string timeout{require_named_string("timeout")};
+                int64_t timeout_value;
+                if (!ParseInt64(timeout, &timeout_value) || timeout_value < 0) {
+                    throw std::runtime_error("timeout must be a non-negative integer with -interactive walletpassphrase");
+                }
+            } else if (interactive_method == "walletpassphrasechange") {
+                ensure_only_named_arguments({"oldpassphrase", "newpassphrase"});
+                reject_named_arguments({"oldpassphrase", "newpassphrase"});
+            } else if (interactive_method == "importprivkey") {
+                ensure_only_named_arguments({"privkey", "label", "rescan"});
+                reject_named_arguments({"privkey"});
+                get_named_bool("rescan", true);
+            } else if (interactive_method == "importmulti") {
+                ensure_only_named_arguments({"requests", "options"});
+                reject_named_arguments({"requests"});
+            } else if (interactive_method == "importdescriptors") {
+                ensure_only_named_arguments({"requests"});
+                reject_named_arguments({"requests"});
+            } else if (interactive_method == "signmessagewithprivkey") {
+                ensure_only_named_arguments({"privkey", "message"});
+                reject_named_arguments({"privkey"});
+                if (!get_named_argument("message")) {
+                    throw std::runtime_error("message must be provided with -interactive signmessagewithprivkey");
+                }
+            } else if (interactive_method == "signrawtransactionwithkey") {
+                ensure_only_named_arguments({"hexstring", "privkeys", "prevtxs", "sighashtype"});
+                reject_named_arguments({"privkeys"});
+                require_named_string("hexstring");
+            } else if (interactive_method == "descriptorprocesspsbt") {
+                ensure_only_named_arguments({"psbt", "descriptors", "sighashtype", "bip32derivs", "finalize"});
+                reject_named_arguments({"descriptors"});
+                require_named_string("psbt");
+                get_named_bool("bip32derivs", true);
+                get_named_bool("finalize", true);
+            } else if (interactive_method == "getdescriptorinfo") {
+                ensure_only_named_arguments({"descriptor"});
+                reject_named_arguments({"descriptor"});
+            } else if (interactive_method == "deriveaddresses") {
+                ensure_only_named_arguments({"descriptor", "range"});
+                reject_named_arguments({"descriptor"});
+            } else if (interactive_method == "utxoupdatepsbt") {
+                ensure_only_named_arguments({"psbt", "descriptors"});
+                reject_named_arguments({"descriptors"});
+                require_named_string("psbt");
+            } else if (interactive_method == "scantxoutset") {
+                ensure_only_named_arguments({"action", "scanobjects"});
+                reject_named_arguments({"scanobjects"});
+                if (require_named_string("action") != "start") {
+                    throw std::runtime_error("-interactive scantxoutset is only for action=start; use the ordinary RPC form for status or abort");
+                }
+            } else if (interactive_method == "scanblocks") {
+                ensure_only_named_arguments({"action", "scanobjects", "start_height", "stop_height", "filtertype", "options"});
+                reject_named_arguments({"scanobjects"});
+                if (require_named_string("action") != "start") {
+                    throw std::runtime_error("-interactive scanblocks is only for action=start; use the ordinary RPC form for status or abort");
+                }
+            } else if (interactive_method == "generatetodescriptor") {
+                ensure_only_named_arguments({"num_blocks", "descriptor", "maxtries"});
+                reject_named_arguments({"descriptor"});
+                require_named_string("num_blocks");
+            } else if (interactive_method == "generateblock") {
+                ensure_only_named_arguments({"output", "transactions", "submit"});
+                reject_named_arguments({"output"});
+                require_named_string("transactions");
+                get_named_bool("submit", true);
+            } else if (interactive_method == "pruneblockchain") {
+                ensure_only_named_arguments({"height"});
+                const std::string height{require_named_string("height")};
+                int64_t parsed_height;
+                if (!ParseInt64(height, &parsed_height) || parsed_height < 0) {
+                    throw std::runtime_error("height must be a non-negative integer with -interactive pruneblockchain");
+                }
+            } else if (interactive_method == "preciousblock" ||
+                       interactive_method == "invalidateblock" ||
+                       interactive_method == "reconsiderblock") {
+                ensure_only_named_arguments({"blockhash"});
+                const std::string blockhash{require_named_string("blockhash")};
+                if (blockhash.size() != 64 || !IsHex(blockhash)) {
+                    throw std::runtime_error(strprintf("blockhash must be a 64-character hexadecimal hash with -interactive %s", interactive_method));
+                }
+            } else if (interactive_method == "loadtxoutset") {
+                ensure_only_named_arguments({"path"});
+                require_named_string("path");
+            } else if (interactive_method == "signmessage") {
+                ensure_only_named_arguments({"address", "message"});
+                require_named_string("address");
+                if (!get_named_argument("message")) {
+                    throw std::runtime_error("message must be provided with -interactive signmessage");
+                }
+            } else if (interactive_method == "signrawtransactionwithwallet") {
+                ensure_only_named_arguments({"hexstring", "prevtxs", "sighashtype"});
+                require_named_string("hexstring");
+            } else if (interactive_method == "walletprocesspsbt") {
+                ensure_only_named_arguments({"psbt", "sign", "sighashtype", "bip32derivs", "finalize", "private_intent_hash"});
+                require_named_string("psbt");
+                get_named_bool("sign", true);
+                get_named_bool("bip32derivs", true);
+                get_named_bool("finalize", true);
+            } else if (interactive_method == "fundrawtransaction") {
+                ensure_only_named_arguments({"hexstring", "options", "iswitness"});
+                reject_named_arguments({"options"});
+                require_named_string("hexstring");
+                if (has_named_argument("iswitness")) get_named_bool("iswitness", false);
+            } else if (interactive_method == "send") {
+                ensure_only_named_arguments({"outputs", "conf_target", "estimate_mode", "fee_rate", "options"});
+                reject_named_arguments({"options"});
+                require_named_string("outputs");
+            } else if (interactive_method == "sendall") {
+                ensure_only_named_arguments({"recipients", "conf_target", "estimate_mode", "fee_rate", "options"});
+                reject_named_arguments({"options"});
+                require_named_string("recipients");
+            } else if (interactive_method == "walletcreatefundedpsbt") {
+                ensure_only_named_arguments({"inputs", "outputs", "locktime", "options", "bip32derivs"});
+                reject_named_arguments({"options"});
+                require_named_string("outputs");
+                get_named_bool("bip32derivs", true);
+            } else if (interactive_method == "dumpprivkey") {
+                ensure_only_named_arguments({"address"});
+                require_named_string("address");
+            } else if (interactive_method == "dumpmnemonic") {
+                ensure_only_named_arguments({});
+            } else if (interactive_method == "getprivateviewkey") {
+                ensure_only_named_arguments({"address"});
+                require_named_string("address");
+            } else if (interactive_method == "getprivatenoteproof") {
+                ensure_only_named_arguments({"cmx"});
+                const std::string cmx{require_named_string("cmx")};
+                if (cmx.size() != 64 || !IsHex(cmx)) {
+                    throw std::runtime_error("cmx must be a 64-character hexadecimal private note commitment");
+                }
+            } else if (interactive_method == "checkprivatenoteproof") {
+                ensure_only_named_arguments({"proof"});
+                reject_named_arguments({"proof"});
+            } else if (interactive_method == "listdescriptors") {
+                ensure_only_named_arguments({"private"});
+                reject_named_arguments({"private"});
+            } else if (interactive_method == "getprivatekeymaninfo") {
+                ensure_only_named_arguments({"include_private"});
+                reject_named_arguments({"include_private"});
+            } else if (interactive_method == "dumpwallet") {
+                ensure_only_named_arguments({"filename"});
+                require_named_string("filename");
+            } else if (interactive_method == "backupwallet") {
+                ensure_only_named_arguments({"destination"});
+                require_named_string("destination");
+            } else if (interactive_method == "importwallet") {
+                ensure_only_named_arguments({"filename"});
+                require_named_string("filename");
+            } else if (interactive_method == "restorewallet") {
+                ensure_only_named_arguments({"wallet_name", "backup_file", "load_on_startup"});
+                require_named_string("wallet_name");
+                require_named_string("backup_file");
+                if (const std::optional<std::string> load_on_startup{get_named_argument("load_on_startup")};
+                    load_on_startup && *load_on_startup != "true" && *load_on_startup != "false" && *load_on_startup != "null") {
+                    throw std::runtime_error("load_on_startup must be true, false, or null with -interactive restorewallet");
+                }
+            } else if (interactive_method == "upgradewallet") {
+                ensure_only_named_arguments({"version"});
+                if (const std::optional<std::string> version{get_named_argument("version")}; version) {
+                    int64_t version_value;
+                    if (!ParseInt64(*version, &version_value)) {
+                        throw std::runtime_error("version must be an integer with -interactive upgradewallet");
+                    }
+                }
+            } else if (interactive_method == "newkeypool") {
+                ensure_only_named_arguments({});
+            } else if (interactive_method == "keypoolrefill") {
+                ensure_only_named_arguments({"newsize"});
+                if (const std::optional<std::string> newsize{get_named_argument("newsize")}; newsize) {
+                    int64_t parsed_newsize;
+                    if (!ParseInt64(*newsize, &parsed_newsize) || parsed_newsize < 0) {
+                        throw std::runtime_error("newsize must be a non-negative integer with -interactive keypoolrefill");
+                    }
+                }
+            } else if (interactive_method == "addmultisigaddress") {
+                ensure_only_named_arguments({"nrequired", "keys", "label", "address_type"});
+                const std::string nrequired{require_named_string("nrequired")};
+                int64_t parsed_nrequired;
+                if (!ParseInt64(nrequired, &parsed_nrequired) || parsed_nrequired <= 0) {
+                    throw std::runtime_error("nrequired must be a positive integer with -interactive addmultisigaddress");
+                }
+                require_named_string("keys");
+            } else if (interactive_method == "importaddress") {
+                ensure_only_named_arguments({"address", "label", "rescan", "p2sh"});
+                require_named_string("address");
+                get_named_bool("rescan", true);
+                get_named_bool("p2sh", false);
+            } else if (interactive_method == "importpubkey") {
+                ensure_only_named_arguments({"pubkey", "label", "rescan"});
+                require_named_string("pubkey");
+                get_named_bool("rescan", true);
             }
 
             // Fail before asking for secrets when the RPC server or credentials
-            // are unavailable. The actual createwallet request is still the only
+            // are unavailable. The requested wallet RPC remains the only
             // state-changing call.
             DefaultRequestHandler preflight_handler;
-            ConnectAndCallRPC(&preflight_handler, "getblockchaininfo", {});
+            const UniValue preflight_reply{ConnectAndCallRPC(&preflight_handler, "getblockchaininfo", {})};
+            const UniValue& preflight_error{preflight_reply.find_value("error")};
+            if (!preflight_error.isNull()) {
+                const UniValue& message{preflight_error.find_value("message")};
+                throw std::runtime_error(message.isStr() ? "RPC preflight failed: " + message.get_str() : "RPC preflight failed");
+            }
 
             const auto read_choice = [](const char* prompt) {
                 while (true) {
@@ -1201,29 +1550,403 @@ static int CommandLineRPC(int argc, char *argv[])
                 if (StdinTerminal()) fputc('\n', stderr);
                 return value;
             };
-
-            if (read_choice("Encrypt wallet.dat with a passphrase? [y/N] ")) {
-                const std::string wallet_passphrase{read_secret("Wallet encryption passphrase> ")};
-                const std::string wallet_confirmation{read_secret("Confirm wallet encryption passphrase> ")};
-                if (wallet_passphrase.empty()) {
-                    throw std::runtime_error("Wallet encryption passphrase must not be empty when encryption is selected");
+            const auto read_confirmed_secret = [&](const char* prompt, const char* confirmation_prompt, const char* empty_error, const char* mismatch_error) {
+                const std::string value{read_secret(prompt)};
+                const std::string confirmation{read_secret(confirmation_prompt)};
+                if (value.empty()) throw std::runtime_error(empty_error);
+                if (value != confirmation) throw std::runtime_error(mismatch_error);
+                return value;
+            };
+            const auto require_confirmation = [&](const char* prompt, const char* cancellation_error) {
+                if (!read_choice(prompt)) throw std::runtime_error(cancellation_error);
+            };
+            const auto read_json_array_secret = [&](const char* prompt, const char* invalid_error, bool allow_empty = false) {
+                const std::string input{read_secret(prompt)};
+                UniValue parsed;
+                if (input.empty() || !parsed.read(input) || !parsed.isArray() || (!allow_empty && parsed.empty())) {
+                    throw std::runtime_error(invalid_error);
                 }
-                if (wallet_passphrase != wallet_confirmation) {
-                    throw std::runtime_error("Wallet encryption passphrases do not match");
+                return input;
+            };
+            const auto read_optional_json_array_secret = [&](const char* prompt, const char* invalid_error) -> std::optional<std::string> {
+                const std::string input{read_secret(prompt)};
+                if (input.empty()) return std::nullopt;
+                UniValue parsed;
+                if (!parsed.read(input) || !parsed.isArray()) {
+                    throw std::runtime_error(invalid_error);
+                }
+                return input;
+            };
+            const auto read_optional_json_object_secret = [&](const char* prompt, const char* invalid_error) -> std::optional<std::string> {
+                const std::string input{read_secret(prompt)};
+                if (input.empty()) return std::nullopt;
+                UniValue parsed;
+                if (!parsed.read(input) || !parsed.isObject()) {
+                    throw std::runtime_error(invalid_error);
+                }
+                return input;
+            };
+            const auto read_optional_json_object_or_bool_secret = [&](const char* prompt, const char* invalid_error) -> std::optional<std::string> {
+                const std::string input{read_secret(prompt)};
+                if (input.empty()) return std::nullopt;
+                UniValue parsed;
+                if (!parsed.read(input) || (!parsed.isObject() && !parsed.isBool())) {
+                    throw std::runtime_error(invalid_error);
+                }
+                return input;
+            };
+
+            if (interactive_method == "createwallet") {
+                const bool disable_private_keys{get_named_bool("disable_private_keys", false)};
+                const bool blank{get_named_bool("blank", false)};
+                const bool descriptors{get_named_bool("descriptors", true)};
+                const bool external_signer{get_named_bool("external_signer", false)};
+                if (read_choice("Encrypt wallet.dat with a passphrase? [y/N] ")) {
+                    const std::string wallet_passphrase{read_confirmed_secret(
+                        "Wallet encryption passphrase> ",
+                        "Confirm wallet encryption passphrase> ",
+                        "Wallet encryption passphrase must not be empty when encryption is selected",
+                        "Wallet encryption passphrases do not match")};
+                    args.push_back("passphrase=" + wallet_passphrase);
+                }
+
+                const bool bip39_available{descriptors && !blank && !disable_private_keys && !external_signer};
+                if (bip39_available && read_choice("Protect the recovery phrase with a BIP39 passphrase? [y/N] ")) {
+                    const std::string bip39_passphrase{read_confirmed_secret(
+                        "BIP39 passphrase (distinct and never stored)> ",
+                        "Confirm BIP39 passphrase> ",
+                        "BIP39 passphrase must not be empty when BIP39 protection is selected",
+                        "BIP39 passphrases do not match")};
+                    args.push_back("bip39_passphrase=" + bip39_passphrase);
+                } else if (!bip39_available && StdinTerminal()) {
+                    fputs("BIP39 recovery protection is not applicable to this wallet configuration.\n", stderr);
+                }
+            } else if (interactive_method == "migratewallet") {
+                require_confirmation(
+                    "Migrate this legacy wallet to descriptors and create the required backup? [y/N] ",
+                    "Wallet migration cancelled before any change");
+                if (read_choice("Is this wallet encrypted? [y/N] ")) {
+                    const std::string wallet_passphrase{read_secret("Current wallet encryption passphrase> ")};
+                    if (wallet_passphrase.empty()) {
+                        throw std::runtime_error("Current wallet encryption passphrase must not be empty for encrypted migration");
+                    }
+                    args.push_back("passphrase=" + wallet_passphrase);
+                }
+            } else if (interactive_method == "upgradeorchardwallet") {
+                if (read_choice("Restore Orchard from an existing recovery phrase? [y/N] ")) {
+                    const std::string mnemonic{read_confirmed_secret(
+                        "Orchard recovery phrase> ",
+                        "Confirm Orchard recovery phrase> ",
+                        "Orchard recovery phrase must not be empty when restoration is selected",
+                        "Orchard recovery phrases do not match")};
+                    args.push_back("mnemonic=" + mnemonic);
+                }
+                if (read_choice("Protect the Orchard recovery phrase with a BIP39 passphrase? [y/N] ")) {
+                    const std::string bip39_passphrase{read_confirmed_secret(
+                        "BIP39 passphrase (distinct and never stored)> ",
+                        "Confirm BIP39 passphrase> ",
+                        "BIP39 passphrase must not be empty when BIP39 protection is selected",
+                        "BIP39 passphrases do not match")};
+                    args.push_back("bip39_passphrase=" + bip39_passphrase);
+                }
+                require_confirmation(
+                    "Create the required backup and add Orchard to this wallet? [y/N] ",
+                    "Orchard wallet upgrade cancelled before any change");
+            } else if (interactive_method == "sethdseed") {
+                bool legacy_wif{false};
+                if (read_choice("Supply an existing recovery seed instead of generating a new random BIP39 phrase? [y/N] ")) {
+                    legacy_wif = read_choice("Is the existing seed a legacy WIF HD seed? [y/N] ");
+                    if (legacy_wif) {
+                        const std::string wif_seed{read_confirmed_secret(
+                            "Legacy WIF HD seed> ",
+                            "Confirm legacy WIF HD seed> ",
+                            "Legacy WIF HD seed must not be empty",
+                            "Legacy WIF HD seeds do not match")};
+                        args.push_back("seed=" + wif_seed);
+                    } else {
+                        const std::string mnemonic{read_confirmed_secret(
+                            "BIP39 recovery phrase> ",
+                            "Confirm BIP39 recovery phrase> ",
+                            "BIP39 recovery phrase must not be empty",
+                            "BIP39 recovery phrases do not match")};
+                        args.push_back("seed=" + mnemonic);
+                    }
+                }
+                if (!legacy_wif && read_choice("Protect this BIP39 seed with a separate BIP39 passphrase? [y/N] ")) {
+                    const std::string bip39_passphrase{read_confirmed_secret(
+                        "BIP39 passphrase (distinct and never stored)> ",
+                        "Confirm BIP39 passphrase> ",
+                        "BIP39 passphrase must not be empty when BIP39 protection is selected",
+                        "BIP39 passphrases do not match")};
+                    args.push_back("bip39_passphrase=" + bip39_passphrase);
+                }
+                require_confirmation(
+                    "Initialize or replace this wallet's HD seed now? A new backup is required. [y/N] ",
+                    "Wallet recovery cancelled before any change");
+            } else if (interactive_method == "encryptwallet") {
+                require_confirmation(
+                    "Encrypt wallet.dat? A new backup is required immediately afterwards. Continue? [y/N] ",
+                    "Wallet encryption cancelled before any change");
+                const std::string wallet_passphrase{read_confirmed_secret(
+                    "New wallet encryption passphrase> ",
+                    "Confirm new wallet encryption passphrase> ",
+                    "New wallet encryption passphrase must not be empty",
+                    "New wallet encryption passphrases do not match")};
+                args.push_back("passphrase=" + wallet_passphrase);
+            } else if (interactive_method == "walletpassphrase") {
+                const std::string wallet_passphrase{read_secret("Wallet encryption passphrase> ")};
+                if (wallet_passphrase.empty()) {
+                    throw std::runtime_error("Wallet encryption passphrase must not be empty");
                 }
                 args.push_back("passphrase=" + wallet_passphrase);
-            }
-
-            if (read_choice("Protect the recovery phrase with a BIP39 passphrase? [y/N] ")) {
-                const std::string bip39_passphrase{read_secret("BIP39 passphrase (distinct and never stored)> ")};
-                const std::string bip39_confirmation{read_secret("Confirm BIP39 passphrase> ")};
-                if (bip39_passphrase.empty()) {
-                    throw std::runtime_error("BIP39 passphrase must not be empty when BIP39 protection is selected");
+            } else if (interactive_method == "walletpassphrasechange") {
+                const std::string old_passphrase{read_secret("Current wallet encryption passphrase> ")};
+                if (old_passphrase.empty()) {
+                    throw std::runtime_error("Current wallet encryption passphrase must not be empty");
                 }
-                if (bip39_passphrase != bip39_confirmation) {
-                    throw std::runtime_error("BIP39 passphrases do not match");
+                const std::string new_passphrase{read_confirmed_secret(
+                    "New wallet encryption passphrase> ",
+                    "Confirm new wallet encryption passphrase> ",
+                    "New wallet encryption passphrase must not be empty",
+                    "New wallet encryption passphrases do not match")};
+                require_confirmation(
+                    "Change the wallet encryption passphrase now? A new backup is required afterwards. [y/N] ",
+                    "Wallet passphrase change cancelled before any change");
+                args.push_back("oldpassphrase=" + old_passphrase);
+                args.push_back("newpassphrase=" + new_passphrase);
+            } else if (interactive_method == "importprivkey") {
+                const std::string private_key{read_secret("Private key to import> ")};
+                if (private_key.empty()) throw std::runtime_error("Private key must not be empty");
+                require_confirmation(
+                    "Import this private key into the selected wallet? A new backup is required. [y/N] ",
+                    "Private-key import cancelled before any change");
+                args.push_back("privkey=" + private_key);
+            } else if (interactive_method == "importmulti") {
+                const std::string requests{read_json_array_secret(
+                    "Import requests JSON array (input hidden because it may contain private keys)> ",
+                    "Import requests must be a non-empty JSON array")};
+                require_confirmation(
+                    "Import these legacy-wallet requests now? A new backup is required. [y/N] ",
+                    "Multi-import cancelled before any change");
+                args.push_back("requests=" + requests);
+            } else if (interactive_method == "importdescriptors") {
+                const std::string requests{read_json_array_secret(
+                    "Descriptor import requests JSON array (input hidden because it may contain xprv data)> ",
+                    "Descriptor import requests must be a non-empty JSON array")};
+                require_confirmation(
+                    "Import these descriptors now? A new backup is required. [y/N] ",
+                    "Descriptor import cancelled before any change");
+                args.push_back("requests=" + requests);
+            } else if (interactive_method == "signmessagewithprivkey") {
+                const std::string private_key{read_secret("Private key for message signing> ")};
+                if (private_key.empty()) throw std::runtime_error("Private key must not be empty");
+                require_confirmation(
+                    "Sign the supplied message with this private key? [y/N] ",
+                    "Message signing cancelled before any signature was created");
+                args.push_back("privkey=" + private_key);
+            } else if (interactive_method == "signrawtransactionwithkey") {
+                UniValue private_keys{UniValue::VARR};
+                while (true) {
+                    const std::string private_key{read_secret(private_keys.empty()
+                        ? "Private key for transaction signing (leave empty to use none)> "
+                        : "Another private key (leave empty to finish)> ")};
+                    if (private_key.empty()) {
+                        break;
+                    }
+                    private_keys.push_back(private_key);
                 }
-                args.push_back("bip39_passphrase=" + bip39_passphrase);
+                require_confirmation(
+                    "Process the supplied raw transaction with the entered private keys? [y/N] ",
+                    "Transaction signing cancelled before any signature was created");
+                args.push_back("privkeys=" + private_keys.write());
+            } else if (interactive_method == "descriptorprocesspsbt") {
+                const std::string descriptors{read_json_array_secret(
+                    "Signing descriptors JSON array (input hidden because it may contain xprv data)> ",
+                    "Signing descriptors must be a JSON array",
+                    /*allow_empty=*/true)};
+                require_confirmation(
+                    "Process and sign the supplied PSBT with these descriptors? [y/N] ",
+                    "Descriptor PSBT signing cancelled before any signature was created");
+                args.push_back("descriptors=" + descriptors);
+            } else if (interactive_method == "getdescriptorinfo") {
+                const std::string descriptor{read_secret("Descriptor to analyse (input hidden because it may contain xprv data)> ")};
+                if (descriptor.empty()) throw std::runtime_error("Descriptor must not be empty");
+                args.push_back("descriptor=" + descriptor);
+            } else if (interactive_method == "deriveaddresses") {
+                const std::string descriptor{read_secret("Descriptor to derive (input hidden because it may contain xprv data)> ")};
+                if (descriptor.empty()) throw std::runtime_error("Descriptor must not be empty");
+                args.push_back("descriptor=" + descriptor);
+            } else if (interactive_method == "utxoupdatepsbt") {
+                if (const std::optional<std::string> descriptors{read_optional_json_array_secret(
+                        "Descriptor JSON array (optional; input hidden because it may contain xprv data, leave empty to omit)> ",
+                        "Descriptors must be a JSON array")}; descriptors) {
+                    args.push_back("descriptors=" + *descriptors);
+                }
+            } else if (interactive_method == "scantxoutset" || interactive_method == "scanblocks") {
+                const std::string scan_objects{read_json_array_secret(
+                    "Scan objects JSON array (input hidden because descriptors may contain xprv data)> ",
+                    "Scan objects must be a non-empty JSON array")};
+                args.push_back("scanobjects=" + scan_objects);
+            } else if (interactive_method == "generatetodescriptor") {
+                const std::string descriptor{read_secret("Mining descriptor (input hidden because it may contain xprv data)> ")};
+                if (descriptor.empty()) throw std::runtime_error("Mining descriptor must not be empty");
+                require_confirmation(
+                    "Generate the requested blocks to this descriptor? [y/N] ",
+                    "Descriptor mining cancelled before any block was generated");
+                args.push_back("descriptor=" + descriptor);
+            } else if (interactive_method == "generateblock") {
+                const std::string output{read_secret("Block output address or descriptor (input hidden because a descriptor may contain xprv data)> ")};
+                if (output.empty()) throw std::runtime_error("Block output address or descriptor must not be empty");
+                require_confirmation(
+                    "Generate the requested block with this output and transaction set? [y/N] ",
+                    "Block generation cancelled before any block was generated");
+                args.push_back("output=" + output);
+            } else if (interactive_method == "pruneblockchain") {
+                require_confirmation(
+                    "Permanently delete eligible block files up to the requested height? [y/N] ",
+                    "Blockchain pruning cancelled before any block file was deleted");
+            } else if (interactive_method == "preciousblock") {
+                require_confirmation(
+                    "Prefer this block among equal-work alternatives until restart or another override? [y/N] ",
+                    "Precious-block selection cancelled before chainstate changed");
+            } else if (interactive_method == "invalidateblock") {
+                require_confirmation(
+                    "Permanently mark this block and its descendants invalid and reorganize chainstate if needed? [y/N] ",
+                    "Block invalidation cancelled before chainstate changed");
+            } else if (interactive_method == "reconsiderblock") {
+                require_confirmation(
+                    "Remove invalidity status from this block, its ancestors and descendants and reconsider activation? [y/N] ",
+                    "Block reconsideration cancelled before chainstate changed");
+            } else if (interactive_method == "loadtxoutset") {
+                require_confirmation(
+                    "Load and activate the requested UTXO snapshot as a second chainstate? [y/N] ",
+                    "UTXO snapshot loading cancelled before chainstate changed");
+            } else if (interactive_method == "signmessage") {
+                require_confirmation(
+                    "Sign the supplied message with the selected wallet address? [y/N] ",
+                    "Wallet message signing cancelled before any signature was created");
+            } else if (interactive_method == "signrawtransactionwithwallet") {
+                require_confirmation(
+                    "Sign the supplied raw transaction with keys from the selected wallet? [y/N] ",
+                    "Wallet transaction signing cancelled before any signature was created");
+            } else if (interactive_method == "walletprocesspsbt") {
+                if (get_named_bool("sign", true)) {
+                    require_confirmation(
+                        "Process and sign the supplied PSBT with keys from the selected wallet? [y/N] ",
+                        "Wallet PSBT signing cancelled before any signature was created");
+                } else {
+                    require_confirmation(
+                        "Process the supplied PSBT without signing? [y/N] ",
+                        "Wallet PSBT processing cancelled before any change");
+                }
+            } else if (interactive_method == "fundrawtransaction") {
+                if (const std::optional<std::string> options{read_optional_json_object_or_bool_secret(
+                        "Funding options JSON object or legacy boolean (optional; input hidden because solving_data may contain xprv data, leave empty to omit)> ",
+                        "Funding options must be a JSON object or boolean")}; options) {
+                    args.push_back("options=" + *options);
+                }
+                require_confirmation(
+                    "Fund the supplied raw transaction with the selected wallet? [y/N] ",
+                    "Raw transaction funding cancelled before any wallet change");
+            } else if (interactive_method == "send") {
+                if (const std::optional<std::string> options{read_optional_json_object_secret(
+                        "Send options JSON object (optional; input hidden because solving_data may contain xprv data, leave empty to omit)> ",
+                        "Send options must be a JSON object")}; options) {
+                    args.push_back("options=" + *options);
+                }
+                require_confirmation(
+                    "Create, sign, and process this wallet payment using the supplied outputs and options? [y/N] ",
+                    "Wallet payment cancelled before any transaction was created");
+            } else if (interactive_method == "sendall") {
+                if (const std::optional<std::string> options{read_optional_json_object_secret(
+                        "Send-all options JSON object (optional; input hidden because solving_data may contain xprv data, leave empty to omit)> ",
+                        "Send-all options must be a JSON object")}; options) {
+                    args.push_back("options=" + *options);
+                }
+                require_confirmation(
+                    "Spend the selected wallet's confirmed UTXOs using these recipients and options? [y/N] ",
+                    "Wallet send-all cancelled before any transaction was created");
+            } else if (interactive_method == "walletcreatefundedpsbt") {
+                if (const std::optional<std::string> options{read_optional_json_object_secret(
+                        "PSBT funding options JSON object (optional; input hidden because solving_data may contain xprv data, leave empty to omit)> ",
+                        "PSBT funding options must be a JSON object")}; options) {
+                    args.push_back("options=" + *options);
+                }
+                require_confirmation(
+                    "Create and fund this PSBT with the selected wallet? [y/N] ",
+                    "Wallet PSBT funding cancelled before any wallet change");
+            } else if (interactive_method == "dumpprivkey") {
+                require_confirmation(
+                    "Reveal this address's private key on standard output? [y/N] ",
+                    "Private-key disclosure cancelled");
+            } else if (interactive_method == "dumpmnemonic") {
+                require_confirmation(
+                    "Reveal the wallet recovery phrase on standard output? [y/N] ",
+                    "Recovery-phrase disclosure cancelled");
+            } else if (interactive_method == "getprivateviewkey") {
+                require_confirmation(
+                    "Reveal a branch-wide Orchard full viewing key on standard output? [y/N] ",
+                    "Viewing-key disclosure cancelled");
+            } else if (interactive_method == "getprivatenoteproof") {
+                require_confirmation(
+                    "Reveal this private note's amount, recipient, and opening proof on standard output? [y/N] ",
+                    "Private-note proof disclosure cancelled");
+            } else if (interactive_method == "checkprivatenoteproof") {
+                const std::string proof{read_secret("Private note proof to verify (input hidden because it discloses note details)> ")};
+                if (proof.empty()) throw std::runtime_error("Private note proof must not be empty");
+                args.push_back("proof=" + proof);
+            } else if (interactive_method == "listdescriptors") {
+                if (read_choice("Include private descriptors in the output? This reveals private keys. [y/N] ")) {
+                    args.push_back("private=true");
+                } else {
+                    args.push_back("private=false");
+                }
+            } else if (interactive_method == "getprivatekeymaninfo") {
+                if (read_choice("Include private Orchard descriptors in the output? This reveals recovery authority. [y/N] ")) {
+                    args.push_back("include_private=true");
+                } else {
+                    args.push_back("include_private=false");
+                }
+            } else if (interactive_method == "dumpwallet") {
+                require_confirmation(
+                    "Write all legacy-wallet private keys to the requested server-side file? [y/N] ",
+                    "Wallet dump cancelled before any file was written");
+            } else if (interactive_method == "backupwallet") {
+                require_confirmation(
+                    "Write a complete wallet backup to the requested server-side destination? [y/N] ",
+                    "Wallet backup cancelled before any file was written");
+            } else if (interactive_method == "importwallet") {
+                require_confirmation(
+                    "Import all keys and scripts from this server-side wallet dump? A new backup is required afterwards. [y/N] ",
+                    "Wallet dump import cancelled before any wallet change");
+            } else if (interactive_method == "restorewallet") {
+                require_confirmation(
+                    "Restore and load a wallet from the requested private backup file? [y/N] ",
+                    "Wallet restore cancelled before any wallet was created");
+            } else if (interactive_method == "upgradewallet") {
+                require_confirmation(
+                    "Upgrade this wallet version now? A new backup may be required afterwards. [y/N] ",
+                    "Wallet version upgrade cancelled before any change");
+            } else if (interactive_method == "newkeypool") {
+                require_confirmation(
+                    "Clear and regenerate this wallet's entire keypool? A new backup may be required. [y/N] ",
+                    "Keypool regeneration cancelled before any change");
+            } else if (interactive_method == "keypoolrefill") {
+                require_confirmation(
+                    "Generate keys to refill this wallet's keypool? Back up a non-HD wallet afterwards. [y/N] ",
+                    "Keypool refill cancelled before any change");
+            } else if (interactive_method == "addmultisigaddress") {
+                require_confirmation(
+                    "Add this multisignature address to the selected legacy wallet? A new backup is required. [y/N] ",
+                    "Multisignature-address creation cancelled before any wallet change");
+            } else if (interactive_method == "importaddress") {
+                require_confirmation(
+                    "Import this watch-only address or script into the selected legacy wallet? A new backup is required. [y/N] ",
+                    "Watch-only address import cancelled before any wallet change");
+            } else if (interactive_method == "importpubkey") {
+                require_confirmation(
+                    "Import this watch-only public key into the selected legacy wallet? A new backup is required. [y/N] ",
+                    "Public-key import cancelled before any wallet change");
             }
         }
         if (gArgs.GetBoolArg("-stdinwalletpassphrase", false)) {

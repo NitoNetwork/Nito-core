@@ -5,11 +5,14 @@
 """Test nito-cli"""
 
 from decimal import Decimal
+import json
 import os
 import re
 import signal
 
+from test_framework.address import key_to_p2pkh
 from test_framework.blocktools import COINBASE_MATURITY
+from test_framework.descriptors import descsum_create
 from test_framework.test_framework import NitoTestFramework
 from test_framework.util import (
     assert_equal,
@@ -18,6 +21,7 @@ from test_framework.util import (
     assert_raises_rpc_error,
     get_auth_cookie,
 )
+from test_framework.wallet_util import generate_keypair
 import time
 
 # The block reward of coinbaseoutput.nValue (512) NITO/block matures after
@@ -25,6 +29,7 @@ import time
 # node 0 to have a balance of (BLOCKS - COINBASE_MATURITY) * 512 NITO/block.
 BLOCKS = COINBASE_MATURITY + 1
 BALANCE = (BLOCKS - 100) * 512
+MNEMONIC_12 = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
 JSON_PARSING_ERROR = 'error: Error parsing JSON: foo'
 BLOCKS_VALUE_OF_ZERO = 'error: the first argument (number of blocks to generate, default: 1) must be an integer value greater than zero'
@@ -142,9 +147,1036 @@ class TestNitoCli(NitoTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 1
+        self.extra_args = [["-deprecatedrpc=create_bdb", "-blockfilterindex=1", "-orchardindex=1", "-transparenthistoryindex=1"]]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_cli()
+
+    def test_interactive_wallet_management(self):
+        node = self.nodes[0]
+
+        self.log.info("Test createwallet only offers BIP39 protection when it is applicable")
+        watch_name = "cli_interactive_watch_only"
+        watch_result = node.cli(
+            "-interactive",
+            input="n\nunexpected second prompt\n",
+        ).createwallet(wallet_name=watch_name, disable_private_keys=True, descriptors=True)
+        assert_equal(watch_result["name"], watch_name)
+        watch_wallet = node.get_wallet_rpc(watch_name)
+        assert_equal(watch_wallet.getwalletinfo()["private_keys_enabled"], False)
+        watch_wallet.unloadwallet()
+
+        legacy_name = "cli_interactive_legacy_create"
+        legacy_result = node.cli(
+            "-interactive",
+            input="n\nunexpected second prompt\n",
+        ).createwallet(wallet_name=legacy_name, descriptors=False)
+        assert_equal(legacy_result["name"], legacy_name)
+        legacy_wallet = node.get_wallet_rpc(legacy_name)
+        assert_equal(legacy_wallet.getwalletinfo()["descriptors"], False)
+        legacy_wallet.unloadwallet()
+
+        assert_raises_process_error(
+            1,
+            "external_signer=true requires disable_private_keys=true and descriptors=true",
+            node.cli("-interactive", input="").createwallet,
+            wallet_name="cli_interactive_invalid_signer",
+            external_signer=True,
+            disable_private_keys=False,
+            descriptors=True,
+        )
+
+        self.log.info("Test guided legacy-wallet migration")
+        cancelled_name = "cli_interactive_migration_cancelled"
+        node.createwallet(wallet_name=cancelled_name, blank=True, descriptors=False)
+        cancelled = node.get_wallet_rpc(cancelled_name)
+        assert_raises_process_error(
+            1,
+            "Wallet migration cancelled before any change",
+            node.cli("-named", "-interactive", f"-rpcwallet={cancelled_name}", input="n\n").migratewallet,
+        )
+        assert_equal(cancelled.getwalletinfo()["descriptors"], False)
+        cancelled.unloadwallet()
+
+        migration_name = "cli_interactive_migration"
+        migration_secret = "legacy migration secret"
+        migration_wif, _ = generate_keypair(wif=True)
+        node.createwallet(wallet_name=migration_name, blank=True, descriptors=False)
+        migrated = node.get_wallet_rpc(migration_name)
+        migrated.sethdseed(True, migration_wif)
+        pre_migration_address = migrated.getnewaddress()
+        migrated.encryptwallet(migration_secret)
+        migration_result = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={migration_name}",
+            input=f"y\ny\n{migration_secret}\n",
+        ).migratewallet()
+        assert_equal(migration_result["wallet_name"], migration_name)
+        assert_equal(migrated.getwalletinfo()["descriptors"], True)
+        assert_equal(migrated.getaddressinfo(pre_migration_address)["ismine"], True)
+        migrated.unloadwallet()
+
+        self.log.info("Test guided Orchard upgrade with generated and restored phrases")
+        generated_name = "cli_interactive_orchard_generated"
+        generated_wif, _ = generate_keypair(wif=True)
+        node.createwallet(wallet_name=generated_name, blank=True, descriptors=False)
+        generated = node.get_wallet_rpc(generated_name)
+        generated.sethdseed(True, generated_wif)
+        generated_result = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={generated_name}",
+            input="n\nn\ny\n",
+        ).upgradeorchardwallet()
+        assert_equal(generated_result["scope"], "orchard_only")
+        assert_equal(generated_result["bip39_passphrase_required"], False)
+        assert_equal(len(generated_result["mnemonic"].split()), 24)
+        generated.unloadwallet()
+
+        restored_name = "cli_interactive_orchard_restored"
+        orchard_bip39 = "Orchard BIP39 secret"
+        restored_wif, _ = generate_keypair(wif=True)
+        node.createwallet(wallet_name=restored_name, blank=True, descriptors=False)
+        restored = node.get_wallet_rpc(restored_name)
+        restored.sethdseed(True, restored_wif)
+        assert_raises_process_error(
+            1,
+            "Orchard recovery phrases do not match",
+            node.cli(
+                "-named",
+                "-interactive",
+                f"-rpcwallet={restored_name}",
+                input=f"y\n{MNEMONIC_12}\ndifferent phrase\n",
+            ).upgradeorchardwallet,
+        )
+        assert_raises_process_error(
+            1,
+            "Orchard wallet upgrade cancelled before any change",
+            node.cli("-named", "-interactive", f"-rpcwallet={restored_name}", input="n\nn\nn\n").upgradeorchardwallet,
+        )
+        restored_result = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={restored_name}",
+            input=f"y\n{MNEMONIC_12}\n{MNEMONIC_12}\ny\n{orchard_bip39}\n{orchard_bip39}\ny\n",
+        ).upgradeorchardwallet()
+        assert_equal(restored_result["mnemonic"], MNEMONIC_12)
+        assert_equal(restored_result["bip39_passphrase_required"], True)
+        restored.unloadwallet()
+
+        self.log.info("Test the complete guided encrypted V4 recovery path")
+        recovery_name = "cli_interactive_v4_restore"
+        wallet_secret = "restored wallet encryption secret"
+        recovery_bip39 = "Recovery BIP39 secret"
+        create_result = node.cli(
+            "-interactive",
+            input=f"y\n{wallet_secret}\n{wallet_secret}\n",
+        ).createwallet(wallet_name=recovery_name, blank=True, descriptors=True)
+        assert_equal(create_result["name"], recovery_name)
+        recovered = node.get_wallet_rpc(recovery_name)
+        assert_equal(recovered.getwalletinfo()["blank"], True)
+        recovered.walletpassphrase(wallet_secret, 300)
+        assert_raises_process_error(
+            1,
+            "BIP39 recovery phrases do not match",
+            node.cli(
+                "-interactive",
+                f"-rpcwallet={recovery_name}",
+                input=f"y\nn\n{MNEMONIC_12}\ndifferent phrase\n",
+            ).sethdseed,
+            newkeypool=True,
+        )
+        assert_equal(recovered.getwalletinfo()["blank"], True)
+        assert_raises_process_error(
+            1,
+            "Wallet recovery cancelled before any change",
+            node.cli(
+                "-interactive",
+                f"-rpcwallet={recovery_name}",
+                input=f"y\nn\n{MNEMONIC_12}\n{MNEMONIC_12}\nn\nn\n",
+            ).sethdseed,
+            newkeypool=True,
+        )
+        assert_equal(recovered.getwalletinfo()["blank"], True)
+        node.cli(
+            "-interactive",
+            f"-rpcwallet={recovery_name}",
+            input=f"y\nn\n{MNEMONIC_12}\n{MNEMONIC_12}\ny\n{recovery_bip39}\n{recovery_bip39}\ny\n",
+        ).sethdseed(newkeypool=True)
+        assert_equal(recovered.getwalletinfo()["blank"], False)
+        mnemonic_info = recovered.dumpmnemonic()
+        assert_equal(mnemonic_info["mnemonic"], MNEMONIC_12)
+        assert_equal(mnemonic_info["bip39_passphrase_required"], True)
+        recovered.walletlock()
+        recovered.unloadwallet()
+
+        self.log.info("Test guided sethdseed preserves random BIP39 and legacy WIF modes")
+        random_seed_name = "cli_interactive_random_seed"
+        node.createwallet(wallet_name=random_seed_name, blank=True, descriptors=True)
+        random_seed_wallet = node.get_wallet_rpc(random_seed_name)
+        node.cli(
+            "-interactive",
+            f"-rpcwallet={random_seed_name}",
+            input="n\nn\ny\n",
+        ).sethdseed(newkeypool=True)
+        assert_equal(random_seed_wallet.getwalletinfo()["blank"], False)
+        assert_equal(len(random_seed_wallet.dumpmnemonic()["mnemonic"].split()), 24)
+        random_seed_wallet.unloadwallet()
+
+        legacy_seed_name = "cli_interactive_legacy_seed"
+        legacy_seed_wif, _ = generate_keypair(wif=True)
+        node.createwallet(wallet_name=legacy_seed_name, blank=True, descriptors=False)
+        legacy_seed_wallet = node.get_wallet_rpc(legacy_seed_name)
+        node.cli(
+            "-interactive",
+            f"-rpcwallet={legacy_seed_name}",
+            input=f"y\ny\n{legacy_seed_wif}\n{legacy_seed_wif}\ny\n",
+        ).sethdseed(newkeypool=True)
+        assert_equal(legacy_seed_wallet.getwalletinfo()["blank"], False)
+        assert legacy_seed_wallet.getnewaddress()
+        legacy_seed_wallet.unloadwallet()
+
+        self.log.info("Test guided encryption and passphrase change")
+        encryption_name = "cli_interactive_encryption_lifecycle"
+        old_secret = "old wallet encryption secret"
+        new_secret = "new wallet encryption secret"
+        node.createwallet(wallet_name=encryption_name, descriptors=True)
+        encrypted = node.get_wallet_rpc(encryption_name)
+        assert_raises_process_error(
+            1,
+            "Wallet encryption cancelled before any change",
+            node.cli("-named", "-interactive", f"-rpcwallet={encryption_name}", input="n\n").encryptwallet,
+        )
+        assert_raises_rpc_error(-15, "unencrypted wallet", encrypted.walletpassphrase, old_secret, 1)
+        assert_raises_process_error(
+            1,
+            "New wallet encryption passphrases do not match",
+            node.cli(
+                "-named",
+                "-interactive",
+                f"-rpcwallet={encryption_name}",
+                input=f"y\n{old_secret}\ndifferent confirmation\n",
+            ).encryptwallet,
+        )
+        assert_raises_rpc_error(-15, "unencrypted wallet", encrypted.walletpassphrase, old_secret, 1)
+        node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={encryption_name}",
+            input=f"y\n{old_secret}\n{old_secret}\n",
+        ).encryptwallet()
+        encrypted.walletpassphrase(old_secret, 60)
+        encrypted.walletlock()
+        assert_raises_process_error(
+            1,
+            "New wallet encryption passphrases do not match",
+            node.cli(
+                "-named",
+                "-interactive",
+                f"-rpcwallet={encryption_name}",
+                input=f"{old_secret}\n{new_secret}\ndifferent confirmation\n",
+            ).walletpassphrasechange,
+        )
+        encrypted.walletpassphrase(old_secret, 60)
+        encrypted.walletlock()
+        assert_raises_process_error(
+            1,
+            "Wallet passphrase change cancelled before any change",
+            node.cli(
+                "-named",
+                "-interactive",
+                f"-rpcwallet={encryption_name}",
+                input=f"{old_secret}\n{new_secret}\n{new_secret}\nn\n",
+            ).walletpassphrasechange,
+        )
+        encrypted.walletpassphrase(old_secret, 60)
+        encrypted.walletlock()
+        node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={encryption_name}",
+            input=f"{old_secret}\n{new_secret}\n{new_secret}\ny\n",
+        ).walletpassphrasechange()
+        assert_raises_rpc_error(-14, "passphrase entered was incorrect", encrypted.walletpassphrase, old_secret, 1)
+        encrypted.walletpassphrase(new_secret, 60)
+        encrypted.walletlock()
+        encrypted.unloadwallet()
+
+        self.log.info("Test interactive secrets are rejected on the command line")
+        secret_argument_cases = [
+            ("migratewallet", "passphrase", "exposed"),
+            ("upgradeorchardwallet", "mnemonic", MNEMONIC_12),
+            ("upgradeorchardwallet", "bip39_passphrase", "exposed"),
+            ("sethdseed", "seed", MNEMONIC_12),
+            ("sethdseed", "bip39_passphrase", "exposed"),
+            ("encryptwallet", "passphrase", "exposed"),
+            ("walletpassphrase", "passphrase", "exposed"),
+            ("walletpassphrasechange", "oldpassphrase", "exposed"),
+            ("walletpassphrasechange", "newpassphrase", "exposed"),
+            ("importprivkey", "privkey", "exposed"),
+            ("importmulti", "requests", "[]"),
+            ("importdescriptors", "requests", "[]"),
+            ("signmessagewithprivkey", "privkey", "exposed"),
+            ("signrawtransactionwithkey", "privkeys", ["exposed"]),
+            ("descriptorprocesspsbt", "descriptors", ["exposed"]),
+            ("getdescriptorinfo", "descriptor", "exposed"),
+            ("deriveaddresses", "descriptor", "exposed"),
+            ("utxoupdatepsbt", "descriptors", ["exposed"]),
+            ("scantxoutset", "scanobjects", ["exposed"]),
+            ("scanblocks", "scanobjects", ["exposed"]),
+            ("generatetodescriptor", "descriptor", "exposed"),
+            ("generateblock", "output", "exposed"),
+            ("fundrawtransaction", "options", {}),
+            ("send", "options", {}),
+            ("sendall", "options", {}),
+            ("walletcreatefundedpsbt", "options", {}),
+            ("checkprivatenoteproof", "proof", "00"),
+            ("listdescriptors", "private", True),
+            ("getprivatekeymaninfo", "include_private", True),
+        ]
+        for command, argument_name, argument_value in secret_argument_cases:
+            if argument_name == "output":
+                assert_raises_process_error(
+                    1,
+                    "Do not provide output on the command line with -interactive",
+                    node.cli("-named", "-interactive", command, "output=exposed", input="").send_cli,
+                )
+                continue
+            assert_raises_process_error(
+                1,
+                f"Do not provide {argument_name} on the command line with -interactive",
+                node.cli("-interactive", input="").send_cli,
+                command,
+                **{argument_name: argument_value},
+            )
+
+        self.log.info("Test interactive conflicts and built-in safe examples")
+        assert_raises_process_error(
+            1,
+            "-interactive cannot be combined with -stdin or -stdinwalletpassphrase",
+            node.cli("-named", "-interactive", "-stdinwalletpassphrase", input="").send_cli,
+            "encryptwallet",
+        )
+        for command in (
+            "createwallet",
+            "migratewallet",
+            "upgradeorchardwallet",
+            "sethdseed",
+            "encryptwallet",
+            "walletpassphrase",
+            "walletpassphrasechange",
+            "importprivkey",
+            "importmulti",
+            "importdescriptors",
+            "signmessagewithprivkey",
+            "signrawtransactionwithkey",
+            "descriptorprocesspsbt",
+            "getdescriptorinfo",
+            "deriveaddresses",
+            "utxoupdatepsbt",
+            "scantxoutset",
+            "scanblocks",
+            "generatetodescriptor",
+            "generateblock",
+            "pruneblockchain",
+            "preciousblock",
+            "invalidateblock",
+            "reconsiderblock",
+            "loadtxoutset",
+            "signmessage",
+            "signrawtransactionwithwallet",
+            "walletprocesspsbt",
+            "fundrawtransaction",
+            "send",
+            "sendall",
+            "walletcreatefundedpsbt",
+            "dumpprivkey",
+            "dumpmnemonic",
+            "getprivateviewkey",
+            "getprivatenoteproof",
+            "checkprivatenoteproof",
+            "listdescriptors",
+            "getprivatekeymaninfo",
+            "dumpwallet",
+            "backupwallet",
+            "importwallet",
+            "restorewallet",
+            "upgradewallet",
+            "newkeypool",
+            "keypoolrefill",
+            "addmultisigaddress",
+            "importaddress",
+            "importpubkey",
+        ):
+            assert "nito-cli -named -interactive" in node.help(command)
+        assert 'walletpassphrasechange "old one" "new one"' not in node.help("walletpassphrasechange")
+        assert 'encryptwallet "my pass phrase"' not in node.help("encryptwallet")
+        assert 'walletpassphrase "my pass phrase"' not in node.help("walletpassphrase")
+
+    def test_interactive_private_material(self):
+        node = self.nodes[0]
+
+        self.log.info("Test guided wallet unlock and preserve -stdinwalletpassphrase")
+        wallet_name = "cli_interactive_private_material"
+        wallet_secret = "interactive private material wallet secret"
+        node.createwallet(wallet_name=wallet_name, passphrase=wallet_secret, descriptors=True)
+        wallet = node.get_wallet_rpc(wallet_name)
+        assert_raises_process_error(
+            1,
+            "Wallet encryption passphrase must not be empty",
+            node.cli("-interactive", f"-rpcwallet={wallet_name}", input="\n").walletpassphrase,
+            timeout=60,
+        )
+        assert_raises_process_error(
+            1,
+            "timeout must be a non-negative integer with -interactive walletpassphrase",
+            node.cli("-interactive", f"-rpcwallet={wallet_name}", input=wallet_secret).walletpassphrase,
+            timeout=-1,
+        )
+        node.cli(
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input=f"{wallet_secret}\n",
+        ).walletpassphrase(timeout=600)
+        assert wallet.getwalletinfo()["unlocked_until"] > 0
+        wallet.walletlock()
+        node.cli(
+            "-stdinwalletpassphrase",
+            f"-rpcwallet={wallet_name}",
+            input=f"{wallet_secret}\n",
+        ).walletpassphrase(600)
+        assert wallet.getwalletinfo()["unlocked_until"] > 0
+        if os.name == "posix":
+            wallet.walletlock()
+            returncode, transcript, initial_echo, final_echo = run_cli_pty(
+                node.cli.binary,
+                node.datadir_path,
+                [
+                    "-named",
+                    "-interactive",
+                    f"-rpcwallet={wallet_name}",
+                    "walletpassphrase",
+                    "timeout=60",
+                ],
+                [("Wallet encryption passphrase> ", wallet_secret)],
+            )
+            assert_equal(returncode, 0)
+            assert wallet_secret not in transcript
+            assert_equal(initial_echo, True)
+            assert_equal(final_echo, True)
+            wallet.walletlock()
+            node.cli(
+                "-stdinwalletpassphrase",
+                f"-rpcwallet={wallet_name}",
+                input=f"{wallet_secret}\n",
+            ).walletpassphrase(600)
+
+        funding_address = wallet.getnewaddress()
+        node.generatetoaddress(COINBASE_MATURITY + 1, funding_address, invalid_call=False)
+
+        self.log.info("Test guided descriptor import with hidden JSON")
+        descriptor_wif, descriptor_pubkey = generate_keypair(wif=True)
+        descriptor = descsum_create(f"wpkh({descriptor_wif})")
+        descriptor_address = node.deriveaddresses(descriptor)[0]
+        descriptor_requests = json.dumps([
+            {"desc": descriptor, "timestamp": "now", "active": False},
+        ], separators=(",", ":"))
+        assert_raises_process_error(
+            1,
+            "Descriptor import cancelled before any change",
+            node.cli(
+                "-named",
+                "-interactive",
+                f"-rpcwallet={wallet_name}",
+                input=f"{descriptor_requests}\nn\n",
+            ).importdescriptors,
+        )
+        assert_equal(wallet.getaddressinfo(descriptor_address)["ismine"], False)
+        descriptor_result = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input=f"{descriptor_requests}\ny\n",
+        ).importdescriptors()
+        assert_equal(descriptor_result[0]["success"], True)
+        assert_equal(wallet.getaddressinfo(descriptor_address)["ismine"], True)
+
+        self.log.info("Test guided recovery-authority disclosures")
+        assert_raises_process_error(
+            1,
+            "Recovery-phrase disclosure cancelled",
+            node.cli("-named", "-interactive", f"-rpcwallet={wallet_name}", input="n\n").dumpmnemonic,
+        )
+        mnemonic_info = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="y\n",
+        ).dumpmnemonic()
+        assert_equal(len(mnemonic_info["mnemonic"].split()), 24)
+
+        orchard_address = wallet.getnewaddress("", "bech32x")
+        assert_raises_process_error(
+            1,
+            "cmx must be a 64-character hexadecimal private note commitment",
+            node.cli("-interactive", f"-rpcwallet={wallet_name}", input="").getprivatenoteproof,
+            cmx="not-a-note-commitment",
+        )
+        assert_raises_process_error(
+            1,
+            "Viewing-key disclosure cancelled",
+            node.cli("-interactive", f"-rpcwallet={wallet_name}", input="n\n").getprivateviewkey,
+            address=orchard_address,
+        )
+        view_key = node.cli(
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="y\n",
+        ).getprivateviewkey(address=orchard_address)
+        assert view_key
+
+        wallet.sendtoaddress(orchard_address, Decimal("0.01"))
+        self.generate(node, 1)
+        private_notes = wallet.listprivateunspent()
+        assert private_notes
+        note_cmx = private_notes[0]["cmx"]
+        assert_raises_process_error(
+            1,
+            "Private-note proof disclosure cancelled",
+            node.cli("-interactive", f"-rpcwallet={wallet_name}", input="n\n").getprivatenoteproof,
+            cmx=note_cmx,
+        )
+        note_proof = node.cli(
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="y\n",
+        ).getprivatenoteproof(cmx=note_cmx)
+        assert_equal(note_proof["details"]["cmx"], note_cmx)
+        checked_note = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input=f"{note_proof['proof']}\n",
+        ).checkprivatenoteproof()
+        assert_equal(checked_note["valid"], True)
+        assert_equal(checked_note["details"]["cmx"], note_cmx)
+
+        public_descriptors = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="n\n",
+        ).listdescriptors()
+        private_descriptors = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="y\n",
+        ).listdescriptors()
+        assert public_descriptors["descriptors"]
+        assert private_descriptors["descriptors"]
+        assert all(not node.getdescriptorinfo(entry["desc"])["hasprivatekeys"] for entry in public_descriptors["descriptors"])
+        assert any(node.getdescriptorinfo(entry["desc"])["hasprivatekeys"] for entry in private_descriptors["descriptors"])
+
+        public_keyman = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="n\n",
+        ).getprivatekeymaninfo()
+        private_keyman = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="y\n",
+        ).getprivatekeymaninfo()
+        assert public_keyman
+        assert private_keyman
+        assert "external_descriptor" not in public_keyman
+        assert "change_descriptor" not in public_keyman
+        assert "external_descriptor" in private_keyman
+        assert "change_descriptor" in private_keyman
+
+        backup_path = str(node.datadir_path / "interactive-private-material-backup.dat")
+        assert_raises_process_error(
+            1,
+            "Wallet backup cancelled before any file was written",
+            node.cli("-interactive", f"-rpcwallet={wallet_name}", input="n\n").backupwallet,
+            destination=backup_path,
+        )
+        assert not os.path.exists(backup_path)
+        node.cli("-interactive", f"-rpcwallet={wallet_name}", input="y\n").backupwallet(destination=backup_path)
+        assert os.path.isfile(backup_path)
+
+        self.log.info("Test guided legacy private-key imports and exports")
+        legacy_name = "cli_interactive_private_imports"
+        node.createwallet(wallet_name=legacy_name, blank=True, descriptors=False)
+        legacy_wallet = node.get_wallet_rpc(legacy_name)
+        import_wif, import_pubkey = generate_keypair(wif=True)
+        import_address = key_to_p2pkh(import_pubkey)
+        assert_raises_process_error(
+            1,
+            "Private-key import cancelled before any change",
+            node.cli(
+                "-interactive",
+                f"-rpcwallet={legacy_name}",
+                input=f"{import_wif}\nn\n",
+            ).importprivkey,
+            label="interactive import",
+            rescan=False,
+        )
+        assert_equal(legacy_wallet.getaddressinfo(import_address)["ismine"], False)
+        node.cli(
+            "-interactive",
+            f"-rpcwallet={legacy_name}",
+            input=f"{import_wif}\ny\n",
+        ).importprivkey(label="interactive import", rescan=False)
+        assert_equal(legacy_wallet.getaddressinfo(import_address)["ismine"], True)
+
+        multi_wif, multi_pubkey = generate_keypair(wif=True)
+        multi_address = key_to_p2pkh(multi_pubkey)
+        multi_requests = json.dumps([
+            {
+                "scriptPubKey": {"address": multi_address},
+                "timestamp": "now",
+                "keys": [multi_wif],
+            },
+        ], separators=(",", ":"))
+        assert_raises_process_error(
+            1,
+            "Multi-import cancelled before any change",
+            node.cli(
+                "-interactive",
+                f"-rpcwallet={legacy_name}",
+                input=f"{multi_requests}\nn\n",
+            ).importmulti,
+            options={"rescan": False},
+        )
+        assert_equal(legacy_wallet.getaddressinfo(multi_address)["ismine"], False)
+        multi_result = node.cli(
+            "-interactive",
+            f"-rpcwallet={legacy_name}",
+            input=f"{multi_requests}\ny\n",
+        ).importmulti(options={"rescan": False})
+        assert_equal(multi_result[0]["success"], True)
+        assert_equal(legacy_wallet.getaddressinfo(multi_address)["ismine"], True)
+
+        assert_raises_process_error(
+            1,
+            "Private-key disclosure cancelled",
+            node.cli("-interactive", f"-rpcwallet={legacy_name}", input="n\n").dumpprivkey,
+            address=import_address,
+        )
+        exported_wif = node.cli(
+            "-interactive",
+            f"-rpcwallet={legacy_name}",
+            input="y\n",
+        ).dumpprivkey(address=import_address)
+        assert_equal(exported_wif, import_wif)
+
+        dump_path = str(node.datadir_path / "interactive-legacy-wallet.dump")
+        assert_raises_process_error(
+            1,
+            "Wallet dump cancelled before any file was written",
+            node.cli("-interactive", f"-rpcwallet={legacy_name}", input="n\n").dumpwallet,
+            filename=dump_path,
+        )
+        assert not os.path.exists(dump_path)
+        node.cli("-interactive", f"-rpcwallet={legacy_name}", input="y\n").dumpwallet(filename=dump_path)
+        assert os.path.isfile(dump_path)
+
+        self.log.info("Test guided private-key signing")
+        message = "Nito interactive signing test"
+        assert_raises_process_error(
+            1,
+            "Message signing cancelled before any signature was created",
+            node.cli("-interactive", input=f"{import_wif}\nn\n").signmessagewithprivkey,
+            message=message,
+        )
+        signature = node.cli(
+            "-interactive",
+            input=f"{import_wif}\ny\n",
+        ).signmessagewithprivkey(message=message)
+        assert_equal(node.verifymessage(import_address, signature, message), True)
+
+        wallet.sendtoaddress(import_address, Decimal("1"))
+        self.generate(node, 1)
+        wallet.walletlock()
+        wallet.unloadwallet()
+        signing_utxo = next(utxo for utxo in legacy_wallet.listunspent() if utxo["address"] == import_address)
+        raw_tx = node.createrawtransaction(
+            [{"txid": signing_utxo["txid"], "vout": signing_utxo["vout"]}],
+            {funding_address: Decimal("0.999")},
+        )
+        incomplete_tx = node.cli(
+            "-interactive",
+            input="\ny\n",
+        ).signrawtransactionwithkey(hexstring=raw_tx)
+        assert_equal(incomplete_tx["complete"], False)
+        assert_raises_process_error(
+            1,
+            "Transaction signing cancelled before any signature was created",
+            node.cli("-interactive", input=f"{import_wif}\n\nn\n").signrawtransactionwithkey,
+            hexstring=raw_tx,
+        )
+        signed_tx = node.cli(
+            "-interactive",
+            input=f"{import_wif}\n\ny\n",
+        ).signrawtransactionwithkey(hexstring=raw_tx)
+        assert_equal(signed_tx["complete"], True)
+        legacy_wallet.unloadwallet()
+
+        empty_signature = node.cli(
+            "-interactive",
+            input=f"{import_wif}\ny\n",
+        ).signmessagewithprivkey(message="")
+        assert_equal(node.verifymessage(import_address, empty_signature, ""), True)
+
+    def test_interactive_extended_sensitive_operations(self):
+        node = self.nodes[0]
+
+        self.log.info("Test hidden descriptor input, scans, and mining")
+        descriptor_wif, _ = generate_keypair(wif=True)
+        descriptor = descsum_create(f"wpkh({descriptor_wif})")
+        descriptor_info = node.cli(
+            "-named",
+            "-interactive",
+            input=f"{descriptor}\n",
+        ).getdescriptorinfo()
+        assert_equal(descriptor_info["hasprivatekeys"], True)
+        derived_addresses = node.cli(
+            "-named",
+            "-interactive",
+            input=f"{descriptor}\n",
+        ).deriveaddresses()
+        assert_equal(len(derived_addresses), 1)
+
+        scan_objects = json.dumps([descriptor], separators=(",", ":"))
+        utxo_scan = node.cli(
+            "-interactive",
+            input=f"{scan_objects}\n",
+        ).scantxoutset(action="start")
+        assert_equal(utxo_scan["success"], True)
+        self.wait_until(lambda: all(index["synced"] for index in node.getindexinfo().values()))
+        block_scan = node.cli(
+            "-interactive",
+            input=f"{scan_objects}\n",
+        ).scanblocks(action="start")
+        assert_equal(block_scan["completed"], True)
+
+        height_before_mining = node.getblockcount()
+        assert_raises_process_error(
+            1,
+            "Descriptor mining cancelled before any block was generated",
+            node.cli("-interactive", input=f"{descriptor}\nn\n").generatetodescriptor,
+            num_blocks=1,
+        )
+        assert_equal(node.getblockcount(), height_before_mining)
+        mined = node.cli(
+            "-interactive",
+            input=f"{descriptor}\ny\n",
+        ).generatetodescriptor(num_blocks=1)
+        assert_equal(len(mined), 1)
+        assert_equal(node.getblockcount(), height_before_mining + 1)
+
+        self.log.info("Test guided high-impact local chainstate operations")
+        active_tip = node.getbestblockhash()
+        previous_tip = node.getblockheader(active_tip)["previousblockhash"]
+        assert_raises_process_error(
+            1,
+            "Precious-block selection cancelled before chainstate changed",
+            node.cli("-interactive", input="n\n").preciousblock,
+            blockhash=active_tip,
+        )
+        node.cli("-interactive", input="y\n").preciousblock(blockhash=active_tip)
+        assert_equal(node.getbestblockhash(), active_tip)
+
+        assert_raises_process_error(
+            1,
+            "Block invalidation cancelled before chainstate changed",
+            node.cli("-interactive", input="n\n").invalidateblock,
+            blockhash=active_tip,
+        )
+        assert_equal(node.getbestblockhash(), active_tip)
+        node.cli("-interactive", input="y\n").invalidateblock(blockhash=active_tip)
+        assert_equal(node.getbestblockhash(), previous_tip)
+
+        assert_raises_process_error(
+            1,
+            "Block reconsideration cancelled before chainstate changed",
+            node.cli("-interactive", input="n\n").reconsiderblock,
+            blockhash=active_tip,
+        )
+        assert_equal(node.getbestblockhash(), previous_tip)
+        node.cli("-interactive", input="y\n").reconsiderblock(blockhash=active_tip)
+        assert_equal(node.getbestblockhash(), active_tip)
+
+        assert_raises_process_error(
+            1,
+            "Blockchain pruning cancelled before any block file was deleted",
+            node.cli("-interactive", input="n\n").pruneblockchain,
+            height=1,
+        )
+        assert_raises_rpc_error(
+            -1,
+            "Cannot prune blocks because node is not in prune mode",
+            node.cli("-interactive", input="y\n").pruneblockchain,
+            height=1,
+        )
+        assert_raises_process_error(
+            1,
+            "UTXO snapshot loading cancelled before chainstate changed",
+            node.cli("-interactive", input="n\n").loadtxoutset,
+            path="missing-interactive-snapshot.dat",
+        )
+        assert_raises_rpc_error(
+            -8,
+            "Couldn't open file",
+            node.cli("-interactive", input="y\n").loadtxoutset,
+            path="missing-interactive-snapshot.dat",
+        )
+        generated = node.cli(
+            "-interactive",
+            input=f"{descriptor}\ny\n",
+        ).generateblock(transactions=[], submit=False)
+        assert "hash" in generated
+        assert "hex" in generated
+        assert_equal(node.getblockcount(), height_before_mining + 1)
+
+        self.log.info("Test guided wallet signing, PSBT processing, and hidden funding options")
+        wallet_name = "cli_interactive_private_material"
+        wallet_secret = "interactive private material wallet secret"
+        node.loadwallet(wallet_name)
+        wallet = node.get_wallet_rpc(wallet_name)
+        wallet.walletpassphrase(wallet_secret, 600)
+        message_address = wallet.getnewaddress("", "legacy")
+        message = "Nito guided wallet signing"
+        assert_raises_process_error(
+            1,
+            "Wallet message signing cancelled before any signature was created",
+            node.cli("-interactive", f"-rpcwallet={wallet_name}", input="n\n").signmessage,
+            address=message_address,
+            message=message,
+        )
+        wallet_signature = node.cli(
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="y\n",
+        ).signmessage(address=message_address, message=message)
+        assert_equal(node.verifymessage(message_address, wallet_signature, message), True)
+
+        destination = wallet.getnewaddress()
+        unsigned_raw = node.createrawtransaction([], {destination: Decimal("0.01")})
+        funded_raw = node.cli(
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="true\ny\n",
+        ).fundrawtransaction(hexstring=unsigned_raw)
+        assert "hex" in funded_raw
+        assert_raises_process_error(
+            1,
+            "Wallet transaction signing cancelled before any signature was created",
+            node.cli("-interactive", f"-rpcwallet={wallet_name}", input="n\n").signrawtransactionwithwallet,
+            hexstring=funded_raw["hex"],
+        )
+        signed_raw = node.cli(
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="y\n",
+        ).signrawtransactionwithwallet(hexstring=funded_raw["hex"])
+        assert_equal(signed_raw["complete"], True)
+
+        psbt_destination = wallet.getnewaddress()
+        funded_psbt = node.cli(
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="{}\ny\n",
+        ).walletcreatefundedpsbt(inputs=[], outputs={psbt_destination: Decimal("0.01")})
+        assert funded_psbt["psbt"]
+        updated_psbt = node.cli(
+            "-interactive",
+            input=f"{json.dumps([descriptor], separators=(',', ':'))}\n",
+        ).utxoupdatepsbt(psbt=funded_psbt["psbt"])
+        assert updated_psbt
+        descriptor_processed = node.cli(
+            "-interactive",
+            input=f"{json.dumps([descriptor], separators=(',', ':'))}\ny\n",
+        ).descriptorprocesspsbt(psbt=updated_psbt, finalize=False)
+        assert descriptor_processed["psbt"]
+        wallet_processed = node.cli(
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input="y\n",
+        ).walletprocesspsbt(psbt=funded_psbt["psbt"], finalize=False)
+        assert wallet_processed["psbt"]
+
+        send_destination = wallet.getnewaddress()
+        assert_raises_process_error(
+            1,
+            "Wallet payment cancelled before any transaction was created",
+            node.cli("-interactive", f"-rpcwallet={wallet_name}", input="{}\nn\n").send,
+            outputs={send_destination: Decimal("0.01")},
+        )
+        send_result = node.cli(
+            "-interactive",
+            f"-rpcwallet={wallet_name}",
+            input='{"fee_rate":1}\ny\n',
+        ).send(outputs={send_destination: Decimal("0.01")})
+        assert send_result["txid"]
+
+        self.log.info("Test guided send-all without risking the primary test wallet")
+        sendall_name = "cli_interactive_sendall"
+        node.createwallet(wallet_name=sendall_name, descriptors=True)
+        sendall_wallet = node.get_wallet_rpc(sendall_name)
+        wallet.sendtoaddress(sendall_wallet.getnewaddress(), Decimal("1"))
+        self.generate(node, 1)
+        sendall_balance = sendall_wallet.getbalance()
+        assert_greater_than_or_equal(sendall_balance, Decimal("1"))
+        sendall_destination = wallet.getnewaddress()
+        assert_raises_process_error(
+            1,
+            "Wallet send-all cancelled before any transaction was created",
+            node.cli("-interactive", f"-rpcwallet={sendall_name}", input="{}\nn\n").sendall,
+            recipients=[sendall_destination],
+        )
+        assert_equal(sendall_wallet.getbalance(), sendall_balance)
+        sendall_result = node.cli(
+            "-interactive",
+            f"-rpcwallet={sendall_name}",
+            input="{}\ny\n",
+        ).sendall(recipients=[sendall_destination])
+        assert sendall_result["txid"]
+        sendall_wallet.unloadwallet()
+        wallet.walletlock()
+        wallet.unloadwallet()
+
+        self.log.info("Test guided wallet restore, dump import, version, keypool, and watch-only mutations")
+        backup_path = str(node.datadir_path / "interactive-private-material-backup.dat")
+        restored_name = "cli_interactive_restored_backup"
+        assert_raises_process_error(
+            1,
+            "Wallet restore cancelled before any wallet was created",
+            node.cli("-interactive", input="n\n").restorewallet,
+            wallet_name=restored_name,
+            backup_file=backup_path,
+            load_on_startup=False,
+        )
+        assert restored_name not in node.listwallets()
+        restored_result = node.cli(
+            "-interactive",
+            input="y\n",
+        ).restorewallet(wallet_name=restored_name, backup_file=backup_path, load_on_startup=False)
+        assert_equal(restored_result["name"], restored_name)
+        node.get_wallet_rpc(restored_name).unloadwallet()
+
+        legacy_name = "cli_interactive_lifecycle_legacy"
+        node.createwallet(wallet_name=legacy_name, blank=False, descriptors=False)
+        legacy_wallet = node.get_wallet_rpc(legacy_name)
+        dump_path = str(node.datadir_path / "interactive-legacy-wallet.dump")
+        assert_raises_process_error(
+            1,
+            "Wallet dump import cancelled before any wallet change",
+            node.cli("-interactive", f"-rpcwallet={legacy_name}", input="n\n").importwallet,
+            filename=dump_path,
+        )
+        node.cli(
+            "-interactive",
+            f"-rpcwallet={legacy_name}",
+            input="y\n",
+        ).importwallet(filename=dump_path)
+
+        assert_raises_process_error(
+            1,
+            "Wallet version upgrade cancelled before any change",
+            node.cli("-named", "-interactive", f"-rpcwallet={legacy_name}", input="n\n").upgradewallet,
+        )
+        upgrade_result = node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={legacy_name}",
+            input="y\n",
+        ).upgradewallet()
+        assert "current_version" in upgrade_result
+
+        assert_raises_process_error(
+            1,
+            "Keypool regeneration cancelled before any change",
+            node.cli("-named", "-interactive", f"-rpcwallet={legacy_name}", input="n\n").newkeypool,
+        )
+        node.cli(
+            "-named",
+            "-interactive",
+            f"-rpcwallet={legacy_name}",
+            input="y\n",
+        ).newkeypool()
+        assert legacy_wallet.getnewaddress()
+        keypool_target = legacy_wallet.getwalletinfo()["keypoolsize"] + 1
+        assert_raises_process_error(
+            1,
+            "Keypool refill cancelled before any change",
+            node.cli("-interactive", f"-rpcwallet={legacy_name}", input="n\n").keypoolrefill,
+            newsize=keypool_target,
+        )
+        node.cli(
+            "-interactive",
+            f"-rpcwallet={legacy_name}",
+            input="y\n",
+        ).keypoolrefill(newsize=keypool_target)
+        assert_greater_than_or_equal(legacy_wallet.getwalletinfo()["keypoolsize"], keypool_target)
+
+        multisig_key_1, multisig_pubkey_1 = generate_keypair(wif=True)
+        multisig_key_2, multisig_pubkey_2 = generate_keypair(wif=True)
+        del multisig_key_1, multisig_key_2
+        multisig_pubkey_1 = multisig_pubkey_1.hex()
+        multisig_pubkey_2 = multisig_pubkey_2.hex()
+        assert_raises_process_error(
+            1,
+            "Multisignature-address creation cancelled before any wallet change",
+            node.cli("-interactive", f"-rpcwallet={legacy_name}", input="n\n").addmultisigaddress,
+            nrequired=1,
+            keys=[multisig_pubkey_1, multisig_pubkey_2],
+        )
+        multisig = node.cli(
+            "-interactive",
+            f"-rpcwallet={legacy_name}",
+            input="y\n",
+        ).addmultisigaddress(nrequired=1, keys=[multisig_pubkey_1, multisig_pubkey_2])
+        assert multisig["address"]
+
+        _, watch_address_pubkey = generate_keypair(wif=True)
+        watch_address = key_to_p2pkh(watch_address_pubkey)
+        assert_raises_process_error(
+            1,
+            "Watch-only address import cancelled before any wallet change",
+            node.cli("-interactive", f"-rpcwallet={legacy_name}", input="n\n").importaddress,
+            address=watch_address,
+            rescan=False,
+        )
+        node.cli(
+            "-interactive",
+            f"-rpcwallet={legacy_name}",
+            input="y\n",
+        ).importaddress(address=watch_address, rescan=False)
+        assert_equal(legacy_wallet.getaddressinfo(watch_address)["iswatchonly"], True)
+
+        _, watch_pubkey = generate_keypair(wif=True)
+        watch_pubkey_address = key_to_p2pkh(watch_pubkey)
+        watch_pubkey = watch_pubkey.hex()
+        assert_raises_process_error(
+            1,
+            "Public-key import cancelled before any wallet change",
+            node.cli("-interactive", f"-rpcwallet={legacy_name}", input="n\n").importpubkey,
+            pubkey=watch_pubkey,
+            rescan=False,
+        )
+        node.cli(
+            "-interactive",
+            f"-rpcwallet={legacy_name}",
+            input="y\n",
+        ).importpubkey(pubkey=watch_pubkey, rescan=False)
+        assert_equal(legacy_wallet.getaddressinfo(watch_pubkey_address)["iswatchonly"], True)
+        legacy_wallet.unloadwallet()
 
     def run_test(self):
         """Main test logic"""
@@ -269,14 +1301,14 @@ class TestNitoCli(NitoTestFramework):
             )
             assert_raises_process_error(
                 1,
-                '-interactive cannot be combined with -stdin',
+                '-interactive cannot be combined with -stdin or -stdinwalletpassphrase',
                 self.nodes[0].cli('-interactive', '-stdin', input='').createwallet,
                 wallet_name='cli_interactive_conflict',
                 descriptors=True,
             )
             assert_raises_process_error(
                 1,
-                'Do not provide passphrase or bip39_passphrase arguments with -interactive',
+                'Do not provide passphrase on the command line with -interactive',
                 self.nodes[0].cli('-interactive', input='').createwallet,
                 wallet_name='cli_interactive_exposed_secret',
                 descriptors=True,
@@ -284,7 +1316,7 @@ class TestNitoCli(NitoTestFramework):
             )
             assert_raises_process_error(
                 1,
-                'Do not provide passphrase or bip39_passphrase arguments with -interactive',
+                'Do not provide bip39_passphrase on the command line with -interactive',
                 self.nodes[0].cli('-interactive', input='').createwallet,
                 wallet_name='cli_interactive_exposed_bip39',
                 descriptors=True,
@@ -404,17 +1436,26 @@ class TestNitoCli(NitoTestFramework):
                 assert_equal(initial_echo, True)
                 assert_equal(final_echo, True)
 
+            self.test_interactive_wallet_management()
+            self.test_interactive_private_material()
+            self.test_interactive_extended_sensitive_operations()
+
         self.log.info("Test interactive mode rejects unsupported commands")
         assert_raises_process_error(
             1,
-            '-interactive is only applicable to -named createwallet',
+            '-interactive requires -named and a supported RPC',
             self.nodes[0].cli('-interactive', input='').getblockcount,
         )
         assert_raises_process_error(
             1,
-            '-interactive is only applicable to -named createwallet',
+            '-interactive requires -named and a supported RPC',
             self.nodes[0].cli('-interactive', input='').createwallet,
             'cli_interactive_without_named',
+        )
+        assert_raises_process_error(
+            1,
+            '-interactive is not supported for this RPC; use it only with a documented sensitive or high-impact RPC',
+            self.nodes[0].cli('-named', '-interactive', input='').getblockcount,
         )
 
         self.log.info("Test connecting to a non-existing server")
@@ -438,6 +1479,7 @@ class TestNitoCli(NitoTestFramework):
         self.log.info("Test -getinfo returns expected network and blockchain info")
         if self.is_specified_wallet_compiled():
             self.import_deterministic_coinbase_privkeys()
+            initial_wallet_balance = self.nodes[0].getbalance()
             self.nodes[0].encryptwallet(password)
         cli_get_info_string = self.nodes[0].cli('-getinfo').send_cli()
         cli_get_info = cli_get_info_string_to_dict(cli_get_info_string)
@@ -467,7 +1509,7 @@ class TestNitoCli(NitoTestFramework):
             # Explicitly set the output type in order to have consistent tx vsize / fees
             # for both legacy and descriptor wallets (disables the change address type detection algorithm)
             self.restart_node(0, extra_args=["-addresstype=bech32", "-changetype=bech32"])
-            assert_equal(Decimal(cli_get_info['Balance']), BALANCE)
+            assert_equal(Decimal(cli_get_info['Balance']), initial_wallet_balance)
             assert 'Balances' not in cli_get_info_string
             wallet_info = self.nodes[0].getwalletinfo()
             assert_equal(int(cli_get_info['Keypool size']), wallet_info['keypoolsize'])
@@ -478,7 +1520,7 @@ class TestNitoCli(NitoTestFramework):
 
             # Setup to test -getinfo, -generate, and -rpcwallet= with multiple wallets.
             wallets = [self.default_wallet_name, 'Encrypted', 'secret']
-            amounts = [BALANCE + Decimal('471.999928'), Decimal(9), Decimal(31)]
+            transfer_amounts = [Decimal(9), Decimal(31)]
             self.nodes[0].createwallet(wallet_name=wallets[1])
             self.nodes[0].createwallet(wallet_name=wallets[2])
             w1 = self.nodes[0].get_wallet_rpc(wallets[0])
@@ -488,11 +1530,12 @@ class TestNitoCli(NitoTestFramework):
             rpcwallet3 = f'-rpcwallet={wallets[2]}'
             w1.walletpassphrase(password, self.rpc_timeout)
             w2.encryptwallet(password)
-            w1.sendtoaddress(w2.getnewaddress(), amounts[1])
-            w1.sendtoaddress(w3.getnewaddress(), amounts[2])
+            w1.sendtoaddress(w2.getnewaddress(), transfer_amounts[0])
+            w1.sendtoaddress(w3.getnewaddress(), transfer_amounts[1])
 
-            # Mine a block to confirm; adds a block reward (512 NITO) to the default wallet.
+            # Mine a block to confirm the transfers, then record the actual balances.
             self.generate(self.nodes[0], 1)
+            amounts = [w1.getbalance(), w2.getbalance(), w3.getbalance()]
 
             self.log.info("Test -getinfo with multiple wallets and -rpcwallet returns specified wallet balance")
             for i in range(len(wallets)):
@@ -627,6 +1670,7 @@ class TestNitoCli(NitoTestFramework):
             self.log.info("*** Wallet not compiled; cli getwalletinfo and -getinfo wallet tests skipped")
             self.generate(self.nodes[0], 25)  # maintain block parity with the wallet_compiled conditional branch
 
+        expected_blocks_after_cli_tests = self.nodes[0].getblockcount()
         self.log.info("Test -version with node stopped")
         self.stop_node(0)
         cli_response = self.nodes[0].cli('-version').send_cli()
@@ -637,7 +1681,7 @@ class TestNitoCli(NitoTestFramework):
         self.nodes[0].wait_for_cookie_credentials()  # ensure cookie file is available to avoid race condition
         blocks = self.nodes[0].cli('-rpcwait').send_cli('getblockcount')
         self.nodes[0].wait_for_rpc_connection()
-        assert_equal(blocks, BLOCKS + 25)
+        assert_equal(blocks, expected_blocks_after_cli_tests)
 
         self.log.info("Test -rpcwait option waits at most -rpcwaittimeout seconds for startup")
         self.stop_node(0)  # stop the node so we time out

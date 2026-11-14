@@ -762,7 +762,7 @@ static RPCHelpMan getblock()
 
 static RPCHelpMan pruneblockchain()
 {
-    return RPCHelpMan{"pruneblockchain", "",
+    return RPCHelpMan{"pruneblockchain", "At a terminal, use -named -interactive to approve permanent block-file deletion.\n",
                 {
                     {"height", RPCArg::Type::NUM, RPCArg::Optional::NO, "The block height to prune up to. May be set to a discrete height, or to a " + UNIX_EPOCH_TIME + "\n"
             "                  to prune blocks whose block time is at least 2 hours older than the provided timestamp."},
@@ -770,7 +770,8 @@ static RPCHelpMan pruneblockchain()
                 RPCResult{
                     RPCResult::Type::NUM, "", "Height of the last block pruned"},
                 RPCExamples{
-                    HelpExampleCli("pruneblockchain", "1000")
+                    HelpExampleCli("-named -interactive pruneblockchain", "height=1000")
+            + HelpExampleCli("pruneblockchain", "1000")
             + HelpExampleRpc("pruneblockchain", "1000")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
@@ -1618,7 +1619,8 @@ static RPCHelpMan preciousblock()
                 },
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
-                    HelpExampleCli("preciousblock", "\"blockhash\"")
+                    HelpExampleCli("-named -interactive preciousblock", "blockhash=BLOCK_HASH")
+            + HelpExampleCli("preciousblock", "\"blockhash\"")
             + HelpExampleRpc("preciousblock", "\"blockhash\"")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
@@ -1650,13 +1652,15 @@ static RPCHelpMan preciousblock()
 static RPCHelpMan invalidateblock()
 {
     return RPCHelpMan{"invalidateblock",
-                "\nPermanently marks a block as invalid, as if it violated a consensus rule.\n",
+                "\nPermanently marks a block as invalid, as if it violated a consensus rule.\n"
+                "At a terminal, use -named -interactive to approve the chainstate mutation.\n",
                 {
                     {"blockhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "the hash of the block to mark as invalid"},
                 },
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
-                    HelpExampleCli("invalidateblock", "\"blockhash\"")
+                    HelpExampleCli("-named -interactive invalidateblock", "blockhash=BLOCK_HASH")
+            + HelpExampleCli("invalidateblock", "\"blockhash\"")
             + HelpExampleRpc("invalidateblock", "\"blockhash\"")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
@@ -1692,13 +1696,15 @@ static RPCHelpMan reconsiderblock()
 {
     return RPCHelpMan{"reconsiderblock",
                 "\nRemoves invalidity status of a block, its ancestors and its descendants, reconsider them for activation.\n"
-                "This can be used to undo the effects of invalidateblock.\n",
+                "This can be used to undo the effects of invalidateblock.\n"
+                "At a terminal, use -named -interactive to approve the chainstate mutation.\n",
                 {
                     {"blockhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "the hash of the block to reconsider"},
                 },
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
-                    HelpExampleCli("reconsiderblock", "\"blockhash\"")
+                    HelpExampleCli("-named -interactive reconsiderblock", "blockhash=BLOCK_HASH")
+            + HelpExampleCli("reconsiderblock", "\"blockhash\"")
             + HelpExampleRpc("reconsiderblock", "\"blockhash\"")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
@@ -2196,7 +2202,7 @@ static const auto scan_action_arg_desc = RPCArg{
 };
 
 static const auto scan_objects_arg_desc = RPCArg{
-    "scanobjects", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Array of scan objects. Required for \"start\" action\n"
+    "scanobjects", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Array of scan objects. Required for \"start\" action. At a terminal, use -named -interactive with nito-cli when descriptors may contain xprv data.\n"
         "Every scan object is either a string descriptor or an object:",
     {
         {"descriptor", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "An output descriptor"},
@@ -2274,7 +2280,7 @@ static RPCHelpMan scantxoutset()
             scan_result_status_none,
         },
         RPCExamples{
-            HelpExampleCli("scantxoutset", "start \'[\"" + EXAMPLE_DESCRIPTOR_RAW + "\"]\'") +
+            HelpExampleCli("-named -interactive scantxoutset", "action=start") +
             HelpExampleCli("scantxoutset", "status") +
             HelpExampleCli("scantxoutset", "abort") +
             HelpExampleRpc("scantxoutset", "\"start\", [\"" + EXAMPLE_DESCRIPTOR_RAW + "\"]") +
@@ -2465,8 +2471,7 @@ static RPCHelpMan scanblocks()
             scan_result_abort,
         },
         RPCExamples{
-            HelpExampleCli("scanblocks", "start '[\"addr(bcrt1q4u4nsgk6ug0sqz7r3rj9tykjxrsl0yy4d0wwte)\"]' 300000") +
-            HelpExampleCli("scanblocks", "start '[\"addr(bcrt1q4u4nsgk6ug0sqz7r3rj9tykjxrsl0yy4d0wwte)\"]' 100 150 basic") +
+            HelpExampleCli("-named -interactive scanblocks", "action=start start_height=300000") +
             HelpExampleCli("scanblocks", "status") +
             HelpExampleRpc("scanblocks", "\"start\", [\"addr(bcrt1q4u4nsgk6ug0sqz7r3rj9tykjxrsl0yy4d0wwte)\"], 300000") +
             HelpExampleRpc("scanblocks", "\"start\", [\"addr(bcrt1q4u4nsgk6ug0sqz7r3rj9tykjxrsl0yy4d0wwte)\"], 100, 150, \"basic\"") +
@@ -2850,6 +2855,7 @@ static RPCHelpMan loadtxoutset()
     return RPCHelpMan{
         "loadtxoutset",
         "Load the serialized UTXO set from a file.\n"
+        "At a terminal, use -named -interactive to approve activation of the snapshot chainstate.\n"
         "Only snapshots whose base is before Nito private transaction activation are supported.\n"
         "Once this snapshot is loaded, its contents will be "
         "deserialized into a second chainstate data structure, which is then used to sync to "
@@ -2880,7 +2886,8 @@ static RPCHelpMan loadtxoutset()
                 }
         },
         RPCExamples{
-            HelpExampleCli("loadtxoutset", "utxo.dat")
+            HelpExampleCli("-named -interactive loadtxoutset", "path=utxo.dat")
+            + HelpExampleCli("loadtxoutset", "utxo.dat")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {

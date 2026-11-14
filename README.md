@@ -118,26 +118,38 @@ control when private notes should fund a transaction.
 
 Supported v3 Berkeley DB and SQLite wallet files open directly and keep their
 transparent keys, labels, address sequence and existing encryption state. No
-conversion is required for transparent use. Adding Orchard is an explicit,
-one-time operation. For an unencrypted wallet with no BIP39 passphrase:
+conversion is required for transparent use. Descriptor migration is optional.
+If it is wanted, run it before adding Orchard:
 
 ```bash
-nito-cli -rpcwallet=legacy upgradeorchardwallet
+nito-cli -named -interactive -rpcwallet=legacy migratewallet
 ```
 
-If the v3 wallet is encrypted, unlock it without placing its password in the
-command line, perform the upgrade, then lock it again:
+The migration wizard confirms the operation, asks whether the wallet is
+encrypted and requests the current password without echo only when needed. It
+creates the required legacy backup before mutation.
+
+Adding Orchard is a separate, explicit, one-time operation. If the v3 wallet is
+encrypted, first unlock it without placing its password in the command line:
 
 ```bash
-nito-cli -stdinwalletpassphrase -rpcwallet=legacy walletpassphrase 300
-nito-cli -rpcwallet=legacy upgradeorchardwallet
+nito-cli -named -interactive -rpcwallet=legacy walletpassphrase timeout=300
+```
+
+Then use the same guided Orchard command for a newly generated phrase, an
+optional BIP39 passphrase or restoration of an existing Orchard phrase:
+
+```bash
+nito-cli -named -interactive -rpcwallet=legacy upgradeorchardwallet
+```
+
+The wizard confirms every supplied phrase or new secret and asks for final
+approval before creating the backup and changing the wallet. Relock an
+encrypted wallet afterward:
+
+```bash
 nito-cli -rpcwallet=legacy walletlock
 ```
-
-Adding a BIP39 passphrase or restoring an existing Orchard phrase uses the
-protected named-input procedure in the
-[RPC reference](doc/nito/rpc-reference.md#add-orchard-to-an-existing-v3-wallet). Unlock first
-when the v3 wallet is encrypted.
 
 Keep both the reported pre-upgrade backup and the returned `orchard_only`
 phrase. That phrase covers the added Orchard authority; it does not replace the
@@ -169,6 +181,35 @@ Interactive creation confirms each selected secret without terminal echo and
 keeps it out of shell history and process arguments. Use the documented
 `-stdin` form only for protected automation. Successful creation returns the
 wallet name as JSON; local validation or RPC errors return a nonzero exit code.
+
+Human recovery uses the same guided policy. Create a blank descriptor wallet,
+then initialize it from the saved phrase:
+
+```bash
+nito-cli -named -interactive createwallet wallet_name=restore blank=true descriptors=true
+nito-cli -named -interactive -rpcwallet=restore walletpassphrase timeout=600
+nito-cli -named -interactive -rpcwallet=restore sethdseed newkeypool=true
+nito-cli -rpcwallet=restore walletlock
+```
+
+The phrase and optional BIP39 passphrase are entered twice without echo, and
+the wallet is not initialized until the final confirmation. During blank-wallet
+creation, the first wizard still offers wallet-file encryption but correctly
+omits the BIP39 question because no phrase exists until `sethdseed`. Run the
+`walletpassphrase` and `walletlock` lines only when wallet-file encryption was
+selected; an encrypted blank wallet must be unlocked before `sethdseed`.
+
+The same audited `-named -interactive` safety layer covers 49 sensitive flows:
+wallet recovery and encryption, private-key and private-descriptor input,
+wallet and standalone signing, descriptor-bearing scan/funding calls,
+recovery-authority export, backup/restore, and legacy mutations that require a
+fresh backup, plus five high-impact local chainstate changes. It keeps
+credentials and private authority out of process
+arguments and requires explicit approval before disclosure, signing or
+high-impact mutation. Ordinary RPC forms remain unchanged for automation. See
+[guided human input](doc/nito/rpc-reference.md#guided-human-input) for the
+complete supported-command table and the exact boundary. `-stdin` remains
+available only as the advanced automation interface.
 
 Phrase recovery reconstructs chain-derived funds and history before reporting
 success. On an existing chain it requires unpruned blocks,

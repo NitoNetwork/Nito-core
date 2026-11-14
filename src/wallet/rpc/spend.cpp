@@ -1056,9 +1056,9 @@ RPCHelpMan fundrawtransaction()
                             "\nCreate a transaction with no inputs\n"
                             + HelpExampleCli("createrawtransaction", "\"[]\" \"{\\\"myaddress\\\":0.01}\"") +
                             "\nAdd sufficient unsigned inputs to meet the output value\n"
-                            + HelpExampleCli("fundrawtransaction", "\"rawtransactionhex\"") +
+                            + HelpExampleCli("-named -interactive fundrawtransaction", "hexstring=RAWTX_HEX") +
                             "\nSign the transaction\n"
-                            + HelpExampleCli("signrawtransactionwithwallet", "\"fundedtransactionhex\"") +
+                            + HelpExampleCli("-named -interactive signrawtransactionwithwallet", "hexstring=FUNDED_TX_HEX") +
                             "\nSend the transaction\n"
                             + HelpExampleCli("sendrawtransaction", "\"signedtransactionhex\"")
                                 },
@@ -1159,8 +1159,7 @@ RPCHelpMan signrawtransactionwithwallet()
                     }
                 },
                 RPCExamples{
-                    HelpExampleCli("signrawtransactionwithwallet", "\"myhex\"")
-            + HelpExampleRpc("signrawtransactionwithwallet", "\"myhex\"")
+                    HelpExampleCli("-named -interactive signrawtransactionwithwallet", "hexstring=RAWTX_HEX")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -1506,6 +1505,8 @@ RPCHelpMan send()
                 }
         },
         RPCExamples{""
+        "\nGuided terminal payment with hidden options and explicit confirmation\n"
+        + HelpExampleCli("-named -interactive send", "outputs='{\"" + EXAMPLE_ADDRESS[0] + "\":0.1}'") +
         "\nSend 0.1 NITO with a confirmation target of 6 blocks in economical fee estimate mode\n"
         + HelpExampleCli("send", "'{\"" + EXAMPLE_ADDRESS[0] + "\": 0.1}' 6 economical\n") +
         "Send 0.2 NITO with a fee rate of 1.1 " + CURRENCY_ATOM + "/vB using positional arguments\n"
@@ -1568,6 +1569,7 @@ RPCHelpMan sendall()
         "EXPERIMENTAL warning: this call may be changed in future releases.\n"
         "\nSpend the value of all (or specific) confirmed UTXOs in the wallet to one or more recipients.\n"
         "Unconfirmed inbound UTXOs and locked UTXOs will not be spent. Sendall will respect the avoid_reuse wallet flag.\n"
+        "At a terminal, use -named -interactive to enter an options object privately and approve the payment.\n"
         "If your wallet contains many small inputs, either because it received tiny payments or as a result of accumulating change, consider using `send_max` to exclude inputs that are worth less than the fees needed to spend them.\n",
         {
             {"recipients", RPCArg::Type::ARR, RPCArg::Optional::NO, "The sendall destinations. Each address may only appear once.\n"
@@ -1627,6 +1629,8 @@ RPCHelpMan sendall()
                 }
         },
         RPCExamples{""
+        "\nFor a terminal-guided send-all that keeps options containing private descriptors out of shell history\n"
+        + HelpExampleCli("-named -interactive sendall", "recipients='[\"" + EXAMPLE_ADDRESS[0] + "\"]' fee_rate=1\n") +
         "\nSpend all UTXOs from the wallet with a fee rate of 1 " + CURRENCY_ATOM + "/vB using named arguments\n"
         + HelpExampleCli("-named sendall", "recipients='[\"" + EXAMPLE_ADDRESS[0] + "\"]' fee_rate=1\n") +
         "Spend all UTXOs with a fee rate of 1.1 " + CURRENCY_ATOM + "/vB using positional arguments\n"
@@ -1847,7 +1851,7 @@ RPCHelpMan walletprocesspsbt()
                     }
                 },
                 RPCExamples{
-                    HelpExampleCli("walletprocesspsbt", "\"psbt\"")
+                    HelpExampleCli("-named -interactive walletprocesspsbt", "psbt=PSBT_BASE64")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -1979,7 +1983,7 @@ RPCHelpMan walletcreatefundedpsbt()
                                 },
                                 RPCExamples{
                             "\nCreate a transaction with no inputs\n"
-                            + HelpExampleCli("walletcreatefundedpsbt", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"")
+                            + HelpExampleCli("-named -interactive walletcreatefundedpsbt", "inputs='[]' outputs='[{\"data\":\"00010203\"}]'")
                                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {

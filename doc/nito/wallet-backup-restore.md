@@ -47,12 +47,43 @@ upgrade or mandatory database conversion.
 Use `backupwallet` before moving a wallet between systems:
 
 ```bash
-nito-cli -rpcwallet=legacy backupwallet "/secure/path/legacy-wallet.dat"
+nito-cli -named -interactive -rpcwallet=legacy backupwallet destination="/secure/path/legacy-wallet.dat"
 ```
 
-Restore a wallet file with the normal wallet restore flow. A file restore is the
-only recovery method that can preserve wallet-local labels, comments, imported
-keys and other non-chain metadata.
+The guided command requires explicit approval before writing the private wallet
+file. Verify the returned operation and restore the backup in an isolated
+wallet before relying on it.
+
+Restore a wallet file through the guided flow:
+
+```bash
+nito-cli -named -interactive restorewallet wallet_name=restored backup_file=/secure/path/legacy-wallet.dat
+```
+
+The command requires approval before loading the private backup. A file restore
+is the only recovery method that can preserve wallet-local labels, comments,
+imported keys and other non-chain metadata. A legacy text dump can be imported
+with guided `importwallet`; create and verify a fresh wallet backup afterwards.
+
+Descriptor migration is optional. If wanted, perform it before adding Orchard:
+
+```bash
+nito-cli -named -interactive -rpcwallet=legacy migratewallet
+```
+
+The wizard confirms migration and requests the current wallet password without
+echo only when the V3 wallet is encrypted. `migratewallet` creates and returns
+the path of a `.legacy.bak` file before mutation. Verify and retain that file
+and back up every migrated wallet. Migration is refused after Orchard has been
+added.
+
+Legacy keypool, watch-only and multisignature mutations also change what a
+complete wallet backup must contain. Human terminal use should select the
+documented `-named -interactive` forms of `newkeypool`, `keypoolrefill`,
+`addmultisigaddress`, `importaddress` and `importpubkey`, then create and verify
+a new backup when the RPC help requires it. `keypoolrefill` is especially
+backup-sensitive for non-HD legacy wallets because newly generated keys are not
+recoverable from an older file.
 
 ### Upgrade And Rollback Boundaries
 
@@ -79,40 +110,34 @@ Run it only when you want to add Orchard authority to that wallet. The existing
 wallet-file encryption state is preserved; `upgradeorchardwallet` neither adds,
 removes nor changes the wallet encryption password.
 
-For an unencrypted wallet and a newly generated Orchard phrase without a BIP39
-passphrase:
+Use one guided command for a newly generated Orchard phrase, an optional BIP39
+passphrase or restoration of an existing Orchard phrase:
 
 ```bash
-nito-cli -rpcwallet=legacy upgradeorchardwallet
+nito-cli -named -interactive -rpcwallet=legacy upgradeorchardwallet
 ```
 
-For an encrypted wallet, unlock it through protected standard input before the
-upgrade, then lock it again when finished:
+For an encrypted wallet, unlock it through the dedicated hidden-input prompt
+before the guided upgrade, then lock it again when finished:
 
 ```bash
-nito-cli -rpcwallet=legacy -stdinwalletpassphrase walletpassphrase 300
-nito-cli -rpcwallet=legacy upgradeorchardwallet
+nito-cli -named -interactive -rpcwallet=legacy walletpassphrase timeout=300
+nito-cli -named -interactive -rpcwallet=legacy upgradeorchardwallet
 nito-cli -rpcwallet=legacy walletlock
 ```
 
-The first command prompts for the wallet encryption password without displaying
-it. Skip the unlock and lock commands when the wallet is not encrypted.
+The unlock command prompts for the wallet encryption password without
+displaying it. Skip the unlock and lock commands when the wallet is not
+encrypted. The Orchard wizard asks whether to restore an existing phrase,
+requests and confirms that phrase when selected, asks whether it used a BIP39
+passphrase, confirms the optional secret and requires final approval before
+creating the backup and mutating the wallet. Seeing no characters or asterisks
+while entering these values is intentional.
 
-For the advanced CLI case where the Orchard phrase must use a BIP39 passphrase,
-use protected named standard input instead of placing the secret in the command
-line:
-
-```bash
-nito-cli -named -stdin -rpcwallet=legacy upgradeorchardwallet
-```
-
-Enter one line in the form `bip39_passphrase=<value>`, then end input with Ctrl-D
-on Linux/macOS or Ctrl-Z followed by Enter on Windows. Unlock an encrypted wallet
-first as shown above. To restore an existing Orchard authority instead, enter
-`mnemonic=<12-or-24-word phrase>` and, if it was originally used,
-`bip39_passphrase=<value>` on separate lines. Omitting the BIP39 line means the
-empty BIP39 passphrase and therefore derives different authority from a phrase
-that was originally protected by one.
+Advanced automation may instead provide optional `mnemonic=...` and
+`bip39_passphrase=...` named lines through `-stdin`; see the
+[RPC reference](rpc-reference.md#advanced-automation). This automation form has
+no field prompts or confirmation.
 
 The operation creates a pre-upgrade backup before adding one canonical Orchard
 root. It does not replace or deactivate the v3 transparent managers. The
@@ -131,16 +156,25 @@ A native v4 phrase is marked `full_wallet` and covers its deterministic
 transparent and Orchard authority. Restore it into a blank descriptor wallet:
 
 ```bash
-nito-cli -named createwallet wallet_name=restore blank=true descriptors=true
-nito-cli -named -stdin -rpcwallet=restore sethdseed newkeypool=true
+nito-cli -named -interactive createwallet wallet_name=restore blank=true descriptors=true
+nito-cli -named -interactive -rpcwallet=restore walletpassphrase timeout=600
+nito-cli -named -interactive -rpcwallet=restore sethdseed newkeypool=true
+nito-cli -rpcwallet=restore walletlock
 ```
 
-Enter `seed=` followed by the phrase on one standard-input line. If used, enter
-`bip39_passphrase=` followed by its exact value on a second line. End input with
-Ctrl-D on Linux/macOS or Ctrl-Z followed by Enter on Windows. Do not put either
-secret on the command line. `-stdin` disables terminal echo when reading from a
-terminal; redirected input and its source still need protection. Qt also provides
-a recovery-phrase form.
+The wizard requests and confirms the phrase without echo, asks whether it used
+a BIP39 passphrase, confirms that secret when selected and requires final
+approval before initializing the blank wallet. Do not put either secret on the
+command line. Advanced automation may use the named-input form documented in
+the [RPC reference](rpc-reference.md#advanced-automation). Qt also provides a
+recovery-phrase form.
+
+The guided blank-wallet creation offers wallet-file encryption but omits the
+BIP39 question because no phrase exists yet. If encryption was selected, use
+the guided `walletpassphrase` line before `sethdseed` and `walletlock`
+afterwards. Skip both password lines for an unencrypted wallet. `sethdseed`
+then restores the phrase and its distinct BIP39 passphrase, if one was
+originally used.
 
 Use `dumpmnemonic` on an unlocked wallet to export the phrase and verify its
 scope. Descriptor `sethdseed` initializes a blank wallet only; it does not

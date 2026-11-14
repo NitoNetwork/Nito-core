@@ -217,7 +217,7 @@ static RPCHelpMan generatetodescriptor()
         "Mine to a specified descriptor and return the block hashes.",
         {
             {"num_blocks", RPCArg::Type::NUM, RPCArg::Optional::NO, "How many blocks are generated."},
-            {"descriptor", RPCArg::Type::STR, RPCArg::Optional::NO, "The descriptor to send the newly generated nito to."},
+            {"descriptor", RPCArg::Type::STR, RPCArg::Optional::NO, "The descriptor to send the newly generated nito to. At a terminal, use -named -interactive with nito-cli when it may contain xprv data."},
             {"maxtries", RPCArg::Type::NUM, RPCArg::Default{DEFAULT_MAX_TRIES}, "How many iterations to try."},
         },
         RPCResult{
@@ -227,7 +227,7 @@ static RPCHelpMan generatetodescriptor()
             }
         },
         RPCExamples{
-            "\nGenerate 11 blocks to mydesc\n" + HelpExampleCli("generatetodescriptor", "11 \"mydesc\"")},
+            "\nGenerate 11 blocks to a descriptor entered without echo\n" + HelpExampleCli("-named -interactive generatetodescriptor", "num_blocks=11")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
     const auto num_blocks{self.Arg<int>(0)};
@@ -301,7 +301,7 @@ static RPCHelpMan generateblock()
     return RPCHelpMan{"generateblock",
         "Mine a set of ordered transactions to a specified address or descriptor and return the block hash.",
         {
-            {"output", RPCArg::Type::STR, RPCArg::Optional::NO, "The address or descriptor to send the newly generated nito to."},
+            {"output", RPCArg::Type::STR, RPCArg::Optional::NO, "The address or descriptor to send the newly generated nito to. At a terminal, use -named -interactive with nito-cli when a descriptor may contain xprv data."},
             {"transactions", RPCArg::Type::ARR, RPCArg::Optional::NO, "An array of hex strings which are either txids or raw transactions.\n"
                 "Txids must reference transactions currently in the mempool.\n"
                 "All transactions must be valid and in valid order, otherwise the block will be rejected.",
@@ -320,7 +320,7 @@ static RPCHelpMan generateblock()
         },
         RPCExamples{
             "\nGenerate a block to myaddress, with txs rawtx and mempool_txid\n"
-            + HelpExampleCli("generateblock", R"("myaddress" '["rawtx", "mempool_txid"]')")
+            + HelpExampleCli("-named -interactive generateblock", R"(transactions='["rawtx", "mempool_txid"]')")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {

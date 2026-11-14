@@ -1169,7 +1169,7 @@ RPCHelpMan abortrescan()
                 RPCResult{RPCResult::Type::BOOL, "", "Whether the abort was successful"},
                 RPCExamples{
             "\nImport a private key\n"
-            + HelpExampleCli("importprivkey", "\"mykey\"") +
+            + HelpExampleCli("-named -interactive importprivkey", "rescan=true") +
             "\nAbort the running wallet rescan\n"
             + HelpExampleCli("abortrescan", "") +
             "\nAs a JSON-RPC call\n"

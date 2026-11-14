@@ -737,7 +737,7 @@ static RPCHelpMan signrawtransactionwithkey()
                 "this transaction depends on but may not yet be in the block chain.\n",
                 {
                     {"hexstring", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction hex string"},
-                    {"privkeys", RPCArg::Type::ARR, RPCArg::Optional::NO, "The base58-encoded private keys for signing",
+                    {"privkeys", RPCArg::Type::ARR, RPCArg::Optional::NO, "The base58-encoded private keys for signing. At a terminal, use -named -interactive with nito-cli to enter each key without echo and terminate the list with an empty line.",
                         {
                             {"privatekey", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "private key in base58-encoding"},
                         },
@@ -789,8 +789,7 @@ static RPCHelpMan signrawtransactionwithkey()
                     }
                 },
                 RPCExamples{
-                    HelpExampleCli("signrawtransactionwithkey", "\"myhex\" \"[\\\"key1\\\",\\\"key2\\\"]\"")
-            + HelpExampleRpc("signrawtransactionwithkey", "\"myhex\", \"[\\\"key1\\\",\\\"key2\\\"]\"")
+                    HelpExampleCli("-named -interactive signrawtransactionwithkey", "hexstring=myhex")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -1750,7 +1749,7 @@ static RPCHelpMan utxoupdatepsbt()
             "\nUpdates all segwit inputs and outputs in a PSBT with data from output descriptors, the UTXO set, txindex, or the mempool.\n",
             {
                 {"psbt", RPCArg::Type::STR, RPCArg::Optional::NO, "A base64 string of a PSBT"},
-                {"descriptors", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "An array of either strings or objects", {
+                    {"descriptors", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "An array of either strings or objects. At a terminal, use -named -interactive with nito-cli when descriptors may contain xprv data.", {
                     {"", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "An output descriptor"},
                     {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "An object with an output descriptor and extra information", {
                          {"desc", RPCArg::Type::STR, RPCArg::Optional::NO, "An output descriptor"},
@@ -1762,7 +1761,7 @@ static RPCHelpMan utxoupdatepsbt()
                     RPCResult::Type::STR, "", "The base64-encoded partially signed transaction with inputs updated"
             },
             RPCExamples {
-                HelpExampleCli("utxoupdatepsbt", "\"psbt\"")
+                HelpExampleCli("-named -interactive utxoupdatepsbt", "psbt=PSBT_BASE64")
             },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -2007,7 +2006,7 @@ RPCHelpMan descriptorprocesspsbt()
                 "Then, sign the inputs we are able to with information from the output descriptors. ",
                 {
                     {"psbt", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction base64 string"},
-                    {"descriptors", RPCArg::Type::ARR, RPCArg::Optional::NO, "An array of either strings or objects", {
+                    {"descriptors", RPCArg::Type::ARR, RPCArg::Optional::NO, "An array of either strings or objects. At a terminal, use -named -interactive with nito-cli so possible xprv data is entered without echo and signing requires confirmation.", {
                         {"", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "An output descriptor"},
                         {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "An object with an output descriptor and extra information", {
                              {"desc", RPCArg::Type::STR, RPCArg::Optional::NO, "An output descriptor"},
@@ -2034,8 +2033,7 @@ RPCHelpMan descriptorprocesspsbt()
                     }
                 },
                 RPCExamples{
-                    HelpExampleCli("descriptorprocesspsbt", "\"psbt\" \"[\\\"descriptor1\\\", \\\"descriptor2\\\"]\"") +
-                    HelpExampleCli("descriptorprocesspsbt", "\"psbt\" \"[{\\\"desc\\\":\\\"mydescriptor\\\", \\\"range\\\":21}]\"")
+                    HelpExampleCli("-named -interactive descriptorprocesspsbt", "psbt=PSBT_BASE64")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {

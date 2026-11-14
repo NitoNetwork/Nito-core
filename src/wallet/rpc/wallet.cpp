@@ -483,7 +483,8 @@ static RPCHelpMan createwallet()
             }
         },
         RPCExamples{
-            HelpExampleCli("createwallet", "\"testwallet\"")
+            HelpExampleCli("-named -interactive createwallet", "wallet_name=testwallet descriptors=true")
+            + HelpExampleCli("createwallet", "\"testwallet\"")
             + HelpExampleRpc("createwallet", "\"testwallet\"")
             + HelpExampleCliNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"load_on_startup", true}})
             + HelpExampleRpcNamed("createwallet", {{"wallet_name", "descriptors"}, {"avoid_reuse", true}, {"descriptors", true}, {"load_on_startup", true}})
@@ -659,13 +660,13 @@ static RPCHelpMan sethdseed()
                     {"seed", RPCArg::Type::STR, RPCArg::DefaultHint{"random seed"}, "The BIP39 English 12- or 24-word mnemonic to use as the new HD seed, or a WIF private key for legacy wallets only.\n"
                                          "The WIF seed value can be retrieved using the dumpwallet command. It is the private key marked hdseed=1.\n"
                                          "The mnemonic seed value can be retrieved using the dumpmnemonic command."},
-                    {"bip39_passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Optional BIP39 passphrase for the generated or supplied mnemonic used to initialize a blank descriptor wallet. This is distinct from the wallet encryption passphrase and is never stored. It is not supported with WIF or legacy wallets. Use -named -stdin with nito-cli so mnemonic and passphrase are not exposed in process arguments."},
+                    {"bip39_passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Optional BIP39 passphrase for the generated or supplied mnemonic used to initialize a blank descriptor wallet. This is distinct from the wallet encryption passphrase and is never stored. It is not supported with WIF or legacy wallets. At a terminal, use -named -interactive with nito-cli to enter and confirm the mnemonic and optional passphrase without echo. Use -named -stdin only for protected automation."},
                 },
                 RPCResult{RPCResult::Type::NONE, "", ""},
                 RPCExamples{
-                    HelpExampleCli("sethdseed", "")
+                    HelpExampleCli("-named -interactive -rpcwallet=restore sethdseed", "newkeypool=true")
+            + HelpExampleCli("sethdseed", "")
             + HelpExampleCli("sethdseed", "false")
-            + HelpExampleRpc("sethdseed", "true, \"wifkey\"")
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -797,7 +798,7 @@ static RPCHelpMan upgradeorchardwallet()
         "A wallet.dat backup is created beside the wallet before any mutation. The returned phrase covers Orchard only; the backup remains required for pre-existing V3 transparent and imported keys." + HELP_REQUIRING_PASSPHRASE,
         {
             {"mnemonic", RPCArg::Type::STR, RPCArg::DefaultHint{"new random 24-word phrase"}, "Optional BIP39 English 12- or 24-word Orchard recovery phrase."},
-            {"bip39_passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Optional BIP39 passphrase for this Orchard recovery phrase. This is distinct from the wallet encryption passphrase and is never stored. Use -named -stdin with nito-cli so mnemonic and passphrase are not exposed in process arguments."},
+            {"bip39_passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Optional BIP39 passphrase for this Orchard recovery phrase. This is distinct from the wallet encryption passphrase and is never stored. At a terminal, use -named -interactive with nito-cli to choose a new or existing phrase and confirm the selected secrets without echo. Use -named -stdin only for protected automation."},
         },
         RPCResult{RPCResult::Type::OBJ, "", "",
             {
@@ -808,7 +809,7 @@ static RPCHelpMan upgradeorchardwallet()
                 {RPCResult::Type::STR, "warning", "Reminder that the V3 backup remains required"},
             }},
         RPCExamples{
-            HelpExampleCli("upgradeorchardwallet", "")
+            HelpExampleCli("-named -interactive -rpcwallet=legacy upgradeorchardwallet", "")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -879,7 +880,7 @@ static RPCHelpMan dumpmnemonic()
 {
     return RPCHelpMan{"dumpmnemonic",
         "\nReturns the canonical Orchard root encoded as a BIP39 English recovery phrase." + HELP_REQUIRING_PASSPHRASE +
-        "The response states whether the phrase covers the full deterministic V4 wallet or Orchard only, and whether its separate BIP39 passphrase is required. The BIP39 passphrase itself is never returned. Keep wallet.dat backups for every V3 or imported transparent key.\n",
+        "The response states whether the phrase covers the full deterministic V4 wallet or Orchard only, and whether its separate BIP39 passphrase is required. The BIP39 passphrase itself is never returned. Keep wallet.dat backups for every V3 or imported transparent key. At a terminal, use -named -interactive with nito-cli so disclosure requires explicit confirmation.\n",
         {},
         RPCResult{
             RPCResult::Type::OBJ, "", "",
@@ -894,7 +895,7 @@ static RPCHelpMan dumpmnemonic()
             }
         },
         RPCExamples{
-            HelpExampleCli("dumpmnemonic", "")
+            HelpExampleCli("-named -interactive dumpmnemonic", "")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -959,7 +960,7 @@ static RPCHelpMan upgradewallet()
             },
         },
         RPCExamples{
-            HelpExampleCli("upgradewallet", "169900")
+            HelpExampleCli("-named -interactive upgradewallet", "version=169900")
             + HelpExampleRpc("upgradewallet", "169900")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
@@ -1123,7 +1124,7 @@ static RPCHelpMan migratewallet()
         "\nThis RPC may take a long time to complete. Increasing the RPC client timeout is recommended.",
         {
             {"wallet_name", RPCArg::Type::STR, RPCArg::DefaultHint{"the wallet name from the RPC endpoint"}, "The name of the wallet to migrate. If provided both here and in the RPC endpoint, the two must be identical."},
-            {"passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The wallet passphrase"},
+            {"passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The wallet passphrase. At a terminal, use -named -interactive with nito-cli so the optional passphrase is prompted for without echo and never placed in process arguments."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "",
@@ -1135,7 +1136,7 @@ static RPCHelpMan migratewallet()
             }
         },
         RPCExamples{
-            HelpExampleCli("migratewallet", "")
+            HelpExampleCli("-named -interactive -rpcwallet=legacy migratewallet", "")
             + HelpExampleRpc("migratewallet", "")
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue

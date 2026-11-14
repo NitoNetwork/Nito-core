@@ -30,11 +30,14 @@ has no fee-estimation history.
 On the offline host:
 
 ```bash
-./src/nito-cli -regtest -named createwallet \
+./src/nito-cli -regtest -named -interactive createwallet \
   wallet_name="offline_wallet" \
-  passphrase="use-a-strong-passphrase" \
   descriptors=true
 ```
+
+Choose wallet-file encryption in the wizard and enter the passphrase twice
+without echo. Choose BIP39 protection only if that separate recovery secret is
+also required and will be backed up independently.
 
 Export public descriptors. The exported file does not contain private keys, but
 it reveals the wallet's public address set and should still be handled with
@@ -106,13 +109,15 @@ On the offline host:
 
 Inspect the decoded transaction before signing. Confirm the destination,
 amount, change and fee against the intended payment; the online host does not
-authorize those choices on your behalf.
+authorize those choices on your behalf. The unlock command below requests the
+wallet password without echo; do not place it in the command line.
 
 ```bash
 ./src/nito-cli -regtest decodepsbt "$(cat unsigned.psbt)"
-./src/nito-cli -regtest -rpcwallet="offline_wallet" walletpassphrase "use-a-strong-passphrase" 60
+./src/nito-cli -regtest -named -interactive -rpcwallet="offline_wallet" walletpassphrase timeout=60
 
-./src/nito-cli -regtest -rpcwallet="offline_wallet" walletprocesspsbt "$(cat unsigned.psbt)" \
+./src/nito-cli -regtest -named -interactive -rpcwallet="offline_wallet" \
+  walletprocesspsbt psbt="$(cat unsigned.psbt)" \
   | jq -r '.psbt' > signed.psbt
 ./src/nito-cli -regtest -rpcwallet="offline_wallet" walletlock
 ```
