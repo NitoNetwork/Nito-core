@@ -186,10 +186,42 @@ class TestNitoCli(NitoTestFramework):
             assert_equal(cli_bip39_wallet.dumpmnemonic()['bip39_passphrase_required'], True)
             cli_bip39_wallet.unloadwallet()
 
-            self.log.info("Test interactive encrypted BIP39 wallet creation")
+            self.log.info("Test interactive wallet creation covers all protection combinations")
             result = self.nodes[0].cli(
                 '-interactive',
-                input='wallet secret\nwallet secret\nBIP39 secret\nBIP39 secret\n',
+                input=' NO \n N \n',
+            ).createwallet(wallet_name='cli_interactive_plain', descriptors=True)
+            assert_equal(result['name'], 'cli_interactive_plain')
+            plain_wallet = self.nodes[0].get_wallet_rpc('cli_interactive_plain')
+            assert_equal(plain_wallet.getwalletinfo()['bip39_passphrase_enabled'], False)
+            assert_equal(plain_wallet.dumpmnemonic()['bip39_passphrase_required'], False)
+            plain_wallet.unloadwallet()
+
+            result = self.nodes[0].cli(
+                '-interactive',
+                input='y\nwallet secret\nwallet secret\nn\n',
+            ).createwallet(wallet_name='cli_interactive_encrypted', descriptors=True)
+            assert_equal(result['name'], 'cli_interactive_encrypted')
+            encrypted_wallet = self.nodes[0].get_wallet_rpc('cli_interactive_encrypted')
+            assert_equal(encrypted_wallet.getwalletinfo()['bip39_passphrase_enabled'], False)
+            encrypted_wallet.walletpassphrase('wallet secret', 60)
+            assert_equal(encrypted_wallet.dumpmnemonic()['bip39_passphrase_required'], False)
+            encrypted_wallet.walletlock()
+            encrypted_wallet.unloadwallet()
+
+            result = self.nodes[0].cli(
+                '-interactive',
+                input='n\ny\nBIP39 secret\nBIP39 secret\n',
+            ).createwallet(wallet_name='cli_interactive_bip39', descriptors=True)
+            assert_equal(result['name'], 'cli_interactive_bip39')
+            bip39_wallet = self.nodes[0].get_wallet_rpc('cli_interactive_bip39')
+            assert_equal(bip39_wallet.getwalletinfo()['bip39_passphrase_enabled'], True)
+            assert_equal(bip39_wallet.dumpmnemonic()['bip39_passphrase_required'], True)
+            bip39_wallet.unloadwallet()
+
+            result = self.nodes[0].cli(
+                '-interactive',
+                input='y\nwallet secret\nwallet secret\ny\nBIP39 secret\nBIP39 secret\n',
             ).createwallet(wallet_name='cli_bip39_interactive', descriptors=True)
             assert_equal(result['name'], 'cli_bip39_interactive')
             interactive_wallet = self.nodes[0].get_wallet_rpc('cli_bip39_interactive')
@@ -199,32 +231,39 @@ class TestNitoCli(NitoTestFramework):
             interactive_wallet.walletlock()
             interactive_wallet.unloadwallet()
 
+            result = self.nodes[0].cli(
+                '-interactive',
+                input='invalid\nn\nn\n',
+            ).createwallet(wallet_name='cli_interactive_choice_retry', descriptors=True)
+            assert_equal(result['name'], 'cli_interactive_choice_retry')
+            self.nodes[0].get_wallet_rpc('cli_interactive_choice_retry').unloadwallet()
+
             self.log.info("Test interactive wallet creation rejects missing and mismatched secrets")
             assert_raises_process_error(
                 1,
-                'Wallet encryption passphrase must not be empty in interactive mode',
-                self.nodes[0].cli('-interactive', input='\n\nBIP39 secret\nBIP39 secret\n').createwallet,
+                'Wallet encryption passphrase must not be empty when encryption is selected',
+                self.nodes[0].cli('-interactive', input='y\n\n\n').createwallet,
                 wallet_name='cli_interactive_empty',
                 descriptors=True,
             )
             assert_raises_process_error(
                 1,
                 'Wallet encryption passphrases do not match',
-                self.nodes[0].cli('-interactive', input='first\nsecond\nBIP39 secret\nBIP39 secret\n').createwallet,
+                self.nodes[0].cli('-interactive', input='y\nfirst\nsecond\n').createwallet,
                 wallet_name='cli_interactive_mismatch',
                 descriptors=True,
             )
             assert_raises_process_error(
                 1,
                 'BIP39 passphrases do not match',
-                self.nodes[0].cli('-interactive', input='wallet secret\nwallet secret\nfirst\nsecond\n').createwallet,
+                self.nodes[0].cli('-interactive', input='n\ny\nfirst\nsecond\n').createwallet,
                 wallet_name='cli_interactive_bip39_mismatch',
                 descriptors=True,
             )
             assert_raises_process_error(
                 1,
-                'BIP39 passphrase must not be empty in interactive mode',
-                self.nodes[0].cli('-interactive', input='wallet secret\nwallet secret\n\n\n').createwallet,
+                'BIP39 passphrase must not be empty when BIP39 protection is selected',
+                self.nodes[0].cli('-interactive', input='n\ny\n\n\n').createwallet,
                 wallet_name='cli_interactive_bip39_empty',
                 descriptors=True,
             )
@@ -287,8 +326,10 @@ class TestNitoCli(NitoTestFramework):
                         'descriptors=true',
                     ],
                     [
+                        ('Encrypt wallet.dat with a passphrase? [y/N] ', 'y'),
                         ('Wallet encryption passphrase> ', wallet_secret),
                         ('Confirm wallet encryption passphrase> ', wallet_secret),
+                        ('Protect the recovery phrase with a BIP39 passphrase? [y/N] ', 'y'),
                         ('BIP39 passphrase (distinct and never stored)> ', bip39_secret),
                         ('Confirm BIP39 passphrase> ', bip39_secret),
                     ],
@@ -313,6 +354,7 @@ class TestNitoCli(NitoTestFramework):
                         'descriptors=true',
                     ],
                     [
+                        ('Encrypt wallet.dat with a passphrase? [y/N] ', 'y'),
                         ('Wallet encryption passphrase> ', mismatch_secret),
                         ('Confirm wallet encryption passphrase> ', 'different confirmation'),
                     ],
@@ -333,7 +375,10 @@ class TestNitoCli(NitoTestFramework):
                         'wallet_name=cli_interactive_interrupted',
                         'descriptors=true',
                     ],
-                    [('Wallet encryption passphrase> ', None)],
+                    [
+                        ('Encrypt wallet.dat with a passphrase? [y/N] ', 'y'),
+                        ('Wallet encryption passphrase> ', None),
+                    ],
                 )
                 assert_equal(returncode, -signal.SIGINT)
                 assert_equal(initial_echo, True)
@@ -354,6 +399,7 @@ class TestNitoCli(NitoTestFramework):
                 )
                 assert_equal(returncode, 1)
                 assert 'Could not connect to the server' in transcript
+                assert 'Encrypt wallet.dat with a passphrase?' not in transcript
                 assert 'Wallet encryption passphrase>' not in transcript
                 assert_equal(initial_echo, True)
                 assert_equal(final_echo, True)

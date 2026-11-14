@@ -88,10 +88,27 @@ Linux, macOS and the available networks.
 ## Wallets And Bech32x
 
 Bech32 remains the default receive type. Bech32x is an explicit private receive
-type with `nito1x...` mainnet addresses:
+type with `nito1x...` mainnet addresses. Create a native v4 wallet with the
+guided command:
 
 ```bash
-nito-cli -named -interactive createwallet wallet_name=main descriptors=true
+nito-cli -named -interactive createwallet wallet_name=main descriptors=true load_on_startup=true
+```
+
+The wizard asks independently whether to encrypt the wallet file and whether
+to protect the recovery phrase with a BIP39 passphrase, covering all four
+combinations. It requests and confirms only the selected secrets, without
+terminal echo, shell history or process arguments. Wallet encryption protects
+`wallet.dat` at rest. The separate BIP39 passphrase changes the keys derived
+from the recovery phrase, is never stored and cannot be recovered or reset.
+`load_on_startup=true` adds the wallet to the persistent startup list; use
+`false` to remove it or omit the option to leave that list unchanged. Protected
+non-interactive input for automation is documented in the
+[RPC reference](doc/nito/rpc-reference.md#optional-bip39-passphrase).
+
+After creation, select the required receive type explicitly:
+
+```bash
 nito-cli -rpcwallet=main getnewaddress "" bech32
 nito-cli -rpcwallet=main getnewaddress "" bech32x
 ```
@@ -100,17 +117,34 @@ Normal sends use transparent funds. Use `sendprivate` or the Qt private-balance
 control when private notes should fund a transaction.
 
 Supported v3 Berkeley DB and SQLite wallet files open directly and keep their
-transparent keys, labels and address sequence. Adding Orchard to a v3 wallet is
-an explicit operation:
+transparent keys, labels, address sequence and existing encryption state. No
+conversion is required for transparent use. Adding Orchard is an explicit,
+one-time operation. For an unencrypted wallet with no BIP39 passphrase:
 
 ```bash
 nito-cli -rpcwallet=legacy upgradeorchardwallet
 ```
 
+If the v3 wallet is encrypted, unlock it without placing its password in the
+command line, perform the upgrade, then lock it again:
+
+```bash
+nito-cli -stdinwalletpassphrase -rpcwallet=legacy walletpassphrase 300
+nito-cli -rpcwallet=legacy upgradeorchardwallet
+nito-cli -rpcwallet=legacy walletlock
+```
+
+Adding a BIP39 passphrase or restoring an existing Orchard phrase uses the
+protected named-input procedure in the
+[RPC reference](doc/nito/rpc-reference.md#add-orchard-to-an-existing-v3-wallet). Unlock first
+when the v3 wallet is encrypted.
+
 Keep both the reported pre-upgrade backup and the returned `orchard_only`
 phrase. That phrase covers the added Orchard authority; it does not replace the
 original v3 wallet backup. Retain that `wallet.dat` backup for life for the
-original transparent keys.
+original transparent keys. The upgrade does not add, remove or change wallet
+file encryption. See the [quick-start guide](doc/nito/quick-start.md) for the
+complete decision flow.
 
 An encrypted wallet opened in Qt asks for its passphrase before showing wallet
 data. Qt then locks the spending key while keeping an authenticated viewing
@@ -131,8 +165,8 @@ passphrase; `dumpmnemonic` does not return it. See the
 [passphrase rules](doc/nito/wallet-backup-restore.md#optional-bip39-passphrase)
 before creating or restoring a wallet.
 
-Interactive creation requires and confirms both secrets without terminal echo
-and keeps them out of shell history and process arguments. Use the documented
+Interactive creation confirms each selected secret without terminal echo and
+keeps it out of shell history and process arguments. Use the documented
 `-stdin` form only for protected automation. Successful creation returns the
 wallet name as JSON; local validation or RPC errors return a nonzero exit code.
 

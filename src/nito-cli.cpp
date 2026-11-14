@@ -25,6 +25,7 @@
 #include <util/chaintype.h>
 #include <util/exception.h>
 #include <util/strencodings.h>
+#include <util/string.h>
 #include <util/time.h>
 #include <util/translation.h>
 
@@ -106,7 +107,7 @@ static void SetupCliArgs(ArgsManager& argsman)
     argsman.AddArg("-rpcwaittimeout=<n>", strprintf("Timeout in seconds to wait for the RPC server to start, or 0 for no timeout. (default: %d)", DEFAULT_WAIT_CLIENT_TIMEOUT), ArgsManager::ALLOW_ANY | ArgsManager::DISALLOW_NEGATION, OptionsCategory::OPTIONS);
     argsman.AddArg("-rpcwallet=<walletname>", "Send RPC for non-default wallet on RPC server (needs to exactly match corresponding -wallet option passed to nitod). This changes the RPC endpoint used, e.g. http://127.0.0.1:8332/wallet/<walletname>", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-stdin", "Read extra arguments from standard input without terminal echo, one per line until EOF/Ctrl-D (recommended for sensitive information such as passphrases). When combined with -stdinrpcpass, the first line from standard input is used for the RPC password.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    argsman.AddArg("-interactive", "Prompt for and confirm the wallet encryption and BIP39 passphrases when using -named createwallet. Secrets are read without terminal echo and are never placed in command-line arguments. This option cannot be combined with -stdin.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-interactive", "Guide -named createwallet through optional wallet encryption and optional BIP39 passphrase choices. Selected secrets are prompted for and confirmed without terminal echo, and are never placed in command-line arguments. This option cannot be combined with -stdin.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-stdinrpcpass", "Read RPC password from standard input as a single line. When combined with -stdin, the first line from standard input is used for the RPC password. When combined with -stdinwalletpassphrase, -stdinrpcpass consumes the first line, and -stdinwalletpassphrase consumes the second.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-stdinwalletpassphrase", "Read wallet passphrase from standard input as a single line. When combined with -stdin, the first line from standard input is used for the wallet passphrase.", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 }
@@ -1167,10 +1168,29 @@ static int CommandLineRPC(int argc, char *argv[])
             DefaultRequestHandler preflight_handler;
             ConnectAndCallRPC(&preflight_handler, "getblockchaininfo", {});
 
-            std::optional<NoechoInst> no_echo;
-            if (StdinTerminal()) no_echo.emplace();
+            const auto read_choice = [](const char* prompt) {
+                while (true) {
+                    if (StdinTerminal()) {
+                        fputs(prompt, stderr);
+                        fflush(stderr);
+                    }
+                    std::string value;
+                    if (!std::getline(std::cin, value)) {
+                        throw std::runtime_error("-interactive failed to read from standard input");
+                    }
+                    value = ToLower(TrimString(value));
+                    if (value.empty() || value == "n" || value == "no") return false;
+                    if (value == "y" || value == "yes") return true;
+                    if (StdinTerminal()) {
+                        fputs("Please answer y or n.\n", stderr);
+                        fflush(stderr);
+                    }
+                }
+            };
             const auto read_secret = [](const char* prompt) {
+                std::optional<NoechoInst> no_echo;
                 if (StdinTerminal()) {
+                    no_echo.emplace();
                     fputs(prompt, stderr);
                     fflush(stderr);
                 }
@@ -1182,26 +1202,29 @@ static int CommandLineRPC(int argc, char *argv[])
                 return value;
             };
 
-            const std::string wallet_passphrase{read_secret("Wallet encryption passphrase> ")};
-            const std::string wallet_confirmation{read_secret("Confirm wallet encryption passphrase> ")};
-            if (wallet_passphrase.empty()) {
-                throw std::runtime_error("Wallet encryption passphrase must not be empty in interactive mode");
-            }
-            if (wallet_passphrase != wallet_confirmation) {
-                throw std::runtime_error("Wallet encryption passphrases do not match");
-            }
-
-            const std::string bip39_passphrase{read_secret("BIP39 passphrase (distinct and never stored)> ")};
-            const std::string bip39_confirmation{read_secret("Confirm BIP39 passphrase> ")};
-            if (bip39_passphrase.empty()) {
-                throw std::runtime_error("BIP39 passphrase must not be empty in interactive mode");
-            }
-            if (bip39_passphrase != bip39_confirmation) {
-                throw std::runtime_error("BIP39 passphrases do not match");
+            if (read_choice("Encrypt wallet.dat with a passphrase? [y/N] ")) {
+                const std::string wallet_passphrase{read_secret("Wallet encryption passphrase> ")};
+                const std::string wallet_confirmation{read_secret("Confirm wallet encryption passphrase> ")};
+                if (wallet_passphrase.empty()) {
+                    throw std::runtime_error("Wallet encryption passphrase must not be empty when encryption is selected");
+                }
+                if (wallet_passphrase != wallet_confirmation) {
+                    throw std::runtime_error("Wallet encryption passphrases do not match");
+                }
+                args.push_back("passphrase=" + wallet_passphrase);
             }
 
-            args.push_back("passphrase=" + wallet_passphrase);
-            args.push_back("bip39_passphrase=" + bip39_passphrase);
+            if (read_choice("Protect the recovery phrase with a BIP39 passphrase? [y/N] ")) {
+                const std::string bip39_passphrase{read_secret("BIP39 passphrase (distinct and never stored)> ")};
+                const std::string bip39_confirmation{read_secret("Confirm BIP39 passphrase> ")};
+                if (bip39_passphrase.empty()) {
+                    throw std::runtime_error("BIP39 passphrase must not be empty when BIP39 protection is selected");
+                }
+                if (bip39_passphrase != bip39_confirmation) {
+                    throw std::runtime_error("BIP39 passphrases do not match");
+                }
+                args.push_back("bip39_passphrase=" + bip39_passphrase);
+            }
         }
         if (gArgs.GetBoolArg("-stdinwalletpassphrase", false)) {
             NO_STDIN_ECHO();

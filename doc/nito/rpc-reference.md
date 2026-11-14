@@ -77,7 +77,40 @@ available; it is never cleared on a partial scan.
 
 Normal sends do not select Orchard notes automatically.
 
-## Optional BIP39 Passphrase
+## Create A Native V4 Wallet
+
+For an operator creating a wallet at a terminal, use the guided mode:
+
+```bash
+nito-cli -named -interactive createwallet wallet_name=main descriptors=true load_on_startup=true
+```
+
+The wizard asks separately whether to encrypt the wallet file and whether to
+protect the recovery phrase with a BIP39 passphrase. It only asks for and
+confirms the secrets that were enabled. Secret input is not echoed and is never
+placed in shell history or process arguments. Answer `y`/`yes` to enable an
+option; `n`/`no` or an empty answer selects No.
+
+| Wallet-file encryption | BIP39 passphrase | Result |
+| --- | --- | --- |
+| No | No | Unencrypted wallet file; the recovery phrase uses an empty BIP39 passphrase. |
+| Yes | No | Encrypted wallet file; the recovery phrase uses an empty BIP39 passphrase. |
+| No | Yes | Unencrypted wallet file; recovery requires the phrase and its separate BIP39 passphrase. |
+| Yes | Yes | Encrypted wallet file; recovery requires the phrase and its separate BIP39 passphrase. |
+
+`load_on_startup=true` adds the wallet to the persistent startup list. `false`
+removes it from that list, while omitting the argument leaves the existing
+setting unchanged. On success, `createwallet` returns an object containing
+`name` and optional `warnings`.
+
+The CLI verifies RPC connectivity before asking any questions. Invalid yes/no
+answers are requested again. An empty enabled secret, mismatched confirmation,
+end-of-input or interrupted prompt fails locally before `createwallet` is sent.
+`Ctrl+C` restores the terminal's previous echo setting. Do not combine
+`-interactive` with `-stdin`, or provide either secret as a command-line
+argument.
+
+### Optional BIP39 Passphrase
 
 `createwallet` accepts `bip39_passphrase` for a non-blank descriptor wallet with
 private keys enabled. `sethdseed` accepts it when initializing a blank descriptor
@@ -92,38 +125,33 @@ It is never stored, recoverable or resettable. A different valid passphrase
 derives another valid wallet, so a typing error is not detected as an incorrect
 password. See [backup and restore](wallet-backup-restore.md#optional-bip39-passphrase).
 
-For an operator creating a wallet at a terminal, use the guided mode:
-
-```bash
-nito-cli -named -interactive createwallet wallet_name=main descriptors=true load_on_startup=true
-```
-
-It requires and confirms both the wallet encryption passphrase and the distinct
-BIP39 passphrase without terminal echo. Neither secret is placed in shell
-history or process arguments. Empty or mismatched entries are rejected before
-the wallet RPC is sent. The CLI also verifies RPC connectivity before requesting
-either secret. Do not combine `-interactive` with `-stdin`, or provide either
-secret as a command-line argument.
-Interrupting a prompt with `Ctrl+C` restores the terminal's previous echo
-setting before the CLI exits.
-
-On success, `createwallet` returns an object containing `name` and optional
-`warnings`. Local CLI validation failures are printed as `error: ...` and exit
-with status 1 without sending `createwallet`. Server-side failures retain the
-normal RPC error code and message. Use `nito-cli -help` for client options and
+Local CLI validation failures are printed as `error: ...` and exit with status 1
+without sending `createwallet`. Server-side failures retain the normal RPC error
+code and message. Use `nito-cli -help` for client options and
 `nito-cli help createwallet` for the complete RPC argument/result schema.
 
-Protected automation can instead supply named arguments on standard input:
+### Advanced Automation
+
+Automation can supply named arguments on protected standard input:
 
 ```bash
-nito-cli -named -stdin createwallet wallet_name=main descriptors=true
+nito-cli -named -stdin createwallet wallet_name=main descriptors=true load_on_startup=true
 ```
 
-Enter `bip39_passphrase=` followed by the chosen value on a standard-input line,
-then end input. Do not type the secret in the shell command. For an encrypted
-wallet, supply `passphrase=` and the separate wallet encryption password on
-another standard-input line. `-stdin` disables terminal echo when reading from a
-terminal; protect any redirected input and its source as well.
+Supply only the enabled secrets, one named argument per line:
+
+| Configuration | Standard-input lines |
+| --- | --- |
+| Encryption only | `passphrase=<wallet encryption passphrase>` |
+| BIP39 only | `bip39_passphrase=<BIP39 passphrase>` |
+| Both | One `passphrase=...` line and one `bip39_passphrase=...` line |
+
+Then end input. Omitting `passphrase` creates an unencrypted wallet; do not pass
+an explicitly empty value. Omitting `bip39_passphrase` selects the empty BIP39
+passphrase. `-stdin` disables terminal echo when attached to a terminal. Protect
+redirected input, temporary files and their permissions; prefer the guided mode
+for normal interactive use. End terminal input with Ctrl-D on Linux/macOS or
+Ctrl-Z followed by Enter on Windows.
 
 ## Native V4 Phrase Restore
 
@@ -147,18 +175,48 @@ reinterpreted as an Orchard root.
 
 ## Add Orchard To An Existing V3 Wallet
 
+V3 wallet files open directly in V4 and retain their transparent keys, addresses
+and behavior. No conversion is required for transparent use. The procedure below
+adds Orchard authority; it does not replace or re-encrypt the V3 wallet.
+
+If the wallet is encrypted, unlock it without placing its passphrase in the
+command line:
+
+```bash
+nito-cli -stdinwalletpassphrase -rpcwallet=legacy walletpassphrase 300
+```
+
+The CLI prompts for the wallet passphrase without echo. Seeing no characters or
+asterisks while typing is intentional. An unencrypted wallet does not need this
+step.
+
+To generate a new Orchard phrase without a BIP39 passphrase, run:
+
 ```bash
 nito-cli -rpcwallet=legacy upgradeorchardwallet
+```
+
+Supplying a BIP39 passphrase or restoring a previously saved Orchard phrase is
+an advanced protected-input operation:
+
+```bash
 nito-cli -named -stdin -rpcwallet=legacy upgradeorchardwallet
 ```
 
-Use the first command to create a new Orchard root, or the second to supply a
-previously saved Orchard phrase through standard input. These are alternatives:
-the wallet must not already have a canonical Orchard root. With the second
-command, enter `mnemonic=` followed by the saved phrase on a standard-input
-line, and `bip39_passphrase=` followed by its value on another line if used.
-Omit the mnemonic line to generate a new phrase with the supplied passphrase.
-End input as described above; keep these secrets off the command line.
+Enter `bip39_passphrase=<value>` to generate a new phrase protected by that
+passphrase. To restore a saved Orchard root, also enter
+`mnemonic=<12 or 24 words>`. Omit the BIP39 line if that saved phrase did not use
+one. End input as described above and keep all secrets off the command line.
+
+Relock a wallet that was unlocked for the upgrade:
+
+```bash
+nito-cli -rpcwallet=legacy walletlock
+```
+
+If optional legacy-to-descriptor migration is desired, run `migratewallet`
+before this Orchard upgrade. `migratewallet` is refused after a canonical
+Orchard root exists.
 
 `upgradeorchardwallet`:
 
@@ -167,7 +225,8 @@ End input as described above; keep these secrets off the command line.
 - creates a `wallet-pre-orchard-*.bak` backup before mutation;
 - preserves transparent managers, descriptors, addresses, labels and default
   receive behavior;
-- returns `mnemonic`, `scope`, `backup` and `warning`.
+- returns `mnemonic`, `scope`, `bip39_passphrase_required`, `backup` and
+  `warning`.
 
 The returned scope is `orchard_only`. Keep the backup permanently because the
 phrase does not restore pre-existing v3 transparent or imported keys.

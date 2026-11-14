@@ -9,11 +9,29 @@ Wallets can be created with the `createwallet` RPC or with the `Create wallet` G
 
 In the GUI, the `Create a new wallet` button is displayed on the main screen when there is no wallet loaded. Alternatively, there is the option `File` ->`Create wallet`.
 
-The following command, for example, creates a descriptor wallet. More information about this command may be found by running `nito-cli help createwallet`.
+For normal terminal use, start the guided creator. It lets the user choose
+wallet-file encryption and a separate BIP39 passphrase independently:
 
+```bash
+nito-cli -named -interactive createwallet wallet_name="wallet-01" descriptors=true load_on_startup=true
 ```
-$ nito-cli createwallet "wallet-01"
-```
+
+| Wallet-file encryption | BIP39 passphrase | Result |
+| --- | --- | --- |
+| No | No | Unencrypted wallet file; the recovery phrase uses an empty BIP39 passphrase. |
+| Yes | No | Encrypted wallet file; the recovery phrase uses an empty BIP39 passphrase. |
+| No | Yes | Unencrypted wallet file; recovery requires the phrase and its BIP39 passphrase. |
+| Yes | Yes | Encrypted wallet file; recovery requires the phrase and its BIP39 passphrase. |
+
+The wizard confirms each enabled secret without displaying characters or
+asterisks. This is intentional: the secrets are not exposed on screen, in shell
+history or in process arguments. A mismatch or empty enabled secret is refused
+before the wallet is created. Answer `y`/`yes` to enable an option; `n`/`no` or
+an empty answer selects No.
+
+`load_on_startup=true` adds the wallet to the persistent startup list. Set it to
+`false` to remove the wallet from that list, or omit it to leave the existing
+setting unchanged. Run `nito-cli help createwallet` for all creation options.
 
 By default, wallets are created in the `wallets` folder of the data directory, which varies by operating system, as shown below. The user can change the default by using the `-datadir` or `-walletdir` initialization parameters.
 
@@ -33,17 +51,33 @@ Wallet encryption may also not protect against more sophisticated attacks. An at
 
 After encrypting the wallet or changing the passphrase, a new backup needs to be created immediately. Encryption keeps the current HD seed and address sequence unchanged, but the wallet file now contains new encrypted key material and metadata that should be backed up.
 
-The wallet's private key may be encrypted with the following command:
+For a new wallet, enable encryption in the guided creator above. An existing
+unencrypted wallet can be encrypted from the GUI. Advanced CLI automation may
+use protected standard input with `encryptwallet`; never place the passphrase in
+the command line.
 
-```
-$ nito-cli -rpcwallet="wallet-01" encryptwallet "passphrase"
+The `walletpassphrasechange` RPC changes an existing encryption passphrase.
+Provide both old and new values through protected input or use the GUI; never
+place either value in shell history or process arguments.
+
+For advanced CLI automation, encrypt an existing wallet by running:
+
+```bash
+nito-cli -stdin -rpcwallet="wallet-01" encryptwallet
 ```
 
-Once encrypted, the passphrase can be changed with the `walletpassphrasechange` command.
+Provide the new passphrase as the only standard-input line and then end input.
+To change it, run:
 
+```bash
+nito-cli -stdinwalletpassphrase -stdin -rpcwallet="wallet-01" walletpassphrasechange
 ```
-$ nito-cli -rpcwallet="wallet-01" walletpassphrasechange "oldpassphrase" "newpassphrase"
-```
+
+Provide the current passphrase when prompted, then the new passphrase as the
+next standard-input line, and end input. `-stdin` and
+`-stdinwalletpassphrase` disable terminal echo; redirected input must be
+protected from other users and removed securely after use. End terminal input
+with Ctrl-D on Linux/macOS or Ctrl-Z followed by Enter on Windows.
 
 The argument passed to `-rpcwallet` is the name of the wallet to be encrypted.
 
@@ -52,16 +86,11 @@ records. It does not encrypt the entire wallet database: some transaction
 metadata, labels and comments remain readable. Backups made before encryption
 remain unencrypted. See the [privacy model](nito/security-privacy-model.md#sensitive-wallet-data).
 
-For terminal use, create an encrypted descriptor wallet with the guided mode.
-It confirms the wallet encryption passphrase and the distinct BIP39 passphrase
-without exposing either secret in shell history or process arguments:
-
-```
-$ nito-cli -named -interactive createwallet wallet_name="wallet-01" descriptors=true
-```
-
-Use `-named -stdin` only for protected automation; never place either secret
-directly in a command-line argument.
+For protected automation, `-named -stdin` accepts only the enabled named secrets,
+one per line: `passphrase=...`, `bip39_passphrase=...`, or both. Omit
+`passphrase` to leave the wallet file unencrypted and omit
+`bip39_passphrase` to use an empty BIP39 passphrase. This is an advanced
+interface; prefer the guided creator for an operator at a terminal.
 
 Keep the passphrase safe. A separate recovery phrase can restore only the key
 domains it covers; it cannot restore imported keys or the older transparent
@@ -83,9 +112,14 @@ To unlock the wallet and allow it to run these operations, the `walletpassphrase
 
 This command takes the passphrase and an argument called `timeout`, which specifies the time in seconds that the wallet decryption key is stored in memory. After this period expires, the user needs to execute this RPC again.
 
+```bash
+nito-cli -stdinwalletpassphrase -rpcwallet="wallet-01" walletpassphrase 120
 ```
-$ nito-cli -rpcwallet="wallet-01" walletpassphrase "passphrase" 120
-```
+
+The CLI prompts without echo. No characters or asterisks appear while typing;
+this is intentional. The timeout is not a passphrase and can safely remain in
+the command line. Lock the wallet early with
+`nito-cli -rpcwallet="wallet-01" walletlock` when the operation is complete.
 
 Qt requests authorization before displaying an encrypted wallet and again
 when an operation needs private keys that are currently locked. Cancelling the
@@ -138,6 +172,53 @@ $ nito-cli -rpcwallet="restored-wallet" getwalletinfo
 ```
 
 The restored wallet can also be loaded in the GUI via `File` ->`Open wallet`.
+
+## Adding Orchard To A V3 Wallet
+
+V3 wallet files open directly in V4 and continue to use their existing
+transparent keys, addresses and labels. Adding Orchard is optional for
+transparent-only use. If legacy-to-descriptor migration is desired, run
+`migratewallet` before adding Orchard; migration is refused afterwards.
+
+First make and verify a normal V3 wallet backup. If the wallet is encrypted,
+unlock it through the hidden-input CLI prompt:
+
+```bash
+nito-cli -stdinwalletpassphrase -rpcwallet=legacy walletpassphrase 300
+```
+
+An unencrypted wallet does not need that step. To generate a new Orchard phrase
+without a BIP39 passphrase, run:
+
+```bash
+nito-cli -rpcwallet=legacy upgradeorchardwallet
+```
+
+The result contains the new phrase, its `orchard_only` scope, the path of the
+automatic pre-upgrade backup and a warning. Save the phrase and keep both the
+original V3 backup and the automatic backup permanently: the Orchard phrase
+cannot restore pre-existing transparent or imported keys.
+
+Supplying a BIP39 passphrase or a saved Orchard phrase uses the advanced
+protected-input form:
+
+```bash
+nito-cli -named -stdin -rpcwallet=legacy upgradeorchardwallet
+```
+
+Provide `bip39_passphrase=<value>` to protect a newly generated phrase. To
+restore an existing Orchard root, also provide `mnemonic=<12 or 24 words>`.
+Supply only the lines that apply and then end standard input. The BIP39
+passphrase is never stored and a different value derives a different wallet.
+
+Relock a wallet that was unlocked for the operation:
+
+```bash
+nito-cli -rpcwallet=legacy walletlock
+```
+
+See the [RPC reference](nito/rpc-reference.md#add-orchard-to-an-existing-v3-wallet)
+and [backup and restore](nito/wallet-backup-restore.md#recovery-sources).
 
 ## Migrating Legacy Wallets to Descriptor Wallets
 

@@ -74,9 +74,45 @@ send a recovery phrase or wallet file to a third party for this verification.
 
 ## Add Orchard To A V3 Wallet
 
+Opening a supported v3 wallet in Nito Core v4 does not require this operation.
+Run it only when you want to add Orchard authority to that wallet. The existing
+wallet-file encryption state is preserved; `upgradeorchardwallet` neither adds,
+removes nor changes the wallet encryption password.
+
+For an unencrypted wallet and a newly generated Orchard phrase without a BIP39
+passphrase:
+
 ```bash
 nito-cli -rpcwallet=legacy upgradeorchardwallet
 ```
+
+For an encrypted wallet, unlock it through protected standard input before the
+upgrade, then lock it again when finished:
+
+```bash
+nito-cli -rpcwallet=legacy -stdinwalletpassphrase walletpassphrase 300
+nito-cli -rpcwallet=legacy upgradeorchardwallet
+nito-cli -rpcwallet=legacy walletlock
+```
+
+The first command prompts for the wallet encryption password without displaying
+it. Skip the unlock and lock commands when the wallet is not encrypted.
+
+For the advanced CLI case where the Orchard phrase must use a BIP39 passphrase,
+use protected named standard input instead of placing the secret in the command
+line:
+
+```bash
+nito-cli -named -stdin -rpcwallet=legacy upgradeorchardwallet
+```
+
+Enter one line in the form `bip39_passphrase=<value>`, then end input with Ctrl-D
+on Linux/macOS or Ctrl-Z followed by Enter on Windows. Unlock an encrypted wallet
+first as shown above. To restore an existing Orchard authority instead, enter
+`mnemonic=<12-or-24-word phrase>` and, if it was originally used,
+`bip39_passphrase=<value>` on separate lines. Omitting the BIP39 line means the
+empty BIP39 passphrase and therefore derives different authority from a phrase
+that was originally protected by one.
 
 The operation creates a pre-upgrade backup before adding one canonical Orchard
 root. It does not replace or deactivate the v3 transparent managers. The

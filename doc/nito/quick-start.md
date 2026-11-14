@@ -80,27 +80,86 @@ nito-cli loadwallet legacy
 ```
 
 The wallet keeps its transparent keys, labels, address sequence and default
-Bech32 behavior. No Orchard conversion is required for transparent use.
+Bech32 behavior, including its existing wallet-file encryption state. No
+Orchard conversion is required for transparent use.
 
-To add Orchard while preserving the v3 wallet:
+Before adding Orchard, make a separate wallet backup. For an unencrypted v3
+wallet, generate a new Orchard phrase without a BIP39 passphrase with:
 
 ```bash
 nito-cli -rpcwallet=legacy upgradeorchardwallet
 ```
 
-Save both the returned `orchard_only` phrase and the reported pre-upgrade
-backup. The phrase does not replace the v3 backup.
+For an encrypted v3 wallet, first unlock it without placing its wallet password
+in shell history or process arguments:
+
+```bash
+nito-cli -stdinwalletpassphrase -rpcwallet=legacy walletpassphrase 300
+```
+
+Type the wallet encryption password at the prompt. It is not displayed. Then
+run the Orchard upgrade shown above. To add a BIP39 passphrase or restore a
+saved Orchard phrase, use the protected named-input procedure in
+[the RPC reference](rpc-reference.md#add-orchard-to-an-existing-v3-wallet). If the wallet was
+encrypted, lock it again after the operation:
+
+```bash
+nito-cli -rpcwallet=legacy walletlock
+```
+
+The upgrade never changes the v3 wallet's encryption state. Save both the
+returned `orchard_only` phrase and the reported pre-upgrade backup. If a BIP39
+passphrase was used, store it offline and separately; the phrase alone derives
+a different wallet. The Orchard phrase does not restore the v3 transparent
+keys, so keep the original wallet backup permanently. A wallet can have only
+one canonical Orchard root: decide whether to use a BIP39 passphrase before
+performing this one-time upgrade.
 
 ## Create A Native V4 Wallet
 
+Wallet-file encryption protects `wallet.dat` at rest. A BIP39 passphrase changes
+the keys derived from the recovery phrase and is never stored. They are separate
+choices. Use the guided command for every combination:
+
 ```bash
-nito-cli -named -interactive createwallet wallet_name=main descriptors=true
+nito-cli -named -interactive createwallet wallet_name=main descriptors=true load_on_startup=true
 ```
 
-Export its canonical phrase and verify the returned scope:
+The wizard asks two independent Yes/No questions:
+
+| Encrypt `wallet.dat` | Use a BIP39 passphrase | Result |
+| --- | --- | --- |
+| No | No | Unencrypted wallet file; recovery phrase uses the standard empty BIP39 passphrase |
+| Yes | No | Encrypted wallet file; recovery phrase uses the standard empty BIP39 passphrase |
+| No | Yes | Unencrypted wallet file; recovery requires the separate BIP39 passphrase |
+| Yes | Yes | Encrypted wallet file; recovery also requires the separate BIP39 passphrase |
+
+Only the selected secrets are requested and confirmed. Secret input is not
+displayed, and a failed confirmation creates no wallet. `load_on_startup=true`
+adds the wallet to the persistent startup list, `false` removes it, and omission
+leaves the list unchanged. Every successful `createwallet` call loads the new
+wallet for the current process. Protected non-interactive input is intended for
+automation and is documented in the
+[RPC reference](rpc-reference.md#optional-bip39-passphrase).
+
+If wallet-file encryption was selected, unlock the wallet through the secure
+prompt before exporting its canonical phrase:
+
+```bash
+nito-cli -stdinwalletpassphrase -rpcwallet=main walletpassphrase 300
+```
+
+Skip that command for an unencrypted wallet. Export the phrase and verify the
+returned scope:
 
 ```bash
 nito-cli -rpcwallet=main dumpmnemonic
+```
+
+After recording and verifying the phrase, lock an encrypted wallet again:
+
+```bash
+nito-cli -rpcwallet=main walletlock
 ```
 
 A native deterministic v4 wallet reports `full_wallet`, covering deterministic
@@ -110,10 +169,8 @@ Nito Core never stores it and cannot recover or reset it. `dumpmnemonic` reports
 whether one is required but never returns it. Review the
 [passphrase rules](wallet-backup-restore.md#optional-bip39-passphrase) and
 [RPC input examples](rpc-reference.md#optional-bip39-passphrase) before use.
-The interactive command requires and confirms both a wallet encryption
-passphrase and a distinct BIP39 passphrase without displaying either secret.
-Success returns `{"name":"main"}` (pretty-printed by the CLI). Empty or
-mismatched entries fail locally with exit status 1 and do not create a wallet.
+Successful creation returns `{"name":"main"}` (pretty-printed by the CLI).
+Local validation or RPC errors return a nonzero exit status.
 
 ## Restore A Native V4 Phrase
 
