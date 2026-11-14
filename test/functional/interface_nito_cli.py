@@ -243,6 +243,34 @@ class TestNitoCli(NitoTestFramework):
                 descriptors=True,
                 passphrase='must-not-be-accepted',
             )
+            assert_raises_process_error(
+                1,
+                'Do not provide passphrase or bip39_passphrase arguments with -interactive',
+                self.nodes[0].cli('-interactive', input='').createwallet,
+                wallet_name='cli_interactive_exposed_bip39',
+                descriptors=True,
+                bip39_passphrase='must-not-be-accepted',
+            )
+            assert_raises_process_error(
+                1,
+                '-interactive failed to read from standard input',
+                self.nodes[0].cli('-interactive', input='').createwallet,
+                wallet_name='cli_interactive_missing',
+                descriptors=True,
+            )
+
+            wallets_on_disk = {entry['name'] for entry in self.nodes[0].listwalletdir()['wallets']}
+            for rejected_name in (
+                'cli_interactive_empty',
+                'cli_interactive_mismatch',
+                'cli_interactive_bip39_mismatch',
+                'cli_interactive_bip39_empty',
+                'cli_interactive_conflict',
+                'cli_interactive_exposed_secret',
+                'cli_interactive_exposed_bip39',
+                'cli_interactive_missing',
+            ):
+                assert rejected_name not in wallets_on_disk
 
             if os.name == 'posix':
                 self.log.info("Test interactive prompts, no echo, and terminal restoration through a PTY")
@@ -335,6 +363,12 @@ class TestNitoCli(NitoTestFramework):
             1,
             '-interactive is only applicable to -named createwallet',
             self.nodes[0].cli('-interactive', input='').getblockcount,
+        )
+        assert_raises_process_error(
+            1,
+            '-interactive is only applicable to -named createwallet',
+            self.nodes[0].cli('-interactive', input='').createwallet,
+            'cli_interactive_without_named',
         )
 
         self.log.info("Test connecting to a non-existing server")
