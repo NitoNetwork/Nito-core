@@ -9,6 +9,14 @@
 struct NoechoInst {
     NoechoInst();
     ~NoechoInst();
+
+    NoechoInst(const NoechoInst&) = delete;
+    NoechoInst& operator=(const NoechoInst&) = delete;
+
+private:
+    bool m_terminal;
+    bool m_echo_enabled;
+    bool m_signal_handlers_installed;
 };
 
 #define NO_STDIN_ECHO() NoechoInst _no_echo

@@ -133,7 +133,8 @@ before creating or restoring a wallet.
 
 Interactive creation requires and confirms both secrets without terminal echo
 and keeps them out of shell history and process arguments. Use the documented
-`-stdin` form only for protected automation.
+`-stdin` form only for protected automation. Successful creation returns the
+wallet name as JSON; local validation or RPC errors return a nonzero exit code.
 
 Phrase recovery reconstructs chain-derived funds and history before reporting
 success. On an existing chain it requires unpruned blocks,

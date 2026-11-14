@@ -1155,6 +1155,17 @@ static int CommandLineRPC(int argc, char *argv[])
             if (!gArgs.GetBoolArg("-named", false) || args.empty() || args[0] != "createwallet") {
                 throw std::runtime_error("-interactive is only applicable to -named createwallet");
             }
+            if (std::any_of(args.begin() + 1, args.end(), [](const std::string& arg) {
+                    return arg.rfind("passphrase=", 0) == 0 || arg.rfind("bip39_passphrase=", 0) == 0;
+                })) {
+                throw std::runtime_error("Do not provide passphrase or bip39_passphrase arguments with -interactive");
+            }
+
+            // Fail before asking for secrets when the RPC server or credentials
+            // are unavailable. The actual createwallet request is still the only
+            // state-changing call.
+            DefaultRequestHandler preflight_handler;
+            ConnectAndCallRPC(&preflight_handler, "getblockchaininfo", {});
 
             std::optional<NoechoInst> no_echo;
             if (StdinTerminal()) no_echo.emplace();

@@ -101,7 +101,17 @@ nito-cli -named -interactive createwallet wallet_name=main descriptors=true load
 It requires and confirms both the wallet encryption passphrase and the distinct
 BIP39 passphrase without terminal echo. Neither secret is placed in shell
 history or process arguments. Empty or mismatched entries are rejected before
-the wallet RPC is sent.
+the wallet RPC is sent. The CLI also verifies RPC connectivity before requesting
+either secret. Do not combine `-interactive` with `-stdin`, or provide either
+secret as a command-line argument.
+Interrupting a prompt with `Ctrl+C` restores the terminal's previous echo
+setting before the CLI exits.
+
+On success, `createwallet` returns an object containing `name` and optional
+`warnings`. Local CLI validation failures are printed as `error: ...` and exit
+with status 1 without sending `createwallet`. Server-side failures retain the
+normal RPC error code and message. Use `nito-cli -help` for client options and
+`nito-cli help createwallet` for the complete RPC argument/result schema.
 
 Protected automation can instead supply named arguments on standard input:
 

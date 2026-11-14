@@ -547,6 +547,9 @@ jobs:
             WARNING_CLEAN_LOG=legacy-wallet-test.log \
               bash .github/scripts/warning-clean-run.sh \
                 python3 test/functional/wallet_backup.py --legacy-wallet --configfile="$PWD/test/config.ini"
+            WARNING_CLEAN_LOG=cli-functional-test.log \
+              bash .github/scripts/warning-clean-run.sh \
+                python3 test/functional/interface_nito_cli.py --descriptors --configfile="$PWD/test/config.ini"
             WARNING_CLEAN_LOG=private-reorg-test.log \
               bash .github/scripts/warning-clean-run.sh \
                 python3 test/functional/mempool_private_activation_reorg.py --legacy-wallet --configfile="$PWD/test/config.ini"
@@ -707,7 +710,7 @@ jobs:
             echo "----- autogen.log"
             tail -n 200 autogen.log
           fi
-          for log in native-tests.log orchard-format.log orchard-tests.log legacy-wallet-test.log src/test-suite.log src/qt/test/test_nito-qt.log; do
+          for log in native-tests.log orchard-format.log orchard-tests.log legacy-wallet-test.log cli-functional-test.log src/test-suite.log src/qt/test/test_nito-qt.log; do
             if [ -f "$log" ]; then
               echo "----- $log"
               tail -n 300 "$log"
@@ -731,6 +734,7 @@ jobs:
             orchard-format.log
             orchard-tests.log
             legacy-wallet-test.log
+            cli-functional-test.log
             src/test-suite.log
             src/qt/test/test_nito-qt.log
             **/config.log

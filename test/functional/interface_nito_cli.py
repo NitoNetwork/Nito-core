@@ -5,7 +5,9 @@
 """Test nito-cli"""
 
 from decimal import Decimal
+import os
 import re
+import signal
 
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import NitoTestFramework
@@ -29,6 +31,74 @@ BLOCKS_VALUE_OF_ZERO = 'error: the first argument (number of blocks to generate,
 TOO_MANY_ARGS = 'error: too many arguments (maximum 2 for nblocks and maxtries)'
 WALLET_NOT_LOADED = 'Requested wallet does not exist or is not loaded'
 WALLET_NOT_SPECIFIED = 'Wallet file not specified'
+
+
+def run_cli_pty(binary, datadir, arguments, exchanges, timeout=15):
+    """Run nito-cli on a POSIX pseudo-terminal and answer expected prompts."""
+    import errno
+    import pty
+    import select
+    import subprocess
+    import termios
+
+    master_fd, slave_fd = pty.openpty()
+    initial_echo = bool(termios.tcgetattr(slave_fd)[3] & termios.ECHO)
+    process = subprocess.Popen(
+        [binary, f'-datadir={datadir}', *arguments],
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+    )
+    transcript = bytearray()
+
+    def read_once(wait):
+        readable, _, _ = select.select([master_fd], [], [], wait)
+        if not readable:
+            return False
+        try:
+            data = os.read(master_fd, 4096)
+        except OSError as error:
+            if error.errno == errno.EIO:
+                return False
+            raise
+        if not data:
+            return False
+        transcript.extend(data)
+        return True
+
+    try:
+        for prompt, response in exchanges:
+            deadline = time.monotonic() + timeout
+            expected = prompt.encode()
+            while expected not in transcript:
+                if process.poll() is not None:
+                    raise AssertionError(f'nito-cli exited before prompt {prompt!r}: {transcript!r}')
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not read_once(remaining):
+                    raise AssertionError(f'timed out waiting for prompt {prompt!r}: {transcript!r}')
+            if response is None:
+                process.send_signal(signal.SIGINT)
+                break
+            os.write(master_fd, response.encode() + b'\n')
+
+        deadline = time.monotonic() + timeout
+        while process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError(f'nito-cli did not exit: {transcript!r}')
+            read_once(min(remaining, 0.1))
+        while read_once(0):
+            pass
+
+        final_echo = bool(termios.tcgetattr(slave_fd)[3] & termios.ECHO)
+        return process.returncode, transcript.decode(errors='replace'), initial_echo, final_echo
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        os.close(master_fd)
+        os.close(slave_fd)
 
 
 def cli_get_info_string_to_dict(cli_get_info_string):
@@ -158,6 +228,114 @@ class TestNitoCli(NitoTestFramework):
                 wallet_name='cli_interactive_bip39_empty',
                 descriptors=True,
             )
+            assert_raises_process_error(
+                1,
+                '-interactive cannot be combined with -stdin',
+                self.nodes[0].cli('-interactive', '-stdin', input='').createwallet,
+                wallet_name='cli_interactive_conflict',
+                descriptors=True,
+            )
+            assert_raises_process_error(
+                1,
+                'Do not provide passphrase or bip39_passphrase arguments with -interactive',
+                self.nodes[0].cli('-interactive', input='').createwallet,
+                wallet_name='cli_interactive_exposed_secret',
+                descriptors=True,
+                passphrase='must-not-be-accepted',
+            )
+
+            if os.name == 'posix':
+                self.log.info("Test interactive prompts, no echo, and terminal restoration through a PTY")
+                wallet_secret = 'pty wallet secret'
+                bip39_secret = 'pty BIP39 secret'
+                returncode, transcript, initial_echo, final_echo = run_cli_pty(
+                    self.nodes[0].cli.binary,
+                    self.nodes[0].datadir_path,
+                    [
+                        '-named',
+                        '-interactive',
+                        'createwallet',
+                        'wallet_name=cli_bip39_interactive_pty',
+                        'descriptors=true',
+                    ],
+                    [
+                        ('Wallet encryption passphrase> ', wallet_secret),
+                        ('Confirm wallet encryption passphrase> ', wallet_secret),
+                        ('BIP39 passphrase (distinct and never stored)> ', bip39_secret),
+                        ('Confirm BIP39 passphrase> ', bip39_secret),
+                    ],
+                )
+                assert_equal(returncode, 0)
+                assert '"name": "cli_bip39_interactive_pty"' in transcript
+                assert wallet_secret not in transcript
+                assert bip39_secret not in transcript
+                assert_equal(initial_echo, True)
+                assert_equal(final_echo, True)
+                self.nodes[0].get_wallet_rpc('cli_bip39_interactive_pty').unloadwallet()
+
+                mismatch_secret = 'pty mismatch secret'
+                returncode, transcript, initial_echo, final_echo = run_cli_pty(
+                    self.nodes[0].cli.binary,
+                    self.nodes[0].datadir_path,
+                    [
+                        '-named',
+                        '-interactive',
+                        'createwallet',
+                        'wallet_name=cli_interactive_pty_mismatch',
+                        'descriptors=true',
+                    ],
+                    [
+                        ('Wallet encryption passphrase> ', mismatch_secret),
+                        ('Confirm wallet encryption passphrase> ', 'different confirmation'),
+                    ],
+                )
+                assert_equal(returncode, 1)
+                assert 'Wallet encryption passphrases do not match' in transcript
+                assert mismatch_secret not in transcript
+                assert_equal(initial_echo, True)
+                assert_equal(final_echo, True)
+
+                returncode, transcript, initial_echo, final_echo = run_cli_pty(
+                    self.nodes[0].cli.binary,
+                    self.nodes[0].datadir_path,
+                    [
+                        '-named',
+                        '-interactive',
+                        'createwallet',
+                        'wallet_name=cli_interactive_interrupted',
+                        'descriptors=true',
+                    ],
+                    [('Wallet encryption passphrase> ', None)],
+                )
+                assert_equal(returncode, -signal.SIGINT)
+                assert_equal(initial_echo, True)
+                assert_equal(final_echo, True)
+
+                returncode, transcript, initial_echo, final_echo = run_cli_pty(
+                    self.nodes[0].cli.binary,
+                    self.nodes[0].datadir_path,
+                    [
+                        '-rpcport=1',
+                        '-named',
+                        '-interactive',
+                        'createwallet',
+                        'wallet_name=cli_interactive_unreachable',
+                        'descriptors=true',
+                    ],
+                    [],
+                )
+                assert_equal(returncode, 1)
+                assert 'Could not connect to the server' in transcript
+                assert 'Wallet encryption passphrase>' not in transcript
+                assert_equal(initial_echo, True)
+                assert_equal(final_echo, True)
+
+        self.log.info("Test interactive mode rejects unsupported commands")
+        assert_raises_process_error(
+            1,
+            '-interactive is only applicable to -named createwallet',
+            self.nodes[0].cli('-interactive', input='').getblockcount,
+        )
 
         self.log.info("Test connecting to a non-existing server")
         assert_raises_process_error(1, "Could not connect to the server", self.nodes[0].cli('-rpcport=1').echo)

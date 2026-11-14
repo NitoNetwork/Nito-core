@@ -470,7 +470,7 @@ static RPCHelpMan createwallet()
                                                                        " support for creating and opening legacy wallets will be removed in the future."},
             {"load_on_startup", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Save wallet name to persistent settings and load on startup. True to add wallet to startup list, false to remove, null to leave unchanged."},
             {"external_signer", RPCArg::Type::BOOL, RPCArg::Default{false}, "Use an external signer such as a hardware wallet. Requires -signer to be configured. Wallet creation will fail if keys cannot be fetched. Requires disable_private_keys and descriptors set to true."},
-            {"bip39_passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Optional BIP39 passphrase for the generated recovery phrase. This is distinct from the wallet encryption passphrase and is never stored. It is supported only by non-blank descriptor wallets with private keys enabled. Use -named -stdin with nito-cli so this secret is not exposed in process arguments."},
+            {"bip39_passphrase", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Optional BIP39 passphrase for the generated recovery phrase. This is distinct from the wallet encryption passphrase and is never stored. It is supported only by non-blank descriptor wallets with private keys enabled. At a terminal, use -named -interactive with nito-cli to require and confirm both secrets. Use -named -stdin only for protected automation."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "",

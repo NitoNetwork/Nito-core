@@ -112,6 +112,8 @@ whether one is required but never returns it. Review the
 [RPC input examples](rpc-reference.md#optional-bip39-passphrase) before use.
 The interactive command requires and confirms both a wallet encryption
 passphrase and a distinct BIP39 passphrase without displaying either secret.
+Success returns `{"name":"main"}` (pretty-printed by the CLI). Empty or
+mismatched entries fail locally with exit status 1 and do not create a wallet.
 
 ## Restore A Native V4 Phrase
 
