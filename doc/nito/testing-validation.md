@@ -6,7 +6,12 @@ node that starts is not necessarily synchronized or ready for wallet use.
 
 ## Verify Release Downloads
 
-Download binaries, `SHA256SUMS` and the release manifest from the same release.
+Download the binaries and `SHA256SUMS` from the same release.
+First confirm that the release tag is annotated, displays GitHub's **Verified**
+status and targets the complete source commit named in the release notes. This
+signature authenticates the tag and source revision, not the attached binary
+files.
+
 Verify every file you intend to install:
 
 ```bash
@@ -21,7 +26,9 @@ Get-FileHash .\<file> -Algorithm SHA256
 
 Compare the complete hash with its line in `SHA256SUMS`. When Minisign files
 are supplied, obtain the release public key through an independent official
-channel before verifying them.
+channel before verifying them. When no Minisign signature is supplied,
+`SHA256SUMS` provides integrity checking but is not independently authenticated
+by the signed source tag.
 
 ## Validate A Source Build
 

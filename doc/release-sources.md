@@ -1,20 +1,21 @@
 # Release sources and third-party notices
 
-Nito Core 4.0.0 binaries and their corresponding source bundle are published
-on the [official release page](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0).
-The [source-build guide](nito/source-builds.md) covers building the exact tag or
-a later V4 maintenance revision. The archive and redistribution instructions
-below apply to the official packages.
+Nito Core 4.0.0 binaries are published on the
+[official release page](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0).
+The corresponding source revision is the annotated, signed `v4.0.0` tag, which
+must display GitHub's **Verified** status. GitHub provides archives generated
+from that tag. The [source-build guide](nito/source-builds.md) covers building
+the exact tag or a later V4 maintenance revision.
 
 Nito Core includes third-party software under its own licenses. The Nito Core
 license in `COPYING` does not replace those licenses. Portable archives keep
 `LICENSE.txt` and `THIRD_PARTY_LICENSES.txt` under their single top-level
 `bin/` directory. The
-matching source archive contains `source-manifest.json`, which identifies the
-release commit, dependency versions and source archive checksums.
-The detailed notice collection in the source archive also covers source-tree
-tools and optional components. The consolidated binary notice is generated
-from the dependency closure for its release platform.
+release recipes record exact dependency versions, hashes, source locations and
+patches. The release workflow can assemble a dependency-complete source bundle
+with `source-manifest.json` and the detailed notice collection for source-tree
+tools and optional components. The consolidated binary notice is generated from
+the dependency closure for its release platform.
 
 The graphical application uses Qt, copyright The Qt Company Ltd. and other
 contributors, under the GNU Lesser General Public License version 3. The
@@ -24,29 +25,36 @@ Berkeley DB and the other bundled libraries retain their respective licenses.
 
 ## Obtain the matching source
 
-Download `nito-4.0.0-sources.tar.gz` from the **same release** as your binaries:
+Clone the official repository and check out the signed tag, or download one of
+GitHub's source archives from the **same release** as your binaries:
 
 https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0
 
-Verify the archive against that release's `SHA256SUMS`. The source archive
-contains:
+Confirm that GitHub reports the tag as **Verified** and that it targets commit
+`e3ff5e42b980c792ee5ab790610772a7d9ee8f8a`. The GitHub-generated archives
+contain the tracked Nito Core source for that tag. They do not embed external
+dependency archives or the complete Cargo registry.
+
+For redistribution, use the release tooling described in
+[release-process.md](release-process.md) to assemble the corresponding source
+bundle. It contains:
 
 - Nito Core source, build scripts and dependency patches from the release commit;
 - checksum-verified dependency archives under `depends/sources/`, including Qt;
 - the locked Rust dependencies under `src/private/orchard_ffi/vendor/`;
 - license notices and a source manifest under `release-notices/`.
 
-This archive accompanies the binaries without an additional charge. Keep it
-available whenever redistributing the corresponding binaries. GitHub's
-automatically generated source archives do not include the external dependency
-archives or vendored Rust crates.
+Keep that corresponding source available whenever redistributing the official
+binaries. The source tooling downloads only the versions pinned by the signed
+release source and verifies their recorded hashes.
 
 ## Build with modified libraries
 
-Extract the source archive and install the compiler and platform build tools
-described in `doc/nito/source-builds.md` and the appropriate `doc/build-*.md`
-guide. Platform SDKs and compiler toolchains are installed separately. Use the
-Rust toolchain pinned in `.github/workflows/build-release.yml`.
+Extract GitHub's source archive or check out the signed tag, then install the
+compiler and platform build tools described in `doc/nito/source-builds.md` and
+the appropriate `doc/build-*.md` guide. Platform SDKs and compiler toolchains
+are installed separately. Use the Rust toolchain pinned in
+`.github/workflows/build-release.yml`.
 
 Run builds from the extracted source tree so Cargo discovers the included
 `.cargo/config.toml`. The vendor configuration supplies the locked Rust crate

@@ -63,22 +63,25 @@ are documented in the [V4 RPC reference](nito/rpc-reference.md).
 | Linux ARM64 | `nito-4.0.0-aarch64-linux-gnu.tar.gz` |
 | Windows x64 | `nito-4.0.0-win64.zip`, `nito-4.0.0-win64-setup.exe` |
 | macOS ARM64 | `nito-4.0.0-arm64-apple-darwin.tar.gz`, `nito-4.0.0-arm64-apple-darwin.dmg` |
-| Corresponding source | `nito-4.0.0-sources.tar.gz` |
 
 Portable archives contain a single top-level `bin/` directory with the
 executables, `LICENSE.txt` and `THIRD_PARTY_LICENSES.txt`. The matching source
-archive contains the pinned dependency sources and locked Rust crates required
-for redistribution. See [release source information](release-sources.md).
+tag and GitHub-generated source archives are available from the release page.
+See [release source information](release-sources.md) for rebuilding and
+redistribution requirements.
 
 ## Validation
 
 The published binaries were built from commit
-`1d81bbd5f79d6b857c80420d5c81915ea326adff` by the
-[public release workflow](https://github.com/NitoNetwork/Nito-core/actions/runs/43616391797).
+`e3ff5e42b980c792ee5ab790610772a7d9ee8f8a` by the
+[public release workflow](https://github.com/NitoNetwork/Nito-core/actions/runs/43697543547).
 The successful release gate covered Linux x86_64, Linux ARM64, Windows x64 and
 macOS ARM64, together with native tests, Qt tests, 32 locked Orchard tests,
 legacy-wallet backup and restore, the activation-reorganization regression,
 package inspection and aggregate SHA-256 verification.
 
-The release manifest records `Signing: UNSIGNED`. `SHA256SUMS` provides file
-integrity verification and must be obtained from the same official release.
+The annotated `v4.0.0` tag is SSH-signed, reports **Verified** on GitHub and
+targets that exact commit. The attached `SHA256SUMS` covers the six platform
+packages and provides file-integrity verification, but it is unsigned. The tag
+signature authenticates the source tag and commit; it does not replace checking
+the downloaded package against `SHA256SUMS`.

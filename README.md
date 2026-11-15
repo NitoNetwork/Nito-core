@@ -8,9 +8,10 @@ Nito Core 4.0.0 is the current full node and wallet for Nito.network. It
 preserves the existing transparent chain, wallet and SHA-256 mining interfaces
 and adds opt-in Bech32x private transactions backed by Orchard cryptography.
 
-Download the official binaries and matching source archive from the
+Download the official binaries from the
 [Nito Core 4.0.0 release](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0).
-The `v4.0` branch contains the maintained V4 source line.
+GitHub provides source archives generated from the signed release tag. The
+`v4.0` branch contains the maintained V4 source line.
 
 ## Major Additions In 4.0.0
 
@@ -48,6 +49,11 @@ coinbase format.
 Obtain Nito Core 4.0.0 from the
 [official release page](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0)
 and verify the selected file against the accompanying `SHA256SUMS`.
+
+Official Nito Core release tags are annotated and cryptographically signed and
+must display GitHub's **Verified** status. The tag signature authenticates the
+tag and its source commit; it does not replace checksum verification of the
+downloaded packages.
 
 Linux:
 
@@ -251,5 +257,5 @@ Testnet coins have no value. Orchard is active from testnet genesis. See the
 
 Nito Core is released under the MIT license. See [LICENSE](LICENSE) and
 [COPYING](COPYING). Third-party components retain their own notices and license
-terms. Release downloads include the matching source archive and notices; see
+terms. Platform packages include the applicable consolidated notices; see
 [release sources and third-party notices](doc/release-sources.md).
