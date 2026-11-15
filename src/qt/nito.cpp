@@ -112,18 +112,37 @@ static void RegisterMetaTypes()
     qRegisterMetaType<NitoUnit>("NitoUnit");
 }
 
-static void ApplyNitoAccentStyle(QApplication& app)
+void ApplyNitoAccentStyle(QApplication& app)
 {
     QPalette palette{app.palette()};
+
+    // Define the complete foreground palette as well as the backgrounds. This
+    // prevents a dark or high-contrast system palette from leaving light text
+    // on Nito's deliberately light surfaces.
+    palette.setColor(QPalette::WindowText, QColor("#102a43"));
+    palette.setColor(QPalette::Text, QColor("#102a43"));
+    palette.setColor(QPalette::ButtonText, QColor("#102a43"));
+    palette.setColor(QPalette::BrightText, QColor("#ffffff"));
+    palette.setColor(QPalette::PlaceholderText, QColor("#52677a"));
+    palette.setColor(QPalette::Link, QColor("#006bbf"));
+    palette.setColor(QPalette::LinkVisited, QColor("#5b4bb7"));
     palette.setColor(QPalette::Highlight, QColor("#0073cf"));
     palette.setColor(QPalette::HighlightedText, QColor("#ffffff"));
-    palette.setColor(QPalette::Link, QColor("#006bbf"));
     palette.setColor(QPalette::Window, QColor("#f3f8fd"));
     palette.setColor(QPalette::Base, QColor("#ffffff"));
     palette.setColor(QPalette::AlternateBase, QColor("#eaf4ff"));
     palette.setColor(QPalette::Button, QColor("#f8fbff"));
     palette.setColor(QPalette::ToolTipBase, QColor("#0b1d2e"));
     palette.setColor(QPalette::ToolTipText, QColor("#ffffff"));
+
+    const QColor disabled_text{"#5b6f82"};
+    palette.setColor(QPalette::Disabled, QPalette::WindowText, disabled_text);
+    palette.setColor(QPalette::Disabled, QPalette::Text, disabled_text);
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabled_text);
+    palette.setColor(QPalette::Disabled, QPalette::PlaceholderText, disabled_text);
+    palette.setColor(QPalette::Disabled, QPalette::Link, disabled_text);
+    palette.setColor(QPalette::Disabled, QPalette::LinkVisited, disabled_text);
+    palette.setColor(QPalette::Disabled, QPalette::Button, QColor("#edf3f9"));
     app.setPalette(palette);
 
     app.setStyleSheet(QStringLiteral(
@@ -144,7 +163,7 @@ static void ApplyNitoAccentStyle(QApplication& app)
         "QPushButton:hover { border-color: #0073cf; background-color: #e8f4ff; }"
         "QPushButton:pressed, QPushButton:checked { background-color: #0073cf; color: #ffffff; border-color: #005fa8; }"
         "QPushButton:default { border-color: #0073cf; }"
-        "QPushButton:disabled { color: #7f8fa0; background-color: #edf3f9; border-color: #cfdfed; }"
+        "QPushButton:disabled { background-color: #edf3f9; border-color: #cfdfed; }"
         "QTabBar::tab { padding: 5px 10px; }"
         "QTabBar::tab:selected { color: #004f8d; background-color: #e3f2ff; border-bottom: 2px solid #0073cf; }"
         "QHeaderView::section { background-color: #e6f3ff; color: #103a5c; border: 0; border-right: 1px solid #c4ddf4; border-bottom: 1px solid #c4ddf4; padding: 4px; }"

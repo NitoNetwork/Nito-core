@@ -22,6 +22,7 @@ public:
     explicit AppTests(NitoApplication& app) : m_app(app) {}
 
 private Q_SLOTS:
+    void paletteTests();
     void appTests();
     void guiTests(NitoGUI* window);
     void consoleTests(RPCConsole* console);
