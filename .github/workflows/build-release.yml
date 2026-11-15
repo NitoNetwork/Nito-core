@@ -1700,6 +1700,12 @@ jobs:
             > dist/Nito-Qt.app/Contents/Resources/THIRD_PARTY_LICENSES.txt
           test -s dist/Nito-Qt.app/Contents/Resources/LICENSE.txt
           test -s dist/Nito-Qt.app/Contents/Resources/THIRD_PARTY_LICENSES.txt
+          # make deploy already signed the bundle. Adding the license files
+          # afterwards breaks its sealed resources, and Gatekeeper then reports
+          # the downloaded app as damaged. Re-seal the outer bundle (the nested
+          # code is unchanged) and fail the release if it doesn't verify.
+          codesign --force --sign - dist/Nito-Qt.app
+          codesign --verify --deep --strict --verbose=2 dist/Nito-Qt.app
           test -x dist/Nito-Qt.app/Contents/MacOS/Nito-Qt
           test -s dist/Nito-Qt.app/Contents/Resources/qtbase_de.qm
           translation_count="$(find dist/Nito-Qt.app/Contents/Resources -maxdepth 1 -type f -name 'qtbase_*.qm' | wc -l | tr -d '[:space:]')"

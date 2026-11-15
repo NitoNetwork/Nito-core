@@ -104,7 +104,9 @@ separately controlled announcement; publishing it only in the same GitHub
 Release does not establish authenticity.
 
 The macOS packaging step signs the stripped executables with ad-hoc signatures
-and launches the command-line tools extracted from the final archive. These
+and launches the command-line tools extracted from the final archive. It also
+re-signs `Nito-Qt.app` after the license notices are added to its resources,
+and stops if `codesign --verify --deep --strict` reports an invalid bundle. These
 signatures preserve executable integrity; they do not authenticate a publisher
 through Apple Developer ID or provide notarization. Native macOS Qt tests use
 the Cocoa platform so the application and wallet suites actually run.
