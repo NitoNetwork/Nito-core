@@ -56,6 +56,7 @@ WalletFrame::WalletFrame(const PlatformStyle* _platformStyle, QWidget* parent)
     no_wallet_layout->addWidget(create_wallet_button, 0, Qt::AlignHCenter);
 
     m_open_wallet_button = new QPushButton(QCoreApplication::translate("NitoGUI", "Open Wallet"), walletStack);
+    m_open_wallet_button->setObjectName("openWalletButton");
     m_open_wallet_button->setEnabled(false);
     m_open_wallet_button->setVisible(false);
     connect(m_open_wallet_button, &QPushButton::clicked, this, [this] {

@@ -111,6 +111,10 @@ from the recovery phrase, is never stored and cannot be recovered or reset.
 `false` to remove it or omit the option to leave that list unchanged. Protected
 non-interactive input for automation is documented in the
 [RPC reference](doc/nito/rpc-reference.md#optional-bip39-passphrase).
+Nito Qt keeps startup wallets closed by default. Operators who explicitly set
+`qtkeepwalletsclosed=0` can restore automatic startup attachment; encrypted
+wallets still require an explicit passphrase before Qt displays them. See
+[wallet startup and display](doc/managing-wallets.md#wallet-startup-and-qt-display).
 
 After creation, select the required receive type explicitly:
 
@@ -167,7 +171,8 @@ complete decision flow.
 An encrypted wallet opened in Qt asks for its passphrase before showing wallet
 data. Qt then locks the spending key while keeping an authenticated viewing
 session. Every Bech32x address creation or send that needs private keys asks
-for the passphrase again.
+for the passphrase again. Cancelling the display prompt leaves the wallet
+hidden but selectable, so authorization can be retried without restarting Qt.
 
 ## Backup And Recovery
 

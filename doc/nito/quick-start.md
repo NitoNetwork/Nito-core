@@ -156,6 +156,21 @@ wallet for the current process. Protected non-interactive input is intended for
 automation and is documented in the
 [RPC reference](rpc-reference.md#optional-bip39-passphrase).
 
+Nito Qt deliberately ignores the persistent startup list by default and lets
+the user choose a wallet from **File > Open Wallet**. To opt back into startup
+attachment, add this advanced setting to `nito.conf` and restart Qt:
+
+```ini
+qtkeepwalletsclosed=0
+```
+
+Unencrypted startup wallets then appear automatically. Encrypted startup
+wallets remain hidden until selected from **File > Open Wallet** and authorized
+with their passphrase. Cancelling or entering a wrong passphrase leaves the
+wallet loaded only in Core and available for another attempt. This Qt setting
+does not change headless `nitod` startup behavior. See the
+[wallet management guide](../managing-wallets.md#wallet-startup-and-qt-display).
+
 The same guided mode has a finite audited command set for private descriptors,
 signing, sensitive exports, backup/restore and legacy mutations that change
 backup requirements. See the complete

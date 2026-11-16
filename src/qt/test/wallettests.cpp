@@ -6,6 +6,7 @@
 #include <qt/test/wallettests.h>
 #include <qt/test/util.h>
 
+#include <qt/askpassphrasedialog.h>
 #include <wallet/coincontrol.h>
 #include <index/orchardindex.h>
 #include <interfaces/chain.h>
@@ -36,6 +37,7 @@
 #include <qt/transactionrecord.h>
 #include <qt/transactionview.h>
 #include <qt/walletcontroller.h>
+#include <qt/walletframe.h>
 #include <qt/walletmodel.h>
 #include <qt/walletview.h>
 #include <script/solver.h>
@@ -103,6 +105,56 @@ using wallet::WalletRescanReserver;
 
 namespace
 {
+enum class PassphraseDialogResponse {
+    ACCEPT,
+    REJECT,
+    WRONG_THEN_REJECT,
+};
+
+void RespondToPassphraseDialog(const QString& passphrase, PassphraseDialogResponse response)
+{
+    auto* timer = new QTimer(qApp);
+    timer->setInterval(10);
+    QObject::connect(timer, &QTimer::timeout, timer, [timer, passphrase, response] {
+        for (QWidget* widget : QApplication::topLevelWidgets()) {
+            auto* dialog = qobject_cast<AskPassphraseDialog*>(widget);
+            if (!dialog || !dialog->isVisible()) continue;
+
+            timer->stop();
+            timer->deleteLater();
+            if (response == PassphraseDialogResponse::REJECT) {
+                dialog->reject();
+                return;
+            }
+
+            auto* passphrase_edit = dialog->findChild<QLineEdit*>("passEdit1");
+            assert(passphrase_edit);
+            passphrase_edit->setText(passphrase);
+            if (response == PassphraseDialogResponse::WRONG_THEN_REJECT) {
+                // The incorrect-passphrase message is modal. Close it, then
+                // close the still-open unlock dialog to complete the activity.
+                QTimer::singleShot(0, qApp, [] {
+                    for (QWidget* modal : QApplication::topLevelWidgets()) {
+                        if (auto* message = qobject_cast<QMessageBox*>(modal); message && message->isVisible()) {
+                            message->accept();
+                        }
+                    }
+                    QTimer::singleShot(0, qApp, [] {
+                        for (QWidget* top_level : QApplication::topLevelWidgets()) {
+                            if (auto* unlock = qobject_cast<AskPassphraseDialog*>(top_level); unlock && unlock->isVisible()) {
+                                unlock->reject();
+                            }
+                        }
+                    });
+                });
+            }
+            dialog->accept();
+            return;
+        }
+    });
+    timer->start();
+}
+
 //! Press "Yes" or "Cancel" buttons in modal send confirmation dialog.
 void ConfirmSend(QString* text = nullptr, QMessageBox::StandardButton confirm_type = QMessageBox::Yes)
 {
@@ -318,6 +370,22 @@ void SyncUpWallet(const std::shared_ptr<CWallet>& wallet, interfaces::Node& node
     QVERIFY(result.last_failed_block.IsNull());
 }
 
+bool SetWalletLastProcessedToTip(const std::shared_ptr<CWallet>& wallet, interfaces::Node& node)
+{
+    int tip_height;
+    uint256 tip_hash;
+    {
+        LOCK(node.context()->chainman->GetMutex());
+        const CBlockIndex* tip{node.context()->chainman->ActiveChain().Tip()};
+        if (!tip) return false;
+        tip_height = tip->nHeight;
+        tip_hash = tip->GetBlockHash();
+    }
+    LOCK(wallet->cs_wallet);
+    wallet->SetLastBlockProcessed(tip_height, tip_hash);
+    return true;
+}
+
 std::shared_ptr<CWallet> SetupLegacyWatchOnlyWallet(interfaces::Node& node, TestChain100Setup& test)
 {
     std::shared_ptr<CWallet> wallet = std::make_shared<CWallet>(node.context()->chain.get(), "", CreateMockableWalletDatabase());
@@ -394,6 +462,228 @@ void TestWalletControllerLifetimes(interfaces::Node& node, const std::shared_ptr
     ClientModel client_model(node, &options_model);
     WalletContext& context = *node.walletLoader().context();
 
+    // Exercise the actual opt-in startup activity with both wallet states.
+    // The unencrypted wallet is published automatically, while the encrypted
+    // wallet stays loaded and selectable without a passive passphrase prompt.
+    {
+        const SecureString passphrase{"qt-startup-encrypted-wallet-test"};
+        auto encrypted_wallet = std::make_shared<CWallet>(
+            node.context()->chain.get(), "qt-startup-encrypted-wallet", CreateMockableWalletDatabase());
+        encrypted_wallet->LoadWallet();
+        {
+            LOCK(encrypted_wallet->cs_wallet);
+            auto* legacy_spkm = encrypted_wallet->GetOrCreateLegacyScriptPubKeyMan();
+            QVERIFY(legacy_spkm);
+            QVERIFY(legacy_spkm->SetupGeneration(true));
+        }
+        QVERIFY(SetWalletLastProcessedToTip(encrypted_wallet, node));
+        QVERIFY(encrypted_wallet->EncryptWallet(passphrase));
+        QVERIFY(encrypted_wallet->IsLocked());
+        QVERIFY(AddWallet(context, wallet));
+        QVERIFY(AddWallet(context, encrypted_wallet));
+
+        {
+            WalletController controller(client_model, platform_style.get(), nullptr);
+            QSignalSpy added_spy(&controller, &WalletController::walletAdded);
+            auto* activity = new LoadWalletsActivity(&controller, nullptr);
+            QSignalSpy finished_spy(activity, &LoadWalletsActivity::finished);
+            activity->load(/*show_loading_minimized=*/false);
+            QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 1, 5000);
+
+            const auto visible_model{controller.findWalletModel(wallet->GetName())};
+            const auto hidden_model{controller.findWalletModel("qt-startup-encrypted-wallet")};
+            QVERIFY(visible_model);
+            QVERIFY(hidden_model);
+            QVERIFY(controller.isWalletPublished(visible_model.data()));
+            QVERIFY(!controller.isWalletPublished(hidden_model.data()));
+            QVERIFY(!hidden_model->isDisplayAuthorized());
+            QCOMPARE(added_spy.count(), 1);
+            QCOMPARE(static_cast<int>(controller.listWalletDir().at(wallet->GetName())),
+                     static_cast<int>(WalletController::WalletDisplayState::PUBLISHED));
+            QCOMPARE(static_cast<int>(controller.listWalletDir().at("qt-startup-encrypted-wallet")),
+                     static_cast<int>(WalletController::WalletDisplayState::LOADED_HIDDEN));
+            QVERIFY(controller.hasOpenableWallet());
+            for (QWidget* widget : QApplication::topLevelWidgets()) {
+                auto* dialog = qobject_cast<AskPassphraseDialog*>(widget);
+                QVERIFY(!dialog || !dialog->isVisible());
+            }
+        }
+
+        QVERIFY(RemoveWallet(context, encrypted_wallet, /*load_on_start=*/std::nullopt));
+        QVERIFY(RemoveWallet(context, wallet, /*load_on_start=*/std::nullopt));
+    }
+
+    // A Core-loaded wallet remains selectable until it is published in Qt.
+    // Publishing is idempotent, and the empty-wallet button follows the same
+    // availability state as the File > Open Wallet menu.
+    {
+        QVERIFY(AddWallet(context, wallet));
+        WalletController controller(client_model, platform_style.get(), nullptr);
+        QSignalSpy added_spy(&controller, &WalletController::walletAdded);
+        WalletModel* wallet_model = controller.getOrCreateWallet(interfaces::MakeWallet(context, wallet), /*publish=*/false);
+        const std::string wallet_name{wallet->GetName()};
+
+        QCOMPARE(static_cast<int>(controller.listWalletDir().at(wallet_name)),
+                 static_cast<int>(WalletController::WalletDisplayState::LOADED_HIDDEN));
+        QVERIFY(controller.hasOpenableWallet());
+        QCOMPARE(added_spy.count(), 0);
+
+        WalletFrame wallet_frame(platform_style.get(), nullptr);
+        auto* open_button = wallet_frame.findChild<QPushButton*>("openWalletButton");
+        QVERIFY(open_button);
+        wallet_frame.setOpenWalletButtonAvailable(controller.hasOpenableWallet());
+        QVERIFY(open_button->isEnabled());
+        QVERIFY(!open_button->isHidden());
+
+        QVERIFY(controller.publishWallet(wallet_model));
+        QCOMPARE(added_spy.count(), 1);
+        QCOMPARE(static_cast<int>(controller.listWalletDir().at(wallet_name)),
+                 static_cast<int>(WalletController::WalletDisplayState::PUBLISHED));
+        QVERIFY(!controller.hasOpenableWallet());
+        QVERIFY(controller.publishWallet(wallet_model));
+        QCOMPARE(added_spy.count(), 1);
+
+        wallet_frame.setOpenWalletButtonAvailable(controller.hasOpenableWallet());
+        QVERIFY(!open_button->isEnabled());
+        QVERIFY(open_button->isHidden());
+        QVERIFY(RemoveWallet(context, wallet, /*load_on_start=*/std::nullopt));
+    }
+
+    // Encrypted wallets loaded by Core are not published until a deliberate
+    // Qt authentication. Cancelling or entering a wrong passphrase leaves the
+    // wallet loaded, hidden, and retryable. If RPC had already unlocked it,
+    // successful display authentication preserves that independent state.
+    {
+        const SecureString passphrase{"qt-hidden-wallet-test"};
+        const SecureString wrong_passphrase{"qt-hidden-wallet-wrong"};
+        auto encrypted_wallet = std::make_shared<CWallet>(
+            node.context()->chain.get(), "qt-hidden-wallet", CreateMockableWalletDatabase());
+        encrypted_wallet->LoadWallet();
+        {
+            LOCK(encrypted_wallet->cs_wallet);
+            auto* legacy_spkm = encrypted_wallet->GetOrCreateLegacyScriptPubKeyMan();
+            QVERIFY(legacy_spkm);
+            QVERIFY(legacy_spkm->SetupGeneration(true));
+        }
+        QVERIFY(SetWalletLastProcessedToTip(encrypted_wallet, node));
+        QVERIFY(encrypted_wallet->EncryptWallet(passphrase));
+        QVERIFY(encrypted_wallet->IsLocked());
+        QVERIFY(AddWallet(context, encrypted_wallet));
+
+        WalletController controller(client_model, platform_style.get(), nullptr);
+        QSignalSpy added_spy(&controller, &WalletController::walletAdded);
+        WalletModel* wallet_model = controller.getOrCreateWallet(
+            interfaces::MakeWallet(context, encrypted_wallet), /*publish=*/false);
+        QVERIFY(!wallet_model->isDisplayAuthorized());
+        QVERIFY(!controller.publishWallet(wallet_model));
+        QCOMPARE(static_cast<int>(controller.listWalletDir().at("qt-hidden-wallet")),
+                 static_cast<int>(WalletController::WalletDisplayState::LOADED_HIDDEN));
+        QVERIFY(controller.hasOpenableWallet());
+
+        // Simulate an independent RPC walletpassphrase unlock. This must not
+        // authorize Qt display or be undone by a cancelled display prompt.
+        QVERIFY(encrypted_wallet->Unlock(passphrase));
+        QVERIFY(!encrypted_wallet->IsLocked());
+
+        RespondToPassphraseDialog({}, PassphraseDialogResponse::REJECT);
+        auto* cancelled_activity = new OpenWalletActivity(&controller, nullptr);
+        QSignalSpy cancelled_opened(cancelled_activity, &OpenWalletActivity::opened);
+        QSignalSpy cancelled_finished(cancelled_activity, &OpenWalletActivity::finished);
+        cancelled_activity->open("qt-hidden-wallet");
+        QTRY_COMPARE_WITH_TIMEOUT(cancelled_finished.count(), 1, 5000);
+        QCOMPARE(cancelled_opened.count(), 0);
+        QVERIFY(!encrypted_wallet->IsLocked());
+        QVERIFY(controller.findWalletModel("qt-hidden-wallet"));
+        QVERIFY(controller.hasOpenableWallet());
+
+        RespondToPassphraseDialog(QString::fromUtf8(wrong_passphrase.data(), wrong_passphrase.size()), PassphraseDialogResponse::WRONG_THEN_REJECT);
+        auto* wrong_activity = new OpenWalletActivity(&controller, nullptr);
+        QSignalSpy wrong_opened(wrong_activity, &OpenWalletActivity::opened);
+        QSignalSpy wrong_finished(wrong_activity, &OpenWalletActivity::finished);
+        wrong_activity->open("qt-hidden-wallet");
+        QTRY_COMPARE_WITH_TIMEOUT(wrong_finished.count(), 1, 5000);
+        QCOMPARE(wrong_opened.count(), 0);
+        QVERIFY(!encrypted_wallet->IsLocked());
+        QVERIFY(controller.findWalletModel("qt-hidden-wallet"));
+        QVERIFY(controller.hasOpenableWallet());
+
+        RespondToPassphraseDialog(QString::fromUtf8(passphrase.data(), passphrase.size()), PassphraseDialogResponse::ACCEPT);
+        auto* accepted_activity = new OpenWalletActivity(&controller, nullptr);
+        QSignalSpy accepted_opened(accepted_activity, &OpenWalletActivity::opened);
+        QSignalSpy accepted_finished(accepted_activity, &OpenWalletActivity::finished);
+        accepted_activity->open("qt-hidden-wallet");
+        QTRY_COMPARE_WITH_TIMEOUT(accepted_finished.count(), 1, 5000);
+        QCOMPARE(accepted_opened.count(), 1);
+        QCOMPARE(added_spy.count(), 1);
+        QVERIFY(wallet_model->isDisplayAuthorized());
+        QVERIFY(!encrypted_wallet->IsLocked());
+        QCOMPARE(static_cast<int>(controller.listWalletDir().at("qt-hidden-wallet")),
+                 static_cast<int>(WalletController::WalletDisplayState::PUBLISHED));
+        QVERIFY(!controller.hasOpenableWallet());
+
+        QVERIFY(RemoveWallet(context, encrypted_wallet, /*load_on_start=*/std::nullopt));
+    }
+
+    // A normally locked wallet is relocked immediately after the one-time
+    // display authentication so viewing never becomes a spending unlock.
+    {
+        const SecureString passphrase{"qt-hidden-locked-wallet-test"};
+        auto encrypted_wallet = std::make_shared<CWallet>(
+            node.context()->chain.get(), "qt-hidden-locked-wallet", CreateMockableWalletDatabase());
+        encrypted_wallet->LoadWallet();
+        {
+            LOCK(encrypted_wallet->cs_wallet);
+            auto* legacy_spkm = encrypted_wallet->GetOrCreateLegacyScriptPubKeyMan();
+            QVERIFY(legacy_spkm);
+            QVERIFY(legacy_spkm->SetupGeneration(true));
+        }
+        QVERIFY(SetWalletLastProcessedToTip(encrypted_wallet, node));
+        QVERIFY(encrypted_wallet->EncryptWallet(passphrase));
+        QVERIFY(encrypted_wallet->IsLocked());
+        QVERIFY(AddWallet(context, encrypted_wallet));
+
+        WalletController controller(client_model, platform_style.get(), nullptr);
+        WalletModel* wallet_model = controller.getOrCreateWallet(
+            interfaces::MakeWallet(context, encrypted_wallet), /*publish=*/false);
+        RespondToPassphraseDialog(QString::fromUtf8(passphrase.data(), passphrase.size()), PassphraseDialogResponse::ACCEPT);
+        auto* activity = new OpenWalletActivity(&controller, nullptr);
+        QSignalSpy opened_spy(activity, &OpenWalletActivity::opened);
+        QSignalSpy finished_spy(activity, &OpenWalletActivity::finished);
+        activity->open("qt-hidden-locked-wallet");
+        QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 1, 5000);
+        QCOMPARE(opened_spy.count(), 1);
+        QVERIFY(wallet_model->isDisplayAuthorized());
+        QVERIFY(encrypted_wallet->IsLocked());
+        QCOMPARE(static_cast<int>(controller.listWalletDir().at("qt-hidden-locked-wallet")),
+                 static_cast<int>(WalletController::WalletDisplayState::PUBLISHED));
+
+        QVERIFY(RemoveWallet(context, encrypted_wallet, /*load_on_start=*/std::nullopt));
+    }
+
+    // If a hidden model is unloaded after selection but before the queued open
+    // step, the activity must finish without dereferencing the deleted model.
+    {
+        QVERIFY(AddWallet(context, wallet));
+        WalletController controller(client_model, platform_style.get(), nullptr);
+        WalletModel* wallet_model = controller.getOrCreateWallet(
+            interfaces::MakeWallet(context, wallet), /*publish=*/false);
+        QPointer<WalletModel> model_guard(wallet_model);
+        auto* activity = new OpenWalletActivity(&controller, nullptr);
+        QSignalSpy opened_spy(activity, &OpenWalletActivity::opened);
+        QSignalSpy finished_spy(activity, &OpenWalletActivity::finished);
+
+        // Queue model removal first. open() still sees the model synchronously,
+        // then its queued finish runs after the removal event.
+        wallet->NotifyUnload();
+        activity->open(wallet->GetName());
+        QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 1, 5000);
+        QCOMPARE(opened_spy.count(), 0);
+        QVERIFY(model_guard.isNull());
+        QVERIFY(!controller.findWalletModel(wallet->GetName()));
+
+        QVERIFY(RemoveWallet(context, wallet, /*load_on_start=*/std::nullopt));
+    }
+
     // Exercise the queued unload path while the controller owns a published
     // model. The guard makes a sanitizer-independent lifetime assertion too.
     {
@@ -423,7 +713,7 @@ void TestWalletControllerLifetimes(interfaces::Node& node, const std::shared_ptr
         QTRY_COMPARE_WITH_TIMEOUT(removed_spy.count(), 1, 5000);
         QVERIFY(model_guard.isNull());
         // A queued publication can arrive after the unload notification.
-        controller.publishWallet(wallet_model);
+        QVERIFY(!controller.publishWallet(wallet_model));
         QCOMPARE(added_spy.count(), 1);
         QVERIFY(RemoveWallet(context, wallet, /*load_on_start=*/std::nullopt));
     }

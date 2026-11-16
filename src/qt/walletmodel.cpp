@@ -155,7 +155,10 @@ WalletModel::WalletModel(std::unique_ptr<interfaces::Wallet> wallet, ClientModel
 {
     fHaveWatchOnly = m_wallet->haveWatchOnly();
     m_cached_private_tx_active = privateTxActive();
-    setDisplayAuthorized(getEncryptionStatus() != Locked);
+    // Core unlock state and Qt display authorization are separate. Encrypted
+    // wallets must pass through an explicit Qt authentication flow before any
+    // wallet view is published, even if another interface unlocked the wallet.
+    setDisplayAuthorized(!m_wallet->isCrypted());
     addressTableModel = new AddressTableModel(this);
     transactionTableModel = new TransactionTableModel(platformStyle, this);
     recentRequestsTableModel = new RecentRequestsTableModel(this);

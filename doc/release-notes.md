@@ -35,6 +35,10 @@ verify every file against the included `SHA256SUMS` before installation.
 - **Desktop and release delivery:** Qt 6 wallet support, updated Nito branding,
   improved encrypted-wallet handling and packages for Linux x86_64, Linux
   ARM64, Windows x64 and macOS ARM64.
+- **Optional Qt startup attachment:** wallets remain closed in Qt by default.
+  Operators can set `qtkeepwalletsclosed=0` to attach startup wallets;
+  encrypted wallets remain hidden until the user explicitly authorizes their
+  display with the wallet passphrase.
 
 ## Upgrade Notes
 

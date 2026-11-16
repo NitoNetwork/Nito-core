@@ -38,6 +38,33 @@ then initialized through the guided `sethdseed` recovery flow.
 `false` to remove the wallet from that list, or omit it to leave the existing
 setting unchanged. Run `nito-cli help createwallet` for all creation options.
 
+### Wallet Startup And Qt Display
+
+The persistent startup list and the Qt display are separate controls. Headless
+`nitod` loads wallets recorded with `load_on_startup=true` as usual. Nito Qt v4
+keeps wallets closed by default so no balance or history is shown until the
+user chooses **File > Open Wallet**.
+
+An operator who wants the earlier automatic attachment behavior can add the
+following advanced setting to `nito.conf` and restart Qt:
+
+```ini
+qtkeepwalletsclosed=0
+```
+
+With this explicit opt-in, unencrypted startup wallets are attached to Qt
+automatically. Encrypted startup wallets are loaded by Core but remain hidden
+and selectable in **File > Open Wallet**. Selecting one opens the normal
+passphrase dialog before any balance, overview or transaction view is created.
+A cancelled or incorrect passphrase leaves it hidden and retryable; it is not
+silently unloaded and the Open Wallet control remains available.
+
+Qt display authorization does not replace spending-key locking. After a
+normally locked wallet is authorized for display, Qt immediately removes the
+spending key from memory. If another interface deliberately unlocked the
+wallet first, Qt still requires its own display authorization and preserves
+that interface's existing unlock state.
+
 By default, wallets are created in the `wallets` folder of the data directory, which varies by operating system, as shown below. The user can change the default by using the `-datadir` or `-walletdir` initialization parameters.
 
 | Operating System | Default wallet directory                                    |
@@ -126,7 +153,8 @@ the command line. Lock the wallet early with
 
 Qt requests authorization before displaying an encrypted wallet and again
 when an operation needs private keys that are currently locked. Cancelling the
-initial authorization leaves that wallet closed in Qt.
+initial authorization leaves that wallet hidden and selectable for another
+attempt in Qt.
 
 ### 1.4 Backing Up the Wallet
 

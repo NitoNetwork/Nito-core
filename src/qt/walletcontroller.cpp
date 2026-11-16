@@ -46,6 +46,11 @@ using wallet::WALLET_FLAG_DISABLE_PRIVATE_KEYS;
 using wallet::WALLET_FLAG_EXTERNAL_SIGNER;
 
 namespace {
+enum class DisplayUnlockPolicy {
+    RELOCK_AFTER_AUTHENTICATION,
+    PRESERVE_EXISTING_UNLOCK,
+};
+
 void ClearPassphrase(SecureString& passphrase)
 {
     if (!passphrase.empty()) {
@@ -55,15 +60,17 @@ void ClearPassphrase(SecureString& passphrase)
     passphrase.swap(empty);
 }
 
-bool UnlockWalletForDisplay(WalletModel* wallet_model, QWidget* parent, const SecureString* passphrase_hint = nullptr)
+bool UnlockWalletForDisplay(WalletModel* wallet_model, QWidget* parent, const SecureString* passphrase_hint = nullptr,
+                            DisplayUnlockPolicy policy = DisplayUnlockPolicy::RELOCK_AFTER_AUTHENTICATION)
 {
     if (!wallet_model) return false;
     if (wallet_model->isDisplayAuthorized()) return true;
-    if (wallet_model->getEncryptionStatus() != WalletModel::Locked) {
+    if (!wallet_model->wallet().isCrypted()) {
         wallet_model->setDisplayAuthorized(true);
         return true;
     }
 
+    const bool was_locked{wallet_model->getEncryptionStatus() == WalletModel::Locked};
     bool unlocked{false};
     if (passphrase_hint && !passphrase_hint->empty()) {
         bilingual_str unlock_error;
@@ -79,7 +86,9 @@ bool UnlockWalletForDisplay(WalletModel* wallet_model, QWidget* parent, const Se
     if (!unlocked) return false;
 
     wallet_model->setDisplayAuthorized(true);
-    if (!wallet_model->setWalletLockedForDisplay()) {
+    const bool relock_for_display{
+        policy == DisplayUnlockPolicy::RELOCK_AFTER_AUTHENTICATION || was_locked};
+    if (relock_for_display && !wallet_model->setWalletLockedForDisplay()) {
         wallet_model->setDisplayAuthorized(false);
         return false;
     }
@@ -143,18 +152,45 @@ WalletController::~WalletController()
     for (WalletModel* wallet_model : wallets) delete wallet_model;
 }
 
-std::map<std::string, bool> WalletController::listWalletDir() const
+std::map<std::string, WalletController::WalletDisplayState> WalletController::listWalletDir() const
 {
-    QMutexLocker locker(&m_mutex);
-    std::map<std::string, bool> wallets;
+    std::map<std::string, WalletDisplayState> wallets;
     for (const std::string& name : m_node.walletLoader().listWalletDir()) {
-        wallets[name] = false;
+        wallets[name] = WalletDisplayState::CLOSED;
     }
+
+    QMutexLocker locker(&m_mutex);
     for (WalletModel* wallet_model : m_wallets) {
-        auto it = wallets.find(wallet_model->wallet().getWalletName());
-        if (it != wallets.end()) it->second = true;
+        wallets[wallet_model->wallet().getWalletName()] = m_published_wallets.count(wallet_model)
+            ? WalletDisplayState::PUBLISHED
+            : WalletDisplayState::LOADED_HIDDEN;
     }
     return wallets;
+}
+
+bool WalletController::hasOpenableWallet() const
+{
+    const auto wallets{listWalletDir()};
+    return std::any_of(wallets.begin(), wallets.end(), [](const auto& wallet) {
+        return wallet.second != WalletDisplayState::PUBLISHED;
+    });
+}
+
+QPointer<WalletModel> WalletController::findWalletModel(const std::string& name) const
+{
+    assert(QThread::currentThread() == thread());
+    QMutexLocker locker(&m_mutex);
+    for (WalletModel* wallet_model : m_wallets) {
+        if (wallet_model->wallet().getWalletName() == name) return wallet_model;
+    }
+    return {};
+}
+
+bool WalletController::isWalletPublished(WalletModel* wallet_model) const
+{
+    assert(QThread::currentThread() == thread());
+    QMutexLocker locker(&m_mutex);
+    return wallet_model && m_published_wallets.count(wallet_model) > 0;
 }
 
 void WalletController::closeWallet(WalletModel* wallet_model, QWidget* parent)
@@ -197,11 +233,13 @@ void WalletController::closeAllWallets(QWidget* parent)
         if (published_wallets.count(wallet_model)) Q_EMIT walletRemoved(wallet_model);
         delete wallet_model;
     }
+    Q_EMIT walletAvailabilityChanged();
 }
 
 WalletModel* WalletController::getOrCreateWallet(std::unique_ptr<interfaces::Wallet> wallet, bool publish)
 {
     WalletModel* wallet_model{nullptr};
+    bool created{false};
     {
         QMutexLocker locker(&m_mutex);
 
@@ -228,6 +266,7 @@ WalletModel* WalletController::getOrCreateWallet(std::unique_ptr<interfaces::Wal
             // handled on the GUI event loop.
             wallet_model->moveToThread(thread());
             m_wallets.push_back(wallet_model);
+            created = true;
 
             connect(wallet_model, &WalletModel::unload, this, [this, wallet_model = QPointer<WalletModel>{wallet_model}] {
                 if (!wallet_model) return;
@@ -249,6 +288,8 @@ WalletModel* WalletController::getOrCreateWallet(std::unique_ptr<interfaces::Wal
         }
     }
 
+    if (created) Q_EMIT walletAvailabilityChanged();
+
     if (publish) {
         if (QThread::currentThread() == thread()) {
             publishWallet(wallet_model);
@@ -262,17 +303,20 @@ WalletModel* WalletController::getOrCreateWallet(std::unique_ptr<interfaces::Wal
     return wallet_model;
 }
 
-void WalletController::publishWallet(WalletModel* wallet_model)
+bool WalletController::publishWallet(WalletModel* wallet_model)
 {
     assert(QThread::currentThread() == thread());
-    if (!wallet_model) return;
+    if (!wallet_model) return false;
+    bool newly_published{false};
     {
         QMutexLocker locker(&m_mutex);
         // Queued publication can arrive after the model has been removed.
-        if (std::find(m_wallets.begin(), m_wallets.end(), wallet_model) == m_wallets.end()) return;
-        if (!wallet_model->isDisplayAuthorized()) return;
-        if (!m_published_wallets.insert(wallet_model).second) return;
+        if (std::find(m_wallets.begin(), m_wallets.end(), wallet_model) == m_wallets.end()) return false;
+        if (!wallet_model->isDisplayAuthorized()) return false;
+        newly_published = m_published_wallets.insert(wallet_model).second;
     }
+
+    if (!newly_published) return true;
 
     // Parent and timer setup are intentionally performed only on the GUI
     // thread. Workers never make a blocking call back into the GUI thread, so
@@ -282,6 +326,8 @@ void WalletController::publishWallet(WalletModel* wallet_model)
     assert(called);
 
     Q_EMIT walletAdded(wallet_model);
+    Q_EMIT walletAvailabilityChanged();
+    return true;
 }
 
 void WalletController::removeAndDeleteWallet(WalletModel* wallet_model)
@@ -299,6 +345,7 @@ void WalletController::removeAndDeleteWallet(WalletModel* wallet_model)
     // Currently this can trigger the unload since the model can hold the last
     // CWallet shared pointer.
     delete wallet_model;
+    Q_EMIT walletAvailabilityChanged();
 }
 
 WalletControllerActivity::WalletControllerActivity(WalletController* wallet_controller, QWidget* parent_widget)
@@ -560,6 +607,21 @@ OpenWalletActivity::OpenWalletActivity(WalletController* wallet_controller, QWid
 
 void OpenWalletActivity::finish()
 {
+    // Always resolve the model again on the GUI thread. It may have been
+    // unloaded after the menu click or after the worker completed, so a raw
+    // pointer retained across the queued transition would not be safe.
+    const auto current_model{m_wallet_controller->findWalletModel(m_path)};
+    m_wallet_model = current_model.data();
+
+    // A wallet can also be loaded by Core between the menu click and the
+    // worker load attempt. Reuse that model instead of reporting "already
+    // loaded", and preserve an independent RPC unlock in that case.
+    if (m_wallet_model && !m_error_message.empty()) {
+        m_was_already_loaded = true;
+        m_error_message = {};
+        m_warning_message.clear();
+    }
+
     if (!m_error_message.empty()) {
         QMessageBox::critical(m_parent_widget, tr("Open wallet failed"), QString::fromStdString(m_error_message.translated));
     } else if (!m_warning_message.empty()) {
@@ -567,14 +629,18 @@ void OpenWalletActivity::finish()
     }
 
     if (m_wallet_model && m_progress_dialog) m_progress_dialog->close();
-    if (m_wallet_model && !UnlockWalletForDisplay(m_wallet_model, m_parent_widget)) {
-        m_wallet_model->wallet().remove();
-        removeWalletModel(m_wallet_model);
+    const DisplayUnlockPolicy unlock_policy{m_was_already_loaded
+        ? DisplayUnlockPolicy::PRESERVE_EXISTING_UNLOCK
+        : DisplayUnlockPolicy::RELOCK_AFTER_AUTHENTICATION};
+    if (m_wallet_model && !UnlockWalletForDisplay(m_wallet_model, m_parent_widget, nullptr, unlock_policy)) {
+        if (!m_was_already_loaded) {
+            m_wallet_model->wallet().remove();
+            removeWalletModel(m_wallet_model);
+        }
         m_wallet_model = nullptr;
     }
 
-    if (m_wallet_model) {
-        m_wallet_controller->publishWallet(m_wallet_model);
+    if (m_wallet_model && m_wallet_controller->publishWallet(m_wallet_model)) {
         Q_EMIT opened(m_wallet_model);
     }
 
@@ -583,6 +649,18 @@ void OpenWalletActivity::finish()
 
 void OpenWalletActivity::open(const std::string& path)
 {
+    m_path = path;
+    if (auto existing = m_wallet_controller->findWalletModel(path)) {
+        m_was_already_loaded = true;
+        if (m_wallet_controller->isWalletPublished(existing.data())) {
+            Q_EMIT opened(existing.data());
+            Q_EMIT finished();
+        } else {
+            QTimer::singleShot(0, this, &OpenWalletActivity::finish);
+        }
+        return;
+    }
+
     QString name = path.empty() ? QString("["+tr("default wallet")+"]") : QString::fromStdString(path);
 
     showProgressDialog(
@@ -596,7 +674,7 @@ void OpenWalletActivity::open(const std::string& path)
         auto wallet{node().walletLoader().loadWallet(path, m_warning_message)};
 
         if (wallet) {
-            m_wallet_model = m_wallet_controller->getOrCreateWallet(std::move(*wallet), /*publish=*/false);
+            m_wallet_controller->getOrCreateWallet(std::move(*wallet), /*publish=*/false);
         } else {
             m_error_message = util::ErrorString(wallet);
         }

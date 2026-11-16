@@ -57,15 +57,23 @@ class WalletController : public QObject
     void removeAndDeleteWallet(WalletModel* wallet_model);
 
 public:
+    enum class WalletDisplayState {
+        CLOSED,
+        LOADED_HIDDEN,
+        PUBLISHED,
+    };
+
     WalletController(ClientModel& client_model, const PlatformStyle* platform_style, QObject* parent);
     ~WalletController();
 
     WalletModel* getOrCreateWallet(std::unique_ptr<interfaces::Wallet> wallet, bool publish = true);
-    void publishWallet(WalletModel* wallet_model);
+    bool publishWallet(WalletModel* wallet_model);
 
-    //! Returns all wallet names in the wallet dir mapped to whether the wallet
-    //! is loaded.
-    std::map<std::string, bool> listWalletDir() const;
+    //! Returns all wallet names and their Core/Qt display state.
+    std::map<std::string, WalletDisplayState> listWalletDir() const;
+    bool hasOpenableWallet() const;
+    QPointer<WalletModel> findWalletModel(const std::string& name) const;
+    bool isWalletPublished(WalletModel* wallet_model) const;
 
     void closeWallet(WalletModel* wallet_model, QWidget* parent = nullptr);
     void closeAllWallets(QWidget* parent = nullptr);
@@ -75,6 +83,7 @@ public:
 Q_SIGNALS:
     void walletAdded(WalletModel* wallet_model);
     void walletRemoved(WalletModel* wallet_model);
+    void walletAvailabilityChanged();
 
     void coinsSent(WalletModel* wallet_model, SendCoinsRecipient recipient, QByteArray transaction);
 
@@ -164,6 +173,9 @@ Q_SIGNALS:
 
 private:
     void finish();
+
+    std::string m_path;
+    bool m_was_already_loaded{false};
 };
 
 class LoadWalletsActivity : public WalletControllerActivity

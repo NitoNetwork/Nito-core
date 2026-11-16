@@ -37,6 +37,7 @@
 
 #include <chain.h>
 #include <chainparams.h>
+#include <common/args.h>
 #include <common/system.h>
 #include <interfaces/handler.h>
 #include <interfaces/node.h>
@@ -417,7 +418,7 @@ void NitoGUI::createActions()
         connect(openAction, &QAction::triggered, this, &NitoGUI::openClicked);
         connect(m_open_wallet_menu, &QMenu::aboutToShow, [this] {
             m_open_wallet_menu->clear();
-            for (const std::pair<const std::string, bool>& i : m_wallet_controller->listWalletDir()) {
+            for (const auto& i : m_wallet_controller->listWalletDir()) {
                 const std::string& path = i.first;
                 QString name = path.empty() ? QString("["+tr("default wallet")+"]") : QString::fromStdString(path);
                 // Menu items remove single &. Single & are shown when && is in
@@ -429,8 +430,8 @@ void NitoGUI::createActions()
                 }
                 QAction* action = m_open_wallet_menu->addAction(name);
 
-                if (i.second) {
-                    // This wallet is already loaded
+                if (i.second == WalletController::WalletDisplayState::PUBLISHED) {
+                    // This wallet is already visible in Qt.
                     action->setEnabled(false);
                     continue;
                 }
@@ -709,7 +710,6 @@ void NitoGUI::enableHistoryAction(bool privacy)
 
 void NitoGUI::setWalletController(WalletController* wallet_controller, bool show_loading_minimized)
 {
-    (void)show_loading_minimized;
     assert(!m_wallet_controller);
     assert(wallet_controller);
 
@@ -724,11 +724,16 @@ void NitoGUI::setWalletController(WalletController* wallet_controller, bool show
     connect(wallet_controller, &WalletController::walletAdded, this, [this] { updateOpenWalletAction(); }, Qt::QueuedConnection);
     connect(wallet_controller, &WalletController::walletRemoved, this, &NitoGUI::removeWallet);
     connect(wallet_controller, &WalletController::walletRemoved, this, [this] { updateOpenWalletAction(); }, Qt::QueuedConnection);
+    connect(wallet_controller, &WalletController::walletAvailabilityChanged, this, &NitoGUI::updateOpenWalletAction, Qt::QueuedConnection);
     connect(wallet_controller, &WalletController::destroyed, this, [this] {
         // wallet_controller gets destroyed manually, but it leaves our member copy dangling
         m_wallet_controller = nullptr;
     });
 
+    if (!gArgs.GetBoolArg("-qtkeepwalletsclosed", true)) {
+        auto* activity = new LoadWalletsActivity(m_wallet_controller, this);
+        activity->load(show_loading_minimized);
+    }
 }
 
 WalletController* NitoGUI::getWalletController()
@@ -821,15 +826,7 @@ void NitoGUI::removeAllWallets()
 void NitoGUI::updateOpenWalletAction()
 {
 #ifdef ENABLE_WALLET
-    bool has_loadable_wallet{false};
-    if (m_wallet_controller) {
-        for (const std::pair<const std::string, bool>& wallet : m_wallet_controller->listWalletDir()) {
-            if (!wallet.second) {
-                has_loadable_wallet = true;
-                break;
-            }
-        }
-    }
+    const bool has_loadable_wallet{m_wallet_controller && m_wallet_controller->hasOpenableWallet()};
     m_open_wallet_action->setEnabled(has_loadable_wallet);
 #endif // ENABLE_WALLET
 }
