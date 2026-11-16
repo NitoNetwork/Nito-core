@@ -6,7 +6,7 @@ on:
       version:
         description: "Release version used in artifact names"
         required: true
-        default: "4.0.0"
+        default: "4.0.1"
       targets:
         description: "Targets value: all, windows, macos, linux-x86_64,linux-aarch64. targets=windows also works."
         required: true
@@ -28,7 +28,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  VERSION: ${{ github.event.inputs.version || '4.0.0' }}
+  VERSION: ${{ github.event.inputs.version || '4.0.1' }}
   MAKEJOBS: "4"
   RUST_TOOLCHAIN: "1.97.0"
   TARGETS: ${{ github.event.inputs.targets || 'all' }}
@@ -1700,6 +1700,12 @@ jobs:
             > dist/Nito-Qt.app/Contents/Resources/THIRD_PARTY_LICENSES.txt
           test -s dist/Nito-Qt.app/Contents/Resources/LICENSE.txt
           test -s dist/Nito-Qt.app/Contents/Resources/THIRD_PARTY_LICENSES.txt
+          # make deploy already signed the bundle. Adding the license files
+          # afterwards breaks its sealed resources, and Gatekeeper then reports
+          # the downloaded app as damaged. Re-seal the outer bundle (the nested
+          # code is unchanged) and fail the release if it doesn't verify.
+          codesign --force --sign - dist/Nito-Qt.app
+          codesign --verify --deep --strict --verbose=2 dist/Nito-Qt.app
           test -x dist/Nito-Qt.app/Contents/MacOS/Nito-Qt
           test -s dist/Nito-Qt.app/Contents/Resources/qtbase_de.qm
           translation_count="$(find dist/Nito-Qt.app/Contents/Resources -maxdepth 1 -type f -name 'qtbase_*.qm' | wc -l | tr -d '[:space:]')"
@@ -1809,6 +1815,7 @@ jobs:
           test -s "$mount_point/Nito-Qt.app/Contents/Resources/qtbase_de.qm"
           test -s "$mount_point/Nito-Qt.app/Contents/Resources/LICENSE.txt"
           test -s "$mount_point/Nito-Qt.app/Contents/Resources/THIRD_PARTY_LICENSES.txt"
+          codesign --verify --deep --strict --verbose=2 "$mount_point/Nito-Qt.app"
           test -e "$mount_point/Applications"
           hdiutil detach "$mount_point"
           mount_point=""

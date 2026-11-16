@@ -4,14 +4,22 @@
   <img src="doc/nito/assets/nito-v4-header.svg" alt="Nito Core v4 - Nito x Bech32x (Orchard)" width="100%">
 </p>
 
-Nito Core 4.0.0 is the current full node and wallet for Nito.network. It
+Nito Core 4.0.1 is the current full node and wallet for Nito.network. It
 preserves the existing transparent chain, wallet and SHA-256 mining interfaces
 and adds opt-in Bech32x private transactions backed by Orchard cryptography.
 
-Download the official binaries from the
-[Nito Core 4.0.0 release](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0).
+Download official binaries from the
+[Nito Core releases](https://github.com/NitoNetwork/Nito-core/releases).
 GitHub provides source archives generated from the signed release tag. The
 `v4.0` branch contains the maintained V4 source line.
+
+## Maintenance Changes In 4.0.1
+
+- macOS packages re-seal the Qt app after adding license notices and verify the
+  signature again from the final mounted DMG, preventing Gatekeeper from
+  treating the distributed app as damaged.
+- The advanced `qtkeepwalletsclosed=0` option again attaches startup wallets;
+  encrypted wallets remain hidden until the user authorizes their display.
 
 ## Major Additions In 4.0.0
 
@@ -46,9 +54,9 @@ coinbase format.
 
 ## Download And Verify
 
-Obtain Nito Core 4.0.0 from the
-[official release page](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0)
-and verify the selected file against the accompanying `SHA256SUMS`.
+Obtain Nito Core 4.0.1 from the
+[official release page](https://github.com/NitoNetwork/Nito-core/releases) and
+verify the selected file against the accompanying `SHA256SUMS`.
 
 Official Nito Core release tags are annotated and cryptographically signed and
 must display GitHub's **Verified** status. The tag signature authenticates the
@@ -64,13 +72,13 @@ sha256sum --ignore-missing -c SHA256SUMS
 macOS:
 
 ```bash
-shasum -a 256 nito-4.0.0-arm64-apple-darwin.dmg
+shasum -a 256 nito-4.0.1-arm64-apple-darwin.dmg
 ```
 
 Windows PowerShell:
 
 ```powershell
-Get-FileHash .\nito-4.0.0-win64.zip -Algorithm SHA256
+Get-FileHash .\nito-4.0.1-win64.zip -Algorithm SHA256
 ```
 
 Compare the complete reported hash with the matching line in `SHA256SUMS`.

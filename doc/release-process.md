@@ -65,7 +65,7 @@ committed checkout before creating installers:
 ```bash
 make -C depends HOST=x86_64-pc-linux-gnu download-one
 cargo fetch --locked --manifest-path src/private/orchard_ffi/Cargo.toml
-python3 contrib/release/source-bundle.py --version 4.0.0 --output source-release
+python3 contrib/release/source-bundle.py --version 4.0.1 --output source-release
 mkdir -p release
 mkdir -p release/bin
 tar -xOf source-release/release-notices.tar.gz COPYING > release/bin/LICENSE.txt
@@ -104,10 +104,12 @@ separately controlled announcement; publishing it only in the same GitHub
 Release does not establish authenticity.
 
 The macOS packaging step signs the stripped executables with ad-hoc signatures
-and launches the command-line tools extracted from the final archive. These
-signatures preserve executable integrity; they do not authenticate a publisher
-through Apple Developer ID or provide notarization. Native macOS Qt tests use
-the Cocoa platform so the application and wallet suites actually run.
+and launches the command-line tools extracted from the final archive. It also
+re-signs `Nito-Qt.app` after the license notices are added, verifies its sealed
+resources, and repeats that verification on the app mounted from the final DMG.
+These signatures preserve executable integrity; they do not authenticate a
+publisher through Apple Developer ID or provide notarization. Native macOS Qt
+tests use the Cocoa platform so the application and wallet suites actually run.
 
 ## Release Notes
 

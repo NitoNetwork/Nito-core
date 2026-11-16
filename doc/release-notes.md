@@ -1,12 +1,24 @@
-# Nito Core 4.0.0 Release Notes
+# Nito Core 4.0.1 Release Notes
 
-Nito Core 4.0.0 is the first stable V4 release. It adds opt-in Bech32x private
-transactions backed by Orchard while preserving Nito's transparent chain,
-wallet compatibility and SHA-256 mining interfaces.
+Nito Core 4.0.1 is a maintenance update to the stable V4 release line. It keeps
+the opt-in Bech32x and Orchard capabilities introduced in 4.0.0 while fixing
+macOS packaging and secure Qt wallet startup.
 
-Download the release from
-[GitHub](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0) and
+Download the release from the
+[official release page](https://github.com/NitoNetwork/Nito-core/releases) and
 verify every file against the included `SHA256SUMS` before installation.
+
+## Changes Since 4.0.0
+
+- The macOS release workflow now re-seals `Nito-Qt.app` after adding the license
+  notices and verifies the signature both before packaging and from the mounted
+  final DMG. This prevents Gatekeeper from treating the distributed app as a
+  damaged bundle. The signature remains ad hoc rather than Developer ID signed
+  or notarized, so macOS can still require the normal manual approval.
+- The advanced `qtkeepwalletsclosed=0` option again attaches configured startup
+  wallets automatically. The secure default remains unchanged, and encrypted
+  wallets stay hidden until their display is authorized with the wallet
+  passphrase.
 
 ## Major Changes
 
@@ -35,10 +47,6 @@ verify every file against the included `SHA256SUMS` before installation.
 - **Desktop and release delivery:** Qt 6 wallet support, updated Nito branding,
   improved encrypted-wallet handling and packages for Linux x86_64, Linux
   ARM64, Windows x64 and macOS ARM64.
-- **Optional Qt startup attachment:** wallets remain closed in Qt by default.
-  Operators can set `qtkeepwalletsclosed=0` to attach startup wallets;
-  encrypted wallets remain hidden until the user explicitly authorizes their
-  display with the wallet passphrase.
 
 ## Upgrade Notes
 
@@ -63,10 +71,10 @@ are documented in the [V4 RPC reference](nito/rpc-reference.md).
 
 | Platform | Files |
 | --- | --- |
-| Linux x86_64 | `nito-4.0.0-x86_64-linux-gnu.tar.gz` |
-| Linux ARM64 | `nito-4.0.0-aarch64-linux-gnu.tar.gz` |
-| Windows x64 | `nito-4.0.0-win64.zip`, `nito-4.0.0-win64-setup.exe` |
-| macOS ARM64 | `nito-4.0.0-arm64-apple-darwin.tar.gz`, `nito-4.0.0-arm64-apple-darwin.dmg` |
+| Linux x86_64 | `nito-4.0.1-x86_64-linux-gnu.tar.gz` |
+| Linux ARM64 | `nito-4.0.1-aarch64-linux-gnu.tar.gz` |
+| Windows x64 | `nito-4.0.1-win64.zip`, `nito-4.0.1-win64-setup.exe` |
+| macOS ARM64 | `nito-4.0.1-arm64-apple-darwin.tar.gz`, `nito-4.0.1-arm64-apple-darwin.dmg` |
 
 Portable archives contain a single top-level `bin/` directory with the
 executables, `LICENSE.txt` and `THIRD_PARTY_LICENSES.txt`. The matching source
@@ -76,16 +84,14 @@ redistribution requirements.
 
 ## Validation
 
-The published binaries were built from commit
-`e3ff5e42b980c792ee5ab790610772a7d9ee8f8a` by the
-[public release workflow](https://github.com/NitoNetwork/Nito-core/actions/runs/43697543547).
-The successful release gate covered Linux x86_64, Linux ARM64, Windows x64 and
-macOS ARM64, together with native tests, Qt tests, 32 locked Orchard tests,
-legacy-wallet backup and restore, the activation-reorganization regression,
-package inspection and aggregate SHA-256 verification.
+The 4.0.1 packages must be built from the exact reviewed release commit by the
+public release workflow. Before publication, the release gate must pass for
+Linux x86_64, Linux ARM64, Windows x64 and macOS ARM64, including native and Qt
+tests, the locked Orchard tests, legacy-wallet backup and restore, package
+inspection and aggregate SHA-256 verification.
 
-The annotated `v4.0.0` tag is SSH-signed, reports **Verified** on GitHub and
-targets that exact commit. The attached `SHA256SUMS` covers the six platform
-packages and provides file-integrity verification, but it is unsigned. The tag
-signature authenticates the source tag and commit; it does not replace checking
-the downloaded package against `SHA256SUMS`.
+The annotated `v4.0.1` tag must be cryptographically signed and report
+**Verified** on GitHub. The attached `SHA256SUMS` covers the platform packages
+and provides file-integrity verification. A signed source tag authenticates the
+tag and source commit; it does not replace checking each downloaded package
+against `SHA256SUMS`.
