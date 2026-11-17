@@ -13,13 +13,6 @@ Download official binaries from the
 GitHub provides source archives generated from the signed release tag. The
 `v4.0` branch contains the maintained V4 source line.
 
-## Maintenance Changes In 4.0.1
-
-- macOS packages re-seal the Qt app after adding license notices and verify the
-  signature again from the final mounted DMG, preventing Gatekeeper from
-  treating the distributed app as damaged.
-- The advanced `qtkeepwalletsclosed=0` option again attaches startup wallets;
-  encrypted wallets remain hidden until the user authorizes their display.
 
 ## Major Additions In 4.0.0
 
