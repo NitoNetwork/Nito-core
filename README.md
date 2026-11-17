@@ -4,7 +4,7 @@
   <img src="doc/nito/assets/nito-v4-header.svg" alt="Nito Core v4 - Nito x Bech32x (Orchard)" width="100%">
 </p>
 
-Nito Core 4.0.1 is the current full node and wallet for Nito.network. It
+Nito Core v4.0 is the current full node and wallet for Nito.network. It
 preserves the existing transparent chain, wallet and SHA-256 mining interfaces
 and adds opt-in Bech32x private transactions backed by Orchard cryptography.
 
