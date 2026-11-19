@@ -75,6 +75,17 @@ Get-FileHash .\nito-4.0.1-win64.zip -Algorithm SHA256
 ```
 
 Compare the complete reported hash with the matching line in `SHA256SUMS`.
+
+Release files built by the release workflow also carry GitHub build provenance
+attestations. With the [GitHub CLI](https://cli.github.com/), check that a file
+was built by Nito Core's own release workflow, and from which commit:
+
+```bash
+gh attestation verify nito-<version>-x86_64-linux-gnu.tar.gz --repo NitoNetwork/Nito-core
+```
+
+Releases published before attestations were added have none, so this check
+fails for them.
 Portable archives contain a single top-level `bin/` directory. Executables,
 `LICENSE.txt` and the consolidated `THIRD_PARTY_LICENSES.txt` are kept directly
 inside it.
