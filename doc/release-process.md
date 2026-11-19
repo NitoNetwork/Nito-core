@@ -103,6 +103,27 @@ independent authenticated channel, such as the official website and a
 separately controlled announcement; publishing it only in the same GitHub
 Release does not establish authenticity.
 
+The index job also creates GitHub build provenance attestations, with no keys
+or secrets to manage: one for every file listed in `SHA256SUMS`, and one each
+for `SHA256SUMS` and `release-manifest.txt`. Each attestation is signed through
+Sigstore and records the repository, workflow, commit, ref and run that built
+the file. Anyone can then check a download, wherever they got it, with:
+
+```bash
+gh attestation verify nito-<version>-x86_64-linux-gnu.tar.gz --repo NitoNetwork/Nito-core
+```
+
+A file that was rebuilt elsewhere, changed after the build, or attached from
+another run fails this check. Attestations show where and how a file was built;
+they do not replace the signed tag or the Minisign signature, which show that
+the maintainers approved the release.
+
+Start the release build from the signed release tag (in **Run workflow**,
+choose the tag under **Use workflow from**). The attestations then record the
+tag, and the `publish-github-release` job attaches the complete file set,
+`SHA256SUMS`, the manifest and any Minisign signatures to a draft GitHub Release,
+so no file has to be downloaded and uploaded again by hand.
+
 The macOS packaging step signs the stripped executables with ad-hoc signatures
 and launches the command-line tools extracted from the final archive. It also
 re-signs `Nito-Qt.app` after the license notices are added, verifies its sealed
@@ -138,8 +159,11 @@ Historical Nito release notes are archived under
    to a tag object, its signature is valid and **Verified**, and its target is
    the qualified commit. The tag-object SHA is expected to differ from the
    target commit SHA.
-4. Publish the approved platform packages and `SHA256SUMS`, plus the checksum's
-   Minisign signature when signing is configured.
+4. Run the release workflow from the signed tag, review the draft GitHub
+   Release it creates, and publish it with the approved platform packages and
+   `SHA256SUMS`, plus the checksum's Minisign signature when signing is
+   configured. Confirm that `gh attestation verify` passes for each attached
+   file.
 5. Publish release notes with the exact commit, workflow provenance, signed-tag
    status and a clear upgrade path.
 6. Reinspect the published asset names, sizes and checksums, and keep the

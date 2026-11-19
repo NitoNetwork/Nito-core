@@ -2019,6 +2019,13 @@ jobs:
       - macos-arm64
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    # id-token, attestations and artifact-metadata let this job create GitHub
+    # build provenance attestations (Sigstore-signed) for the release files.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
 
     steps:
       - name: Select release index stage
@@ -2209,6 +2216,8 @@ jobs:
             echo "Ref: ${GITHUB_REF}"
             echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo "Signing: UNSIGNED"
+            echo "Provenance: GitHub build attestations; verify a file with"
+            echo "  gh attestation verify <file> --repo ${GITHUB_REPOSITORY}"
             echo
             echo "Artifacts:"
             cat expected-artifacts.txt
@@ -2248,6 +2257,23 @@ jobs:
           test -s release-manifest.txt.minisig
           echo "- Signing: \`MINISIGN\` (release index signatures generated)." >> "$GITHUB_STEP_SUMMARY"
 
+      # Build provenance: binds each verified release file, and the index
+      # itself, to this repository, workflow, commit and run. Anyone can check
+      # a download with `gh attestation verify <file> --repo NitoNetwork/Nito-core`.
+      - name: Attest release artifacts
+        if: env.RUN_INDEX == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: release-artifacts/SHA256SUMS
+
+      - name: Attest release index
+        if: env.RUN_INDEX == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            release-artifacts/SHA256SUMS
+            release-artifacts/release-manifest.txt
+
       - name: Upload checksum and manifest
         if: env.RUN_INDEX == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -2269,6 +2295,7 @@ jobs:
             echo "- All expected artifacts were present and non-empty."
             echo "- \`SHA256SUMS\` generated."
             echo "- \`release-manifest.txt\` generated."
+            echo "- Build provenance attestations created for every file in \`SHA256SUMS\`, and for \`SHA256SUMS\` and \`release-manifest.txt\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish-github-release:
