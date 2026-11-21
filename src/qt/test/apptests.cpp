@@ -1,5 +1,5 @@
 // Copyright (c) 2018-2022 The Bitcoin Core developers
-// Copyright (c) 2024 The Nito Core developers
+// Copyright (c) 2024-2026 The Nito Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -11,13 +11,16 @@
 #include <qt/nito.h>
 #include <qt/nitogui.h>
 #include <qt/networkstyle.h>
+#include <qt/nitotheme.h>
 #include <qt/rpcconsole.h>
 #include <test/util/setup_common.h>
+#include <util/chaintype.h>
 #include <validation.h>
 
 #include <QAction>
 #include <QByteArray>
 #include <QColor>
+#include <QImage>
 #include <QLineEdit>
 #include <QPalette>
 #include <QPushButton>
@@ -34,6 +37,7 @@
 
 #include <algorithm>
 #include <array>
+#include <utility>
 #include <cmath>
 
 namespace {
@@ -102,68 +106,14 @@ void TestRpcCommand(RPCConsole* console)
 }
 } // namespace
 
-//! Verify that Nito's light theme is independent of the system palette.
+//! Verify Nito's themes: every network, light and dark, is independent of the
+//! system palette and keeps all text readable.
 void AppTests::paletteTests()
 {
     ApplicationStyleRestorer restore_style{m_app};
 
-    // Reproduce the failure mode: a dark system theme supplies white text,
-    // while Nito replaces the surfaces with light colors.
-    QPalette hostile_palette{m_app.palette()};
-    hostile_palette.setColor(QPalette::Window, QColor{"#101010"});
-    hostile_palette.setColor(QPalette::Base, QColor{"#181818"});
-    hostile_palette.setColor(QPalette::AlternateBase, QColor{"#202020"});
-    hostile_palette.setColor(QPalette::Button, QColor{"#282828"});
-    hostile_palette.setColor(QPalette::WindowText, QColor{"#ffffff"});
-    hostile_palette.setColor(QPalette::Text, QColor{"#ffffff"});
-    hostile_palette.setColor(QPalette::ButtonText, QColor{"#ffffff"});
-    hostile_palette.setColor(QPalette::PlaceholderText, QColor{"#d0d0d0"});
-    hostile_palette.setColor(QPalette::Link, QColor{"#7ab8ff"});
-    hostile_palette.setColor(QPalette::LinkVisited, QColor{"#d0a0ff"});
-    m_app.setStyleSheet(QString{});
-    m_app.setPalette(hostile_palette);
-
-    ApplyNitoAccentStyle(m_app);
-    const QPalette palette{m_app.palette()};
-
-    const QColor normal_text{"#102a43"};
-    const QColor placeholder_text{"#52677a"};
-    const QColor disabled_text{"#5b6f82"};
-    const QColor disabled_button_background{"#edf3f9"};
-    const QColor window{"#f3f8fd"};
-    const QColor base{"#ffffff"};
-    const QColor alternate_base{"#eaf4ff"};
-    const QColor button{"#f8fbff"};
-    const QColor link{"#006bbf"};
-    const QColor visited_link{"#5b4bb7"};
-    const QColor highlight{"#0073cf"};
-    const QColor white{"#ffffff"};
-    const QColor tooltip_base{"#0b1d2e"};
-
-    for (const QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive}) {
-        QCOMPARE(palette.color(group, QPalette::WindowText), normal_text);
-        QCOMPARE(palette.color(group, QPalette::Text), normal_text);
-        QCOMPARE(palette.color(group, QPalette::ButtonText), normal_text);
-        QCOMPARE(palette.color(group, QPalette::PlaceholderText), placeholder_text);
-        QCOMPARE(palette.color(group, QPalette::Link), link);
-        QCOMPARE(palette.color(group, QPalette::LinkVisited), visited_link);
-        QCOMPARE(palette.color(group, QPalette::Window), window);
-        QCOMPARE(palette.color(group, QPalette::Base), base);
-        QCOMPARE(palette.color(group, QPalette::AlternateBase), alternate_base);
-        QCOMPARE(palette.color(group, QPalette::Button), button);
-        QCOMPARE(palette.color(group, QPalette::Highlight), highlight);
-        QCOMPARE(palette.color(group, QPalette::HighlightedText), white);
-        QCOMPARE(palette.color(group, QPalette::ToolTipBase), tooltip_base);
-        QCOMPARE(palette.color(group, QPalette::ToolTipText), white);
-    }
-
-    QCOMPARE(palette.color(QPalette::Disabled, QPalette::WindowText), disabled_text);
-    QCOMPARE(palette.color(QPalette::Disabled, QPalette::Text), disabled_text);
-    QCOMPARE(palette.color(QPalette::Disabled, QPalette::ButtonText), disabled_text);
-    QCOMPARE(palette.color(QPalette::Disabled, QPalette::PlaceholderText), disabled_text);
-    QCOMPARE(palette.color(QPalette::Disabled, QPalette::Link), disabled_text);
-    QCOMPARE(palette.color(QPalette::Disabled, QPalette::LinkVisited), disabled_text);
-    QCOMPARE(palette.color(QPalette::Disabled, QPalette::Button), disabled_button_background);
+    // Mainnet in light mode keeps Nito's established blue.
+    QCOMPARE(MakeNitoTheme(ChainType::MAIN, /*dark=*/false).accent, QColor{"#0073cf"});
 
     struct ContrastExpectation {
         QPalette::ColorRole foreground;
@@ -182,33 +132,130 @@ void AppTests::paletteTests()
         ContrastExpectation{QPalette::ToolTipText, QPalette::ToolTipBase, "tooltip text"},
     };
 
-    for (const QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive, QPalette::Disabled}) {
-        for (const ContrastExpectation& expectation : contrast_expectations) {
-            const QColor foreground{palette.color(group, expectation.foreground)};
-            const QColor background{palette.color(group, expectation.background)};
-            const double ratio{ContrastRatio(foreground, background)};
-            const QByteArray message{QStringLiteral("Palette group %1 %2 contrast is %3:1; expected at least 4.5:1")
-                                         .arg(static_cast<int>(group))
-                                         .arg(QString::fromLatin1(expectation.description))
-                                         .arg(ratio, 0, 'f', 2)
-                                         .toUtf8()};
-            QVERIFY2(ratio >= 4.5, message.constData());
+    for (const ChainType chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST}) {
+        for (const bool dark : {false, true}) {
+            const NitoTheme theme{MakeNitoTheme(chain, dark)};
+            const QString name{QStringLiteral("%1 %2").arg(QString::fromStdString(ChainTypeToString(chain)), dark ? "dark" : "light")};
+
+            // Reproduce the original failure mode: a system palette of the
+            // opposite brightness must not leak into Nito's theme.
+            const QColor hostile_background{dark ? "#ffffff" : "#101010"};
+            const QColor hostile_text{dark ? "#000000" : "#ffffff"};
+            QPalette hostile_palette{m_app.palette()};
+            for (const QPalette::ColorRole role : {QPalette::Window, QPalette::Base, QPalette::AlternateBase, QPalette::Button}) {
+                hostile_palette.setColor(role, hostile_background);
+            }
+            for (const QPalette::ColorRole role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText, QPalette::PlaceholderText, QPalette::Link, QPalette::LinkVisited}) {
+                hostile_palette.setColor(role, hostile_text);
+            }
+            m_app.setStyleSheet(QString{});
+            m_app.setPalette(hostile_palette);
+
+            ApplyNitoTheme(m_app, theme);
+            const QPalette palette{m_app.palette()};
+
+            for (const QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive}) {
+                QCOMPARE(palette.color(group, QPalette::Window), theme.window);
+                QCOMPARE(palette.color(group, QPalette::Base), theme.base);
+                QCOMPARE(palette.color(group, QPalette::Button), theme.button);
+                QCOMPARE(palette.color(group, QPalette::WindowText), theme.text);
+                QCOMPARE(palette.color(group, QPalette::Text), theme.text);
+                QCOMPARE(palette.color(group, QPalette::ButtonText), theme.text);
+                QCOMPARE(palette.color(group, QPalette::Highlight), theme.accent);
+            }
+            QCOMPARE(palette.color(QPalette::Disabled, QPalette::ButtonText), theme.text_disabled);
+            QCOMPARE(palette.color(QPalette::Disabled, QPalette::Button), theme.button_disabled);
+            QVERIFY2((theme.window.lightness() < 128) == dark, qPrintable(name + ": window brightness doesn't match the mode"));
+
+            for (const QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive, QPalette::Disabled}) {
+                for (const ContrastExpectation& expectation : contrast_expectations) {
+                    const double ratio{ContrastRatio(palette.color(group, expectation.foreground), palette.color(group, expectation.background))};
+                    const QByteArray message{QStringLiteral("%1: palette group %2 %3 contrast is %4:1; expected at least 4.5:1")
+                                                 .arg(name)
+                                                 .arg(static_cast<int>(group))
+                                                 .arg(QString::fromLatin1(expectation.description))
+                                                 .arg(ratio, 0, 'f', 2)
+                                                 .toUtf8()};
+                    QVERIFY2(ratio >= 4.5, message.constData());
+                }
+            }
+
+            // Colours used only by the style sheet.
+            const std::array<std::pair<std::pair<QColor, QColor>, const char*>, 7> sheet_contrasts{{
+                {{theme.on_accent, theme.progress_trough}, "progress bar text on the empty part"},
+                {{theme.on_accent, theme.accent}, "progress bar text on the filled part"},
+                {{theme.accent_strong, theme.accent_soft}, "selected tool button"},
+                {{theme.accent_strong, theme.surface}, "selected tab and group title"},
+                {{theme.text_muted, theme.window}, "unselected tab"},
+                {{theme.on_accent, theme.accent}, "checked button and network badge"},
+                {{theme.text, theme.header}, "table header"},
+            }};
+            for (const auto& [colors, description] : sheet_contrasts) {
+                const double ratio{ContrastRatio(colors.first, colors.second)};
+                QVERIFY2(ratio >= 4.5, qPrintable(QStringLiteral("%1: %2 contrast is %3:1; expected at least 4.5:1").arg(name, description).arg(ratio, 0, 'f', 2)));
+            }
+
+            // Warning icons are graphics, so they need WCAG's 3:1 for non-text contrast.
+            const double warning_ratio{ContrastRatio(NitoWarningColor(palette), theme.window)};
+            QVERIFY2(warning_ratio >= 3.0, qPrintable(QStringLiteral("%1: warning icon contrast is %2:1; expected at least 3:1").arg(name).arg(warning_ratio, 0, 'f', 2)));
+
+            // Every colour placeholder in the style sheet was filled in.
+            QVERIFY2(!m_app.styleSheet().contains(QRegularExpression{QStringLiteral("\\{[a-z_]+\\}")}), qPrintable(name + ": unfilled style sheet colour"));
+
+            // Exercise the real style-sheet path as well: disabled buttons use
+            // the disabled palette foreground on their styled background.
+            QPushButton disabled_button{QStringLiteral("Disabled")};
+            disabled_button.setEnabled(false);
+            disabled_button.ensurePolished();
+            QStyleOptionButton option;
+            option.initFrom(&disabled_button);
+            const double disabled_button_contrast{
+                ContrastRatio(option.palette.color(QPalette::Disabled, QPalette::ButtonText),
+                              option.palette.color(QPalette::Disabled, QPalette::Button))};
+            QVERIFY2(disabled_button_contrast >= 4.5, qPrintable(QStringLiteral("%1: styled disabled button contrast is %2:1 (%3 on %4); expected at least 4.5:1")
+                                                                     .arg(name)
+                                                                     .arg(disabled_button_contrast, 0, 'f', 2)
+                                                                     .arg(option.palette.color(QPalette::Disabled, QPalette::ButtonText).name(),
+                                                                          option.palette.color(QPalette::Disabled, QPalette::Button).name())));
         }
     }
 
-    // Exercise the real style-sheet path as well: disabled buttons use the
-    // disabled palette foreground on their styled background.
-    QPushButton disabled_button{QStringLiteral("Disabled")};
-    disabled_button.setEnabled(false);
-    disabled_button.ensurePolished();
-    QStyleOptionButton option;
-    option.initFrom(&disabled_button);
-    QCOMPARE(option.palette.color(QPalette::Disabled, QPalette::ButtonText), disabled_text);
-    QCOMPARE(option.palette.color(QPalette::Disabled, QPalette::Button), disabled_button_background);
-    const double disabled_button_contrast{
-        ContrastRatio(option.palette.color(QPalette::Disabled, QPalette::ButtonText),
-                      option.palette.color(QPalette::Disabled, QPalette::Button))};
-    QVERIFY2(disabled_button_contrast >= 4.5, "Styled disabled button contrast must be at least 4.5:1");
+#ifdef Q_OS_MACOS
+    // On macOS the Dock icon sits in a rounded square in a dark shade of the
+    // network's colour: transparent outside the square, opaque inside it.
+    for (const ChainType chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST}) {
+        const QScopedPointer<const NetworkStyle> style{NetworkStyle::instantiate(chain)};
+        QVERIFY(style);
+        const QImage icon{style->getTrayAndWindowIcon().pixmap(QSize{1024, 1024}).toImage().convertToFormat(QImage::Format_ARGB32)};
+        QCOMPARE(icon.size(), QSize(1024, 1024));
+        const QString name{QString::fromStdString(ChainTypeToString(chain))};
+        QVERIFY2(qAlpha(icon.pixel(20, 20)) == 0, qPrintable(name + ": icon corner should be transparent"));
+        QVERIFY2(qAlpha(icon.pixel(512, 512)) == 255, qPrintable(name + ": icon centre should be opaque"));
+        // Inside the square, left of the N: the background.
+        const QColor background{icon.pixel(150, 512)};
+        QVERIFY2(background.lightnessF() < 0.25f, qPrintable(name + ": icon background should be dark, is " + background.name()));
+        const float hue_gap{std::abs(background.hslHueF() - NitoNetworkAccent(chain).hslHueF())};
+        QVERIFY2(std::min(hue_gap, 1.0f - hue_gap) < 0.05f, qPrintable(name + ": icon background should be a shade of the network colour, is " + background.name()));
+    }
+#else
+    // Elsewhere the window and taskbar icon is the plain N, cropped so it
+    // fills the icon instead of sitting in a wide empty margin.
+    for (const ChainType chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST}) {
+        const QScopedPointer<const NetworkStyle> style{NetworkStyle::instantiate(chain)};
+        QVERIFY(style);
+        const QImage icon{style->getTrayAndWindowIcon().pixmap(QSize{256, 256}).toImage().convertToFormat(QImage::Format_ARGB32)};
+        int top{icon.height()}, bottom{-1};
+        for (int y = 0; y < icon.height(); ++y) {
+            for (int x = 0; x < icon.width(); ++x) {
+                if (qAlpha(icon.pixel(x, y)) < 24) continue;
+                top = std::min(top, y);
+                bottom = std::max(bottom, y);
+            }
+        }
+        const QString name{QString::fromStdString(ChainTypeToString(chain))};
+        QVERIFY2(bottom - top + 1 >= icon.height() * 9 / 10, qPrintable(name + ": icon should fill at least 90% of its height"));
+    }
+#endif
 }
 
 //! Entry point for NitoApplication tests.

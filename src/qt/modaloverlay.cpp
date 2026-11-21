@@ -12,6 +12,7 @@
 
 #include <chainparams.h>
 #include <qt/guiutil.h>
+#include <qt/nitotheme.h>
 
 #include <QEasingCurve>
 #include <QPropertyAnimation>
@@ -36,6 +37,7 @@ ModalOverlay::ModalOverlay(bool enable_wallet, QWidget* parent)
         ui->infoTextStrong->setText(tr("%1 is currently syncing.  It will download headers and blocks from peers and validate them until reaching the tip of the block chain.").arg(PACKAGE_NAME));
     }
     setLocalIndexProgress(QString(), false);
+    UpdateWarningIcon();
 
     m_animation.setTargetObject(this);
     m_animation.setPropertyName("pos");
@@ -78,7 +80,28 @@ bool ModalOverlay::event(QEvent* ev) {
             raise();
         }
     }
+    else if (ev->type() == QEvent::PaletteChange) {
+        UpdateWarningIcon();
+    }
     return QWidget::event(ev);
+}
+
+//! Draw the warning icon in the theme's warning colour, so it shows in light and dark mode.
+void ModalOverlay::UpdateWarningIcon()
+{
+    QImage img{QStringLiteral(":/icons/warning")};
+    img = img.convertToFormat(QImage::Format_ARGB32);
+    const QColor color{NitoWarningColor(palette())};
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 0; x < img.width(); ++x) {
+            img.setPixel(x, y, qRgba(color.red(), color.green(), color.blue(), qAlpha(img.pixel(x, y))));
+        }
+    }
+    const QPixmap pixmap{QPixmap::fromImage(img)};
+    QIcon icon;
+    icon.addPixmap(pixmap, QIcon::Normal);
+    icon.addPixmap(pixmap, QIcon::Disabled);
+    ui->warningIcon->setIcon(icon);
 }
 
 void ModalOverlay::setKnownBestHeight(int count, const QDateTime& blockDate, bool presync)

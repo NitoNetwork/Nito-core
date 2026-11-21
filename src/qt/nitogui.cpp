@@ -598,6 +598,18 @@ void NitoGUI::createToolBars()
         appToolBar = toolbar;
         toolbar->setMovable(false);
         toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+
+        // Nito branding: the network's icon and the product name
+        QLabel* brand_icon = new QLabel();
+        brand_icon->setObjectName(QStringLiteral("nitoBrandIcon"));
+        brand_icon->setPixmap(m_network_style->getAppIcon().pixmap(QSize(28, 28), devicePixelRatioF()));
+        brand_icon->setContentsMargins(4, 0, 2, 0);
+        toolbar->addWidget(brand_icon);
+        QLabel* brand_name = new QLabel(QStringLiteral(PACKAGE_NAME));
+        brand_name->setObjectName(QStringLiteral("nitoBrandName"));
+        toolbar->addWidget(brand_name);
+        toolbar->addSeparator();
+
         toolbar->addAction(overviewAction);
         toolbar->addAction(sendCoinsAction);
         toolbar->addAction(receiveCoinsAction);
@@ -608,6 +620,24 @@ void NitoGUI::createToolBars()
         QWidget *spacer = new QWidget();
         spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         toolbar->addWidget(spacer);
+
+        // Say clearly when this isn't mainnet
+        QString network_name;
+        switch (m_network_style->getChainType()) {
+        case ChainType::TESTNET: network_name = QStringLiteral("Testnet"); break;
+        case ChainType::SIGNET: network_name = QStringLiteral("Signet"); break;
+        case ChainType::REGTEST: network_name = QStringLiteral("Regtest"); break;
+        case ChainType::MAIN: break;
+        }
+        if (!network_name.isEmpty()) {
+            QLabel* network_badge = new QLabel(network_name.toUpper());
+            network_badge->setObjectName(QStringLiteral("nitoNetworkBadge"));
+            network_badge->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+            network_badge->setAlignment(Qt::AlignCenter);
+            //: %1 is the network name, such as Testnet
+            network_badge->setToolTip(tr("This wallet is running on %1. Its coins have no value.").arg(network_name));
+            toolbar->addWidget(network_badge);
+        }
 
         m_wallet_selector = new QComboBox();
         m_wallet_selector->setSizeAdjustPolicy(QComboBox::AdjustToContents);

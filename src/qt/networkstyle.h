@@ -8,6 +8,7 @@
 
 #include <util/chaintype.h>
 
+#include <QColor>
 #include <QIcon>
 #include <QPixmap>
 #include <QString>
@@ -23,14 +24,19 @@ public:
     const QIcon &getAppIcon() const { return appIcon; }
     const QIcon &getTrayAndWindowIcon() const { return trayAndWindowIcon; }
     const QString &getTitleAddText() const { return titleAddText; }
+    ChainType getChainType() const { return chain; }
+    //! The network's accent colour (mainnet blue, testnet green, signet purple, regtest red)
+    const QColor &getAccentColor() const { return accent; }
 
 private:
-    NetworkStyle(const QString &appName, const int iconColorHueShift, const int iconColorSaturationReduction, const char *titleAddText);
+    NetworkStyle(const QString &appName, ChainType chain, const char *titleAddText);
 
     QString appName;
     QIcon appIcon;
     QIcon trayAndWindowIcon;
     QString titleAddText;
+    ChainType chain;
+    QColor accent;
 };
 
 #endif // BITCOIN_QT_NETWORKSTYLE_H
