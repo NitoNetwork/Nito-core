@@ -74,13 +74,19 @@ The binary queries these DNS seed names:
 
 - `t1.testnet.nito.network`;
 - `t2.testnet.nito.network`;
-- `t3.testnet.nito.network`;
-- `testnet-seed.nito.network`.
+- `testnetseed.nito.tools` (community operated).
 
-No fixed seed address is embedded until the new network has stable public
-bootstrap nodes. A shared testnet can operate only while at least one reachable
-V4 testnet node accepts connections. If automatic discovery has no reachable
-peer, start with a current community endpoint:
+The same three bootstrap nodes are also embedded as fixed-seed fallbacks:
+
+- `87.106.216.17:8840`;
+- `217.160.149.211:8840`;
+- `88.198.163.206:8840`.
+
+The project-operated `t1` and `t2` bootstrap nodes are wallet-disabled,
+non-mining infrastructure nodes. Their RPC endpoints are not public. DNS seeds
+remain the preferred discovery path; fixed seeds are used only when DNS does
+not provide usable peers. If automatic discovery has no reachable peer, start
+with a current community endpoint:
 
 ```bash
 nitod -testnet -addnode=<host>:8840 -daemon

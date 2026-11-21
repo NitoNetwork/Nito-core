@@ -131,8 +131,11 @@ public:
         assert(genesis.hashMerkleRoot == uint256S("0x90b863a727d4abf9838e8df221052e418d70baf996e2cea3211e8df4da1bb131"));
 
 
+        // DNS seed operators should follow doc/dnsseed-policy.md and include a
+        // contact handle when adding a community-operated seed.
         vSeeds.emplace_back("seed.nito.network.");
         vSeeds.emplace_back("seed.nitopool.online.");
+        vSeeds.emplace_back("seed.nito.tools."); // @saltedlolly
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,0);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,5);
@@ -256,11 +259,11 @@ public:
 
         vFixedSeeds.clear();
         vSeeds.clear();
-        // nodes with support for servicebits filtering should be at the top
+        // DNS seed operators should follow doc/dnsseed-policy.md and include a
+        // contact handle when adding a community-operated seed.
         vSeeds.emplace_back("t1.testnet.nito.network.");
         vSeeds.emplace_back("t2.testnet.nito.network.");
-        vSeeds.emplace_back("t3.testnet.nito.network.");
-        vSeeds.emplace_back("testnet-seed.nito.network.");
+        vSeeds.emplace_back("testnetseed.nito.tools."); // @saltedlolly
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,111);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1,196);

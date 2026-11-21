@@ -14,6 +14,7 @@
 #include <util/chaintype.h>
 #include <validation.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,11 @@ BOOST_AUTO_TEST_CASE(v3_chain_compatibility_parameters)
     BOOST_CHECK_EQUAL(main_params->GenesisBlock().GetHash(),
                       uint256S("0x00000000103d1acbedc9bb8ff2af8cb98a751965e784b4e1f978f3d5544c6c3c"));
     BOOST_CHECK(main_params->MessageStart() == MessageStartChars({0xb6, 0xc0, 0xc0, 0xb6}));
+    BOOST_CHECK(main_params->DNSSeeds() == std::vector<std::string>({
+        "seed.nito.network.",
+        "seed.nitopool.online.",
+        "seed.nito.tools.",
+    }));
 
     const auto testnet_params{CreateChainParams(*m_node.args, ChainType::TESTNET)};
     BOOST_CHECK_EQUAL(testnet_params->GetConsensus().nLegacyP2SHActivationHeight, 0);
@@ -51,12 +57,15 @@ BOOST_AUTO_TEST_CASE(v3_chain_compatibility_parameters)
     BOOST_CHECK_EQUAL(testnet_params->Bech32HRP(), "tn");
     BOOST_CHECK(testnet_params->MessageStart() == MessageStartChars({0xcd, 0x9b, 0x72, 0x1a}));
     BOOST_CHECK(testnet_params->MessageStart() != MessageStartChars({0xb6, 0xb6, 0xb6, 0xdb}));
-    BOOST_CHECK(testnet_params->FixedSeeds().empty());
+    BOOST_CHECK(testnet_params->FixedSeeds() == std::vector<uint8_t>({
+        0x01, 0x04, 0x57, 0x6a, 0xd8, 0x11, 0x22, 0x88,
+        0x01, 0x04, 0xd9, 0xa0, 0x95, 0xd3, 0x22, 0x88,
+        0x01, 0x04, 0x58, 0xc6, 0xa3, 0xce, 0x22, 0x88,
+    }));
     BOOST_CHECK(testnet_params->DNSSeeds() == std::vector<std::string>({
         "t1.testnet.nito.network.",
         "t2.testnet.nito.network.",
-        "t3.testnet.nito.network.",
-        "testnet-seed.nito.network.",
+        "testnetseed.nito.tools.",
     }));
     BOOST_CHECK_EQUAL(testnet_params->Checkpoints().GetHeight(), 0);
     BOOST_CHECK_EQUAL(testnet_params->GenesisBlock().GetHash(),
