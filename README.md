@@ -4,17 +4,17 @@
   <img src="doc/nito/assets/nito-v4-header.svg" alt="Nito Core v4 - Nito x Bech32x (Orchard)" width="100%">
 </p>
 
-Nito Core v4.0 is the current full node and wallet for Nito.network. It
+Nito Core V4 is the reference full node and wallet for Nito.network. It
 preserves the existing transparent chain, wallet and SHA-256 mining interfaces
 and adds opt-in Bech32x private transactions backed by Orchard cryptography.
 
 Download official binaries from the
 [Nito Core releases](https://github.com/NitoNetwork/Nito-core/releases).
 GitHub provides source archives generated from the signed release tag. The
-`v4.0` branch contains the maintained V4 source line.
+default branch contains the maintained V4 source line.
 
 
-## Major Additions In 4.0.0
+## Major V4 Additions
 
 - **Bech32x and Orchard:** opt-in private receive and send flows, with explicit
   private funding and a dedicated Orchard index. See the
@@ -47,7 +47,7 @@ coinbase format.
 
 ## Download And Verify
 
-Obtain Nito Core 4.0.1 from the
+Obtain a Nito Core V4 release from the
 [official release page](https://github.com/NitoNetwork/Nito-core/releases) and
 verify the selected file against the accompanying `SHA256SUMS`.
 
@@ -55,6 +55,29 @@ Official Nito Core release tags are annotated and cryptographically signed and
 must display GitHub's **Verified** status. The tag signature authenticates the
 tag and its source commit; it does not replace checksum verification of the
 downloaded packages.
+
+Releases published under the current signing policy also include
+`SHA256SUMS.minisig`. Before trusting the checksum file, confirm that the
+repository key and the independently hosted
+[official Nito.network public key](https://nito.network/security/nito-core-release.pub)
+both have key ID `D060C20B3417848D`, then verify the detached signature:
+
+```bash
+minisign -Vm SHA256SUMS \
+  -x SHA256SUMS.minisig \
+  -P RWSNhBc0C8Jg0H6yw7+V3qiCv/k/7NZox9P9oIGV/veXmCUrI6Bmn9oJ
+```
+
+The repository key is
+[`contrib/release/nito-core-release.pub`](contrib/release/nito-core-release.pub).
+Successful verification must report the trusted comment
+`Nito Core vX.Y.Z SHA256SUMS` for the release being checked.
+A key downloaded only from the same GitHub Release is not an independent
+authentication path. Some earlier V4 releases predate this detached
+checksum-signing policy and therefore do not include `SHA256SUMS.minisig`.
+
+After authenticating the checksum index when its detached signature is
+available, verify the selected package.
 
 Linux:
 
@@ -65,13 +88,13 @@ sha256sum --ignore-missing -c SHA256SUMS
 macOS:
 
 ```bash
-shasum -a 256 nito-4.0.1-arm64-apple-darwin.dmg
+shasum -a 256 nito-X.Y.Z-arm64-apple-darwin.dmg
 ```
 
 Windows PowerShell:
 
 ```powershell
-Get-FileHash .\nito-4.0.1-win64.zip -Algorithm SHA256
+Get-FileHash .\nito-X.Y.Z-win64.zip -Algorithm SHA256
 ```
 
 Compare the complete reported hash with the matching line in `SHA256SUMS`.
@@ -85,14 +108,16 @@ release workflow and the release tag:
 gh attestation verify nito-X.Y.Z-x86_64-linux-gnu.tar.gz \
   --repo NitoNetwork/Nito-core \
   --signer-workflow NitoNetwork/Nito-core/.github/workflows/build-release.yml \
-  --source-ref refs/tags/vX.Y.Z
+  --source-ref refs/tags/vX.Y.Z \
+  --source-digest FULL_SIGNED_TAG_TARGET_SHA
 ```
 
-Replace `X.Y.Z` with the release version and compare the reported source commit
-with the target of the verified signed tag. Earlier releases have no
-attestations, so this check fails for them. An attestation proves where matching
-bytes were built; it does not by itself prove reproducibility or maintainer
-approval.
+Replace `X.Y.Z` with the release version and replace
+`FULL_SIGNED_TAG_TARGET_SHA` with the complete commit SHA obtained by
+independently verifying and peeling the signed annotated tag. Earlier releases
+have no attestations, so this check fails for them. An attestation proves where
+matching bytes were built; it does not by itself prove reproducibility or
+maintainer approval.
 
 Portable archives contain a single top-level `bin/` directory. Executables,
 `LICENSE.txt` and the consolidated `THIRD_PARTY_LICENSES.txt` are kept directly
@@ -282,5 +307,6 @@ Testnet coins have no value. Orchard is active from testnet genesis. See the
 
 Nito Core is released under the MIT license. See [LICENSE](LICENSE) and
 [COPYING](COPYING). Third-party components retain their own notices and license
-terms. Platform packages include the applicable consolidated notices; see
+terms. Platform packages include the applicable consolidated notices. Matching
+source and dependency-source instructions are documented in
 [release sources and third-party notices](doc/release-sources.md).

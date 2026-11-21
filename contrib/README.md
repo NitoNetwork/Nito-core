@@ -1,6 +1,12 @@
 Repository Tools
 ---------------------
 
+> **Nito Core v4 release verification:** the inherited Guix/GPG
+> `SHA256SUMS.asc` tooling below is not the official v4 release path. Verify v4
+> downloads with `SHA256SUMS`, the detached Minisign signature and constrained
+> GitHub provenance as documented in the repository
+> [README](/README.md#download-and-verify).
+
 ### [Developer tools](/contrib/devtools) ###
 Specific tools for developers working on this repository.
 Additional upstream tools, including the `github-merge.py` script, are available in the [Bitcoin Core maintainer-tools](https://github.com/bitcoin-core/bitcoin-maintainer-tools) repository.

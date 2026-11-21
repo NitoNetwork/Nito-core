@@ -53,6 +53,8 @@ jobs:
       run_index: ${{ steps.plan.outputs.run_index }}
       run_package: ${{ steps.plan.outputs.run_package }}
       build_scope: ${{ steps.plan.outputs.build_scope }}
+      release_tag_object: ${{ steps.signed-tag.outputs.tag_object }}
+      release_tag_commit: ${{ steps.signed-tag.outputs.tag_commit }}
 
     steps:
       - name: Describe release plan
@@ -158,6 +160,13 @@ jobs:
 
           if list_has "$stages" package || list_has "$stages" upload || list_has "$stages" index; then run_package=true; else run_package=false; fi
 
+          if [ "${GITHUB_REPOSITORY}" = "NitoNetwork/Nito-core" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            if [ "$targets" != "all" ] || [ "$stages" != "all" ] || [ "$build_scope" != "all" ]; then
+              echo "::error title=Incomplete official release::Public tagged releases require targets=all, stages=all and build_scope=all."
+              exit 1
+            fi
+          fi
+
           {
             echo "run_package=${run_package}"
             echo "target_linux=${target_linux}"
@@ -201,6 +210,25 @@ jobs:
             echo "Later stages automatically run their prerequisites. For example, selecting package also runs depends, configure, build and binary verification for the selected targets."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Checkout signed public release tag
+        if: github.repository == 'NitoNetwork/Nito-core' && github.ref_type == 'tag'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify signed public release tag
+        id: signed-tag
+        if: github.repository == 'NitoNetwork/Nito-core' && github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash contrib/release/verify-release-tag.sh \
+            "${GITHUB_REF_NAME}" \
+            "${VERSION}" \
+            "${GITHUB_SHA}" \
+            contrib/release/nito-core-tag-signers
+
   release-sources:
     name: Source archive and license notices
     needs: preflight
@@ -214,7 +242,9 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Verify binary notice consolidation
         if: needs.preflight.outputs.run_package == 'true'
-        run: python3 test/lint/lint-release-bundle.py
+        run: |
+          python3 test/lint/lint-release-bundle.py
+          python3 test/lint/test-release-tag-verifier.py
       - name: Cache pinned source archives
         if: needs.preflight.outputs.run_package == 'true'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -2035,7 +2065,9 @@ jobs:
       # Only official tagged public releases receive attestations. Private
       # mirrors and branch validation runs keep the release index usable but do
       # not mint provenance that could be mistaken for an approved release.
-      ATTEST_PROVENANCE: ${{ github.repository == 'NitoNetwork/Nito-core' && github.ref_type == 'tag' }}
+      ATTEST_PROVENANCE: ${{ github.repository == 'NitoNetwork/Nito-core' && github.ref_type == 'tag' && needs.preflight.outputs.run_index == 'true' && needs.preflight.outputs.build_scope == 'all' && needs.preflight.outputs.target_linux_x86_64 == 'true' && needs.preflight.outputs.target_linux_aarch64 == 'true' && needs.preflight.outputs.target_windows == 'true' && needs.preflight.outputs.target_macos == 'true' }}
+      VERIFIED_TAG_OBJECT: ${{ needs.preflight.outputs.release_tag_object }}
+      VERIFIED_TAG_COMMIT: ${{ needs.preflight.outputs.release_tag_commit }}
     # id-token, attestations and artifact-metadata let this job create GitHub
     # build provenance attestations (Sigstore-signed) for the release files.
     permissions:
@@ -2100,29 +2132,30 @@ jobs:
           echo "::group::[NITO.NETWORK] Verify complete artifact set"
           mkdir -p release-artifacts
           cd release-artifacts
-          : > expected-artifacts.txt
+          : > validated-artifacts.txt
+          : > public-artifacts.txt
           : > expected-checksums.txt
-          echo "nito-${VERSION}-sources.tar.gz" >> expected-artifacts.txt
+          echo "nito-${VERSION}-sources.tar.gz" >> validated-artifacts.txt
           echo "nito-${VERSION}-sources.sha256" >> expected-checksums.txt
           if [ "${TARGET_LINUX_X86_64}" = "true" ]; then
-            echo "nito-${VERSION}-x86_64-linux-gnu.tar.gz" >> expected-artifacts.txt
+            echo "nito-${VERSION}-x86_64-linux-gnu.tar.gz" | tee -a validated-artifacts.txt public-artifacts.txt >/dev/null
             echo "nito-${VERSION}-x86_64-linux-gnu.sha256" >> expected-checksums.txt
           fi
           if [ "${TARGET_LINUX_AARCH64}" = "true" ]; then
-            echo "nito-${VERSION}-aarch64-linux-gnu.tar.gz" >> expected-artifacts.txt
+            echo "nito-${VERSION}-aarch64-linux-gnu.tar.gz" | tee -a validated-artifacts.txt public-artifacts.txt >/dev/null
             echo "nito-${VERSION}-aarch64-linux-gnu.sha256" >> expected-checksums.txt
           fi
           if [ "${TARGET_WINDOWS}" = "true" ]; then
-            echo "nito-${VERSION}-win64.zip" >> expected-artifacts.txt
-            echo "nito-${VERSION}-win64-setup.exe" >> expected-artifacts.txt
+            echo "nito-${VERSION}-win64.zip" | tee -a validated-artifacts.txt public-artifacts.txt >/dev/null
+            echo "nito-${VERSION}-win64-setup.exe" | tee -a validated-artifacts.txt public-artifacts.txt >/dev/null
             echo "nito-${VERSION}-win64.sha256" >> expected-checksums.txt
           fi
           if [ "${TARGET_MACOS}" = "true" ]; then
-            echo "nito-${VERSION}-arm64-apple-darwin.tar.gz" >> expected-artifacts.txt
-            echo "nito-${VERSION}-arm64-apple-darwin.dmg" >> expected-artifacts.txt
+            echo "nito-${VERSION}-arm64-apple-darwin.tar.gz" | tee -a validated-artifacts.txt public-artifacts.txt >/dev/null
+            echo "nito-${VERSION}-arm64-apple-darwin.dmg" | tee -a validated-artifacts.txt public-artifacts.txt >/dev/null
             echo "nito-${VERSION}-arm64-apple-darwin.sha256" >> expected-checksums.txt
           fi
-          if ! [ -s expected-artifacts.txt ]; then
+          if ! [ -s public-artifacts.txt ]; then
             echo "::error title=No artifacts selected::The release index stage requires at least one selected target."
             exit 1
           fi
@@ -2135,7 +2168,7 @@ jobs:
               echo "::error title=Missing release artifact::$artifact was not produced or is empty"
               missing=1
             fi
-          done < expected-artifacts.txt
+          done < validated-artifacts.txt
           while IFS= read -r checksum; do
             if [ -s "$checksum" ]; then
               echo "Verified checksum artifact: $checksum"
@@ -2158,7 +2191,7 @@ jobs:
               else
                 echo "- MISSING: \`$artifact\`"
               fi
-            done < expected-artifacts.txt
+            done < validated-artifacts.txt
             echo
             echo "#### Expected checksum artifacts"
             while IFS= read -r checksum; do
@@ -2215,7 +2248,7 @@ jobs:
                 fi
                 ;;
             esac
-          done < expected-artifacts.txt
+          done < validated-artifacts.txt
           echo "::endgroup::"
 
           echo "::group::[NITO.NETWORK] Verify per-target checksums"
@@ -2224,24 +2257,29 @@ jobs:
           done < expected-checksums.txt
           echo "::endgroup::"
 
-          sha256sum $(cat expected-artifacts.txt) > SHA256SUMS
+          sha256sum $(cat public-artifacts.txt) > SHA256SUMS
 
           {
             echo "Nito.network release manifest"
             echo "Version: ${VERSION}"
             echo "Commit: ${GITHUB_SHA}"
             echo "Ref: ${GITHUB_REF}"
+            echo "Tag object: ${VERIFIED_TAG_OBJECT:-not applicable}"
+            echo "Tag target commit: ${VERIFIED_TAG_COMMIT:-not applicable}"
             echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-            echo "Signing: UNSIGNED"
+            echo "Minisign policy: SHA256SUMS.minisig is generated offline and is required before publication"
             if [ "${ATTEST_PROVENANCE}" = "true" ]; then
               echo "Provenance: GitHub build attestations; verify FILE from this exact workflow and ref with"
-              echo "  gh attestation verify FILE --repo ${GITHUB_REPOSITORY} --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/build-release.yml --source-ref ${GITHUB_REF}"
+              echo "  gh attestation verify FILE --repo ${GITHUB_REPOSITORY} --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/build-release.yml --source-ref ${GITHUB_REF} --source-digest ${VERIFIED_TAG_COMMIT}"
             else
               echo "Provenance: not generated because this is not an official tagged Nito Core release build"
             fi
             echo
-            echo "Artifacts:"
-            cat expected-artifacts.txt
+            echo "Validated workflow artifacts:"
+            cat validated-artifacts.txt
+            echo
+            echo "Public payloads:"
+            cat public-artifacts.txt
             echo
             echo "SHA256:"
             cat SHA256SUMS
@@ -2249,34 +2287,6 @@ jobs:
 
           cat release-manifest.txt
           echo "::endgroup::"
-
-      - name: Optionally sign release index with Minisign
-        if: env.RUN_INDEX == 'true'
-        shell: bash
-        env:
-          NITO_RELEASE_SIGNING_KEY: ${{ secrets.NITO_RELEASE_SIGNING_KEY }}
-          NITO_RELEASE_SIGNING_PASSWORD: ${{ secrets.NITO_RELEASE_SIGNING_PASSWORD }}
-        run: |
-          set -euo pipefail
-          cd release-artifacts
-          if [ -z "${NITO_RELEASE_SIGNING_KEY}" ] || [ -z "${NITO_RELEASE_SIGNING_PASSWORD}" ]; then
-            echo "::notice title=Unsigned release index::Minisign secrets are not both configured; SHA256SUMS and release-manifest.txt remain explicitly UNSIGNED."
-            echo "- Signing: \`UNSIGNED\` (Minisign secrets not both configured)." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minisign
-          umask 077
-          signing_key="$(mktemp)"
-          trap 'rm -f "$signing_key"' EXIT
-          printf '%s\n' "$NITO_RELEASE_SIGNING_KEY" > "$signing_key"
-          sed -i 's/^Signing: UNSIGNED$/Signing: MINISIGN/' release-manifest.txt
-          printf '%s\n' "$NITO_RELEASE_SIGNING_PASSWORD" | minisign -S -s "$signing_key" -m SHA256SUMS -x SHA256SUMS.minisig -t "Nito.network ${VERSION} SHA256SUMS"
-          printf '%s\n' "$NITO_RELEASE_SIGNING_PASSWORD" | minisign -S -s "$signing_key" -m release-manifest.txt -x release-manifest.txt.minisig -t "Nito.network ${VERSION} release manifest"
-          test -s SHA256SUMS.minisig
-          test -s release-manifest.txt.minisig
-          echo "- Signing: \`MINISIGN\` (release index signatures generated)." >> "$GITHUB_STEP_SUMMARY"
 
       # Build provenance: binds each verified release file, and the index
       # itself, to this repository, workflow, commit and run. Verification must
@@ -2303,7 +2313,6 @@ jobs:
           path: |
             release-artifacts/SHA256SUMS
             release-artifacts/release-manifest.txt
-            release-artifacts/*.minisig
           if-no-files-found: error
           retention-days: 30
 
@@ -2316,6 +2325,7 @@ jobs:
             echo "- All expected artifacts were present and non-empty."
             echo "- \`SHA256SUMS\` generated."
             echo "- \`release-manifest.txt\` generated."
+            echo "- The workflow never handles the Minisign private key. Sign the final \`SHA256SUMS\` offline and attach \`SHA256SUMS.minisig\` before publishing the draft."
             if [ "${ATTEST_PROVENANCE}" = "true" ]; then
               echo "- Build provenance attestations created for every file in \`SHA256SUMS\`, and for \`SHA256SUMS\` and \`release-manifest.txt\`."
             else
@@ -2324,9 +2334,11 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish-github-release:
-    name: Publish draft GitHub Release
-    needs: release-index
-    if: github.ref_type == 'tag' && needs.release-index.result == 'success'
+    name: Prepare unsigned draft GitHub Release
+    needs:
+      - preflight
+      - release-index
+    if: ${{ github.repository == 'NitoNetwork/Nito-core' && github.ref_type == 'tag' && needs.preflight.outputs.run_index == 'true' && needs.preflight.outputs.build_scope == 'all' && needs.preflight.outputs.target_linux_x86_64 == 'true' && needs.preflight.outputs.target_linux_aarch64 == 'true' && needs.preflight.outputs.target_windows == 'true' && needs.preflight.outputs.target_macos == 'true' && needs.release-index.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:
@@ -2383,21 +2395,23 @@ jobs:
           path: release-artifacts
           skip-decompress: true
 
-      - name: Show release files
+      - name: Show files available to draft job
         if: env.PUBLISH_RELEASE == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          echo "::group::[NITO.NETWORK] Files attached to draft release"
+          echo "::group::[NITO.NETWORK] Files available to draft job"
           find release-artifacts -maxdepth 1 -type f -print | sort
           echo "::endgroup::"
 
-      - name: Create draft release
+      - name: Create unsigned draft release
         if: env.PUBLISH_RELEASE == 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           draft: true
           prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'ci') || contains(github.ref_name, 'test') }}
+          overwrite_files: false
+          fail_on_unmatched_files: true
           files: |
             release-artifacts/nito-${{ env.VERSION }}-x86_64-linux-gnu.tar.gz
             release-artifacts/nito-${{ env.VERSION }}-aarch64-linux-gnu.tar.gz
@@ -2405,8 +2419,5 @@ jobs:
             release-artifacts/nito-${{ env.VERSION }}-win64-setup.exe
             release-artifacts/nito-${{ env.VERSION }}-arm64-apple-darwin.tar.gz
             release-artifacts/nito-${{ env.VERSION }}-arm64-apple-darwin.dmg
-            release-artifacts/nito-${{ env.VERSION }}-sources.tar.gz
             release-artifacts/SHA256SUMS
-            release-artifacts/release-manifest.txt
-            release-artifacts/*.minisig
           body_path: release-artifacts/release-manifest.txt

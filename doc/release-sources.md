@@ -1,21 +1,15 @@
 # Release sources and third-party notices
 
-Nito Core 4.0.0 binaries are published on the
-[official release page](https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0).
-The corresponding source revision is the annotated, signed `v4.0.0` tag, which
-must display GitHub's **Verified** status. GitHub provides archives generated
-from that tag. The [source-build guide](nito/source-builds.md) covers building
-the exact tag or a later V4 maintenance revision.
-
 Nito Core includes third-party software under its own licenses. The Nito Core
 license in `COPYING` does not replace those licenses. Portable archives keep
 `LICENSE.txt` and `THIRD_PARTY_LICENSES.txt` under their single top-level
-`bin/` directory. The
-release recipes record exact dependency versions, hashes, source locations and
-patches. The release workflow can assemble a dependency-complete source bundle
-with `source-manifest.json` and the detailed notice collection for source-tree
-tools and optional components. The consolidated binary notice is generated from
-the dependency closure for its release platform.
+`bin/` directory. The release workflow also produces an internal
+corresponding-source bundle with a `source-manifest.json` identifying the
+release commit, dependency versions and source archive checksums. That detailed
+bundle is retained as workflow evidence rather than attached to the public
+GitHub Release. Its notice collection also covers source-tree tools and optional
+components. The consolidated binary notice is generated from the dependency
+closure for its release platform.
 
 The graphical application uses Qt, copyright The Qt Company Ltd. and other
 contributors, under the GNU Lesser General Public License version 3. The
@@ -25,41 +19,36 @@ Berkeley DB and the other bundled libraries retain their respective licenses.
 
 ## Obtain the matching source
 
-Clone the official repository and check out the signed tag, or download one of
-GitHub's source archives from the **same release** as your binaries:
+Use GitHub's source archive for the signed release tag:
 
-https://github.com/NitoNetwork/Nito-core/releases/tag/v4.0.0
+https://github.com/NitoNetwork/Nito-core/releases
 
-Confirm that GitHub reports the tag as **Verified** and that it targets commit
-`e3ff5e42b980c792ee5ab790610772a7d9ee8f8a`. The GitHub-generated archives
-contain the tracked Nito Core source for that tag. They do not embed external
-dependency archives or the complete Cargo registry.
-
-For redistribution, use the release tooling described in
-[release-process.md](release-process.md) to assemble the corresponding source
-bundle. It contains:
+The tag must resolve to the verified signed release commit. The repository
+contains the pinned dependency recipes, checksums, patches, Cargo lockfile and
+source-bundle tooling. To assemble the more detailed corresponding-source
+bundle used as workflow evidence, run the documented release-source steps from
+that exact tag. The generated bundle contains:
 
 - Nito Core source, build scripts and dependency patches from the release commit;
 - checksum-verified dependency archives under `depends/sources/`, including Qt;
 - the locked Rust dependencies under `src/private/orchard_ffi/vendor/`;
 - license notices and a source manifest under `release-notices/`.
 
-Keep that corresponding source available whenever redistributing the official
-binaries. The source tooling downloads only the versions pinned by the signed
-release source and verifies their recorded hashes.
+GitHub's automatically generated source archives do not include external
+dependency archives or vendored Rust crates. The pinned recipes download and
+verify those sources, and `contrib/release/source-bundle.py` packages them for
+offline rebuilding and redistribution.
 
 ## Build with modified libraries
 
-Extract GitHub's source archive or check out the signed tag, then install the
-compiler and platform build tools described in `doc/nito/source-builds.md` and
-the appropriate `doc/build-*.md` guide. Platform SDKs and compiler toolchains
-are installed separately. Use the Rust toolchain pinned in
-`.github/workflows/build-release.yml`.
-
-Run builds from the extracted source tree so Cargo discovers the included
-`.cargo/config.toml`. The vendor configuration supplies the locked Rust crate
-sources without contacting the registry. The dependency source archives are
-already in the location used by `depends/`.
+Check out the exact verified release tag and install the compiler and platform
+build tools described in `doc/nito/source-builds.md` and the appropriate
+`doc/build-*.md` guide. Platform SDKs and compiler toolchains are installed
+separately. Use the Rust toolchain pinned in
+`.github/workflows/build-release.yml`. The pinned Depends recipes and Cargo lock
+file retrieve and verify the corresponding dependency sources. To prepare the
+same offline corresponding-source bundle retained by the workflow, run the
+commands documented in [release-process.md](release-process.md#release-build).
 
 To change a library such as Qt, add your change as a patch under
 `depends/patches/qt/` and list it in `depends/packages/qt.mk`. Then build using
@@ -83,10 +72,13 @@ is required to run a modified build.
 
 ## Redistributors
 
-Preserve `bin/LICENSE.txt` and `bin/THIRD_PARTY_LICENSES.txt` with portable binaries. Keep
-`SOURCE.md` and `source-manifest.json` in the matching source archive. The
-Windows installer places the notices in its installation directory; the macOS
-application includes them under `Contents/Resources/`. Publish the
-matching source archive beside the binaries and include it in the release
-checksums. Consult each dependency's license for its conditions; this document
-does not relicense third-party code.
+Preserve `bin/LICENSE.txt` and `bin/THIRD_PARTY_LICENSES.txt` with portable
+binaries. Generate and keep `SOURCE.md` and `source-manifest.json` in the
+matching corresponding-source bundle. The Windows installer places the notices
+in its installation directory; the macOS application includes them under
+`Contents/Resources/`. Publish the matching corresponding source through a
+durable channel when redistributing the binaries. Do not add it to Nito Core's
+official public Release asset list or `SHA256SUMS`; that list is reserved for
+the six platform packages, `SHA256SUMS` and `SHA256SUMS.minisig`. Consult each
+dependency's license for its conditions; this document does not relicense
+third-party code.

@@ -118,6 +118,9 @@ build
 # Previous releases
 releases
 
+# Nito Core release signing secrets must never enter the repository.
+/contrib/release/nito-core-release.key
+
 #lcov
 *.gcno
 *.gcda

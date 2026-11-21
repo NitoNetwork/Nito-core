@@ -27,7 +27,10 @@ Licenses and matching source:
 Portable archives contain only bin\ at their root. LICENSE.txt and
 THIRD_PARTY_LICENSES.txt are inside bin\ with the executables.
 The installer places the same two files in the installation directory.
-The matching nito-VERSION-sources.tar.gz is available with the release downloads.
+Matching source and dependency-source instructions are available in the
+repository at doc/release-sources.md. The detailed corresponding-source bundle
+is retained as release-workflow evidence rather than attached as a public
+release download.
 
 Documentation and source:
 https://github.com/NitoNetwork/Nito-core

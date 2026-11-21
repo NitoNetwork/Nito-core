@@ -16,6 +16,12 @@ then verify the download before installation:
 sha256sum -c SHA256SUMS
 ```
 
+For releases published under the current policy, the Minisign checksum
+signature is mandatory. Some earlier V4 releases predate that policy and do
+not include `SHA256SUMS.minisig`. Follow the complete
+[download verification procedure](../../README.md#download-and-verify) for the
+checks that apply to the selected release.
+
 Windows users can run the installer or extract the zip archive. Linux
 and macOS users can extract the matching archive and run the binaries from
 `bin/`. Portable archives contain only that directory at their root; required

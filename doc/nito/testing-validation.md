@@ -6,13 +6,35 @@ node that starts is not necessarily synchronized or ready for wallet use.
 
 ## Verify Release Downloads
 
-Download the binaries and `SHA256SUMS` from the same release.
-First confirm that the release tag is annotated, displays GitHub's **Verified**
-status and targets the complete source commit named in the release notes. This
-signature authenticates the tag and source revision, not the attached binary
-files.
+Download the binaries, `SHA256SUMS` and, when supplied,
+`SHA256SUMS.minisig` from the same release. First confirm that the release tag
+is annotated, displays GitHub's **Verified** status and targets the complete
+source commit named in the release notes. This signature authenticates the tag
+and source revision, not the attached binary files.
 
-Verify every file you intend to install:
+When a Minisign signature is supplied, obtain the release public key from the
+independently hosted
+[official Nito.network copy](https://nito.network/security/nito-core-release.pub).
+The expected Nito Core key ID is `D060C20B3417848D`:
+
+```bash
+minisign -Vm SHA256SUMS \
+  -x SHA256SUMS.minisig \
+  -P RWSNhBc0C8Jg0H6yw7+V3qiCv/k/7NZox9P9oIGV/veXmCUrI6Bmn9oJ
+```
+
+The repository copy is
+[`contrib/release/nito-core-release.pub`](../../contrib/release/nito-core-release.pub).
+Successful verification must report the trusted comment
+`Nito Core vX.Y.Z SHA256SUMS` for the release being checked.
+Confirm that the official Nito.network copy and the repository file contain the
+same key and ID; a copy obtained only from the Release being checked is not
+independent. When no Minisign signature is supplied, `SHA256SUMS` provides
+integrity checking but is not independently authenticated by the signed source
+tag.
+
+After authenticating the checksum index when its detached signature is
+available, verify every file you intend to install:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
@@ -24,11 +46,7 @@ On macOS, use `shasum -a 256 <file>`. On Windows, use:
 Get-FileHash .\<file> -Algorithm SHA256
 ```
 
-Compare the complete hash with its line in `SHA256SUMS`. When Minisign files
-are supplied, obtain the release public key through an independent official
-channel before verifying them. When no Minisign signature is supplied,
-`SHA256SUMS` provides integrity checking but is not independently authenticated
-by the signed source tag.
+Compare the complete hash with its line in `SHA256SUMS`.
 
 ## Validate A Source Build
 

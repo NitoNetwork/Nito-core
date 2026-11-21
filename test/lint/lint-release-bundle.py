@@ -9,6 +9,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+OFFICIAL_MINISIGN_KEY_URL = (
+    'https://nito.network/security/nito-core-release.pub')
 SPEC = importlib.util.spec_from_file_location(
     'source_bundle', ROOT / 'contrib/release/source-bundle.py')
 SOURCE_BUNDLE = importlib.util.module_from_spec(SPEC)
@@ -102,17 +104,23 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         attest_action = (
             'uses: actions/attest@'
             '1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2')
-        official_tag_condition = (
+        official_attestation_condition = (
             "github.repository == 'NitoNetwork/Nito-core' && "
-            "github.ref_type == 'tag'")
+            "github.ref_type == 'tag' && "
+            "needs.preflight.outputs.run_index == 'true' && "
+            "needs.preflight.outputs.build_scope == 'all' && "
+            "needs.preflight.outputs.target_linux_x86_64 == 'true' && "
+            "needs.preflight.outputs.target_linux_aarch64 == 'true' && "
+            "needs.preflight.outputs.target_windows == 'true' && "
+            "needs.preflight.outputs.target_macos == 'true'")
 
         self.assertEqual(workflow.count(attest_action), 2)
         self.assertIn('id-token: write', workflow)
         self.assertIn('attestations: write', workflow)
         self.assertIn('artifact-metadata: write', workflow)
         self.assertIn(
-            'ATTEST_PROVENANCE: ${{ ' + official_tag_condition + ' }}',
-            workflow)
+            'ATTEST_PROVENANCE: ${{ ' +
+            official_attestation_condition + ' }}', workflow)
         self.assertEqual(
             workflow.count(
                 "if: env.RUN_INDEX == 'true' && "
@@ -126,6 +134,11 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         self.assertIn('validate_version "$VERSION"', workflow)
         self.assertIn('[ "${GITHUB_REF_TYPE}" = "tag" ]', workflow)
         self.assertIn('[ "${GITHUB_REF_NAME}" != "v${VERSION}" ]', workflow)
+        self.assertIn('contrib/release/verify-release-tag.sh', workflow)
+        self.assertIn('release_tag_object:', workflow)
+        self.assertIn('release_tag_commit:', workflow)
+        self.assertIn('Tag object: ${VERIFIED_TAG_OBJECT', workflow)
+        self.assertIn('Tag target commit: ${VERIFIED_TAG_COMMIT', workflow)
 
         for relative_path in ('README.md', 'doc/release-process.md'):
             text = (ROOT / relative_path).read_text(encoding='utf-8')
@@ -134,6 +147,86 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
                 'NitoNetwork/Nito-core/.github/workflows/build-release.yml',
                 text)
             self.assertIn('--source-ref refs/tags/vX.Y.Z', text)
+            self.assertIn('--source-digest', text)
+
+    def test_offline_minisign_contract(self):
+        workflow = self.load_workflow()
+        public_key = (
+            ROOT / 'contrib/release/nito-core-release.pub').read_text(
+                encoding='utf-8')
+        allowed_signers = (
+            ROOT / 'contrib/release/nito-core-tag-signers').read_text(
+                encoding='utf-8')
+        expected_key = (
+            'untrusted comment: minisign public key D060C20B3417848D\n'
+            'RWSNhBc0C8Jg0H6yw7+V3qiCv/k/7NZox9P9oIGV/veXmCUrI6Bmn9oJ\n')
+        expected_signer = (
+            'biigbang0001@users.noreply.github.com '
+            'ssh-ed25519 '
+            'AAAAC3NzaC1lZDI1NTE5AAAAIPVbUAqLwyYdK5fEdaz+J49ODGwXCEh04CiMg3nnwhkp\n')
+
+        self.assertEqual(public_key, expected_key)
+        self.assertEqual(allowed_signers, expected_signer)
+        self.assertNotIn('NITO_RELEASE_SIGNING_KEY', workflow)
+        self.assertNotIn('NITO_RELEASE_SIGNING_PASSWORD', workflow)
+        self.assertNotIn('minisign -S', workflow)
+        self.assertNotIn('release-artifacts/*.minisig', workflow)
+        self.assertIn(
+            'Minisign policy: SHA256SUMS.minisig is generated offline and '
+            'is required before publication', workflow)
+
+        for relative_path in (
+                'README.md', 'doc/release-process.md',
+                'doc/nito/testing-validation.md'):
+            text = (ROOT / relative_path).read_text(encoding='utf-8')
+            self.assertIn('D060C20B3417848D', text)
+            self.assertIn('minisign -Vm', text)
+            self.assertIn('Nito Core vX.Y.Z SHA256SUMS', text)
+            self.assertIn(OFFICIAL_MINISIGN_KEY_URL, text)
+
+    def test_public_release_asset_contract(self):
+        workflow = self.load_workflow()
+        publish_job = workflow.split('  publish-github-release:', 1)[1]
+        official_publish_condition = (
+            "github.repository == 'NitoNetwork/Nito-core' && "
+            "github.ref_type == 'tag' && "
+            "needs.preflight.outputs.run_index == 'true' && "
+            "needs.preflight.outputs.build_scope == 'all' && "
+            "needs.preflight.outputs.target_linux_x86_64 == 'true' && "
+            "needs.preflight.outputs.target_linux_aarch64 == 'true' && "
+            "needs.preflight.outputs.target_windows == 'true' && "
+            "needs.preflight.outputs.target_macos == 'true' && "
+            "needs.release-index.result == 'success'")
+
+        self.assertIn('      - preflight', publish_job)
+        self.assertIn(
+            'if: ${{ ' + official_publish_condition + ' }}', publish_job)
+        self.assertIn(
+            'sha256sum $(cat public-artifacts.txt) > SHA256SUMS', workflow)
+        self.assertIn(
+            'nito-${VERSION}-sources.tar.gz" >> validated-artifacts.txt',
+            workflow)
+        self.assertIn('overwrite_files: false', workflow)
+        self.assertIn('fail_on_unmatched_files: true', workflow)
+
+        draft_files = workflow.split(
+            '- name: Create unsigned draft release', 1)[1].split(
+                'body_path:', 1)[0]
+        expected_assets = (
+            'x86_64-linux-gnu.tar.gz',
+            'aarch64-linux-gnu.tar.gz',
+            'win64.zip',
+            'win64-setup.exe',
+            'arm64-apple-darwin.tar.gz',
+            'arm64-apple-darwin.dmg',
+            'SHA256SUMS',
+        )
+        for asset in expected_assets:
+            self.assertIn(asset, draft_files)
+        for forbidden in (
+                'sources.tar.gz', 'release-manifest.txt', '*.minisig',
+                'diagnostics'):
+            self.assertNotIn(forbidden, draft_files)
 
 
 if __name__ == '__main__':

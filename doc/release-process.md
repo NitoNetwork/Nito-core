@@ -30,8 +30,9 @@ Before publishing artifacts:
 - verify checksums and artifact names;
 - verify Qt artifacts when the release includes GUI binaries;
 - keep debug artifacts separate from end-user downloads;
-- keep the corresponding source available as described in
-  [release-sources.md](release-sources.md);
+- retain the matching `nito-VERSION-sources.tar.gz` and its manifest as workflow
+  evidence rather than attaching them to the public GitHub Release, and keep
+  public source access documented in [release-sources.md](release-sources.md);
 - verify the license notices in each portable archive, installer and app bundle.
 
 Run the final wallet and network checks against executables extracted from the
@@ -51,10 +52,11 @@ the validation record.
 
 The workflow packages the pinned dependency sources and locked Rust crates with
 the Nito source from the same commit. This common source archive and its checksum
-are required by the release index. Portable binary archives have a single
-top-level `bin/` directory; `bin/LICENSE.txt` and
-`bin/THIRD_PARTY_LICENSES.txt` preserve the applicable notices. The source
-manifest stays in the matching source archive. See
+are retained as internal workflow evidence. They are validated with the release
+but are not entries in the public `SHA256SUMS` or public GitHub Release.
+Portable binary archives have a single top-level `bin/` directory;
+`bin/LICENSE.txt` and `bin/THIRD_PARTY_LICENSES.txt` preserve the applicable
+notices. The source manifest stays in the matching source archive. See
 [release-sources.md](release-sources.md) for source access, rebuilding and
 redistribution instructions. Do not replace this archive with GitHub's automatic
 source download, which omits dependencies.
@@ -65,7 +67,7 @@ committed checkout before creating installers:
 ```bash
 make -C depends HOST=x86_64-pc-linux-gnu download-one
 cargo fetch --locked --manifest-path src/private/orchard_ffi/Cargo.toml
-python3 contrib/release/source-bundle.py --version 4.0.1 --output source-release
+python3 contrib/release/source-bundle.py --version X.Y.Z --output source-release
 mkdir -p release
 mkdir -p release/bin
 tar -xOf source-release/release-notices.tar.gz COPYING > release/bin/LICENSE.txt
@@ -84,24 +86,43 @@ artifact. A download from the GitHub Actions artifact panel is therefore the
 final file itself rather than an additional ZIP wrapper. Complete tagged builds
 also attach these files directly to the draft GitHub Release.
 
-The workflow release index contains `SHA256SUMS` and
-`release-manifest.txt`. The public GitHub Release attaches the approved platform
-packages and `SHA256SUMS`; workflow manifests and source-packaging artifacts are
-kept as build evidence rather than duplicated as end-user downloads. GitHub
-provides source archives generated from the signed tag.
+The release-index artifact contains the final public `SHA256SUMS` and the
+internal `release-manifest.txt`. The public draft GitHub Release attaches only
+the six approved platform packages and `SHA256SUMS`; the detailed source bundle
+and manifest remain workflow evidence. GitHub provides source archives generated
+from the signed tag.
 
-To enable optional signing, configure both repository Actions secrets:
+The workflow never receives a Minisign private key or passphrase. After package,
+checksum, signed-tag and provenance qualification, the maintainer signs the
+unchanged `SHA256SUMS` locally. On Windows PowerShell:
 
-- `NITO_RELEASE_SIGNING_KEY`: the complete encrypted Minisign secret-key file;
-- `NITO_RELEASE_SIGNING_PASSWORD`: the password for that key.
+```powershell
+minisign -S `
+  -s "$env:USERPROFILE\.nito-signing\minisign\nito-core-release.key" `
+  -m SHA256SUMS `
+  -x SHA256SUMS.minisig `
+  -t "Nito Core vX.Y.Z SHA256SUMS"
 
-When both are present, the index job creates `SHA256SUMS.minisig` and
-`release-manifest.txt.minisig`; publish the checksum signature with the release.
-If either secret is absent, signing is skipped cleanly and `SHA256SUMS` remains
-explicitly unsigned. The Minisign public key must be distributed through an
-independent authenticated channel, such as the official website and a
-separately controlled announcement; publishing it only in the same GitHub
-Release does not establish authenticity.
+minisign -Vm SHA256SUMS `
+  -x SHA256SUMS.minisig `
+  -p contrib\release\nito-core-release.pub
+```
+
+The expected public-key ID is `D060C20B3417848D`; the canonical repository
+copy is [`contrib/release/nito-core-release.pub`](../contrib/release/nito-core-release.pub).
+Only `SHA256SUMS.minisig` is uploaded to the draft after it verifies. Never put
+the private key or passphrase in Git, GitHub Actions, command arguments,
+environment variables, logs or messages. If any package or `SHA256SUMS` changes,
+discard the detached signature and repeat qualification and signing.
+
+The same public key and ID are independently published as the
+[official Nito.network public key](https://nito.network/security/nito-core-release.pub).
+Immediately before publication, require that URL to return HTTP `200` with the
+`text/plain` media type (parameters such as `charset` are permitted) and that
+its response bytes exactly match
+`contrib/release/nito-core-release.pub`. Stop publication if the independent
+copy is unavailable or differs. Publishing the key only in the repository or
+the GitHub Release does not establish an independent authentication path.
 
 For official tagged builds in `NitoNetwork/Nito-core`, the index job also
 creates GitHub build provenance attestations, with no keys or secrets to
@@ -114,14 +135,32 @@ the file. Constrain verification to the release workflow and signed tag:
 gh attestation verify nito-X.Y.Z-x86_64-linux-gnu.tar.gz \
   --repo NitoNetwork/Nito-core \
   --signer-workflow NitoNetwork/Nito-core/.github/workflows/build-release.yml \
-  --source-ref refs/tags/vX.Y.Z
+  --source-ref refs/tags/vX.Y.Z \
+  --source-digest FULL_SIGNED_TAG_TARGET_SHA
 ```
 
 Replace `X.Y.Z` with the release version. Changed bytes, or the absence of an
 attestation matching the repository, workflow and tag, fail this check. Compare
-the reported source commit with the target of the verified signed tag.
+the reported source commit with `FULL_SIGNED_TAG_TARGET_SHA`, obtained by
+independently verifying and peeling the signed annotated tag.
 Attestations prove provenance, not reproducibility or maintainer approval; they
 do not replace the signed tag or the Minisign signature.
+
+### Reproducible-build roadmap
+
+The inherited `contrib/guix/` tooling is not yet a qualified Nito Core v4
+release path. A separate reproducible-build phase must integrate the pinned
+Rust/Orchard dependency closure and reproduce Nito's actual platform packaging,
+including consolidated license notices, the Windows NSIS installer, and the
+macOS application/archive/DMG outputs. Toolchains and build inputs must remain
+pinned, and any unavoidable platform-signing transformation must be documented
+outside the byte-for-byte comparison boundary.
+
+Do not describe a release as reproducible until at least two independent
+builders have produced byte-identical applicable release payloads and published
+independently signed attestations that agree on those hashes. GitHub provenance,
+the signed release tag and Minisign remain mandatory while this roadmap is
+implemented; none of them alone establishes reproducibility.
 
 Start the final release build from the signed release tag with GitHub CLI or the
 GitHub API. The web interface's **Use workflow from** selector is for branches.
@@ -139,9 +178,11 @@ gh workflow run build-release.yml \
 
 The preflight rejects a tagged build when the tag and version differ. A valid
 tagged run records the tag in each attestation, and the
-`publish-github-release` job attaches the complete file set, `SHA256SUMS`, the
-manifest and any Minisign signatures to a draft GitHub Release, so no file has
-to be downloaded and uploaded again by hand.
+`publish-github-release` job attaches the six platform packages and the final
+`SHA256SUMS` to an unpublished draft GitHub Release. The checksum file is then
+downloaded, verified, signed locally and returned as `SHA256SUMS.minisig`; the
+draft must not be published before that signature is independently verified and
+attached.
 
 The macOS packaging step signs the stripped executables with ad-hoc signatures
 and launches the command-line tools extracted from the final archive. It also
@@ -177,15 +218,22 @@ Historical Nito release notes are archived under
 3. Push the new tag without force. Confirm through GitHub that the ref resolves
    to a tag object, its signature is valid and **Verified**, and its target is
    the qualified commit. The tag-object SHA is expected to differ from the
-   target commit SHA.
-4. Run the release workflow from the signed tag, review the draft GitHub
-   Release it creates, and publish it with the approved platform packages and
-   `SHA256SUMS`, plus the checksum's Minisign signature when signing is
-   configured. Confirm that constrained attestation verification passes for
-   each attached file and reports the signed tag's target commit.
-5. Publish release notes with the exact commit, workflow provenance, signed-tag
+   target commit SHA. The public workflow independently repeats these checks
+   with `contrib/release/verify-release-tag.sh` and the pinned SSH identity in
+   `contrib/release/nito-core-tag-signers`; it fails before building provenance
+   for a lightweight, unsigned, unexpectedly signed or mistargeted tag.
+4. Run the release workflow from the signed tag and review the draft GitHub
+   Release it creates. Confirm that constrained attestation verification passes
+   for every package and `SHA256SUMS` and reports the signed tag's target commit.
+5. Freeze the verified `SHA256SUMS`, have the maintainer sign it locally, verify
+   `SHA256SUMS.minisig` against key `D060C20B3417848D`, and attach the signature
+   without replacing any existing package or checksum asset.
+6. Recheck the signed tag and exact public asset allowlist, then publish only
+   after explicit authorization. The public assets are the six platform
+   packages, `SHA256SUMS` and `SHA256SUMS.minisig`.
+7. Publish release notes with the exact commit, workflow provenance, signed-tag
    status and a clear upgrade path.
-6. Reinspect the published asset names, sizes and checksums, and keep the
+8. Reinspect the published asset names, sizes and checksums, and keep the
    release branch and documentation aligned after any hotfix.
 
 Replacing a published tag is an exceptional, destructive operation. It requires
@@ -193,8 +241,10 @@ explicit authorization and must preserve the qualified target commit unless a
 new build and release qualification are performed. Reverify the tag signature,
 release metadata and every attached asset afterward.
 
-The private release-signing key and its passphrase must remain outside the
-repository and GitHub Actions. A signed tag authenticates the source tag and its
-target commit; it does not sign attached binaries. Users must still verify each
-download against `SHA256SUMS`, and unsigned checksum indexes must remain clearly
-identified as unsigned.
+Both private signing keys and their passphrases must remain outside the
+repository and GitHub Actions. The SSH key signs commits and annotated tags;
+the separate Minisign key signs only the final public `SHA256SUMS`. A signed tag
+authenticates the source tag and target commit but not attached binaries. Every
+future public release must therefore include the verified
+`SHA256SUMS.minisig`; validation builds may remain explicitly unpublished and
+unsigned.
