@@ -10,25 +10,37 @@ Return value is 0 to indicate no error.
 Author: @MarcoFalke
 '''
 
-from subprocess import check_output
+from pathlib import Path
 import re
+from subprocess import PIPE, run
 
 FOLDER_GREP = 'src'
 FOLDER_TEST = 'src/test/'
 REGEX_ARG = r'\b(?:GetArg|GetArgs|GetBoolArg|GetIntArg|GetPathArg|IsArgSet|get_net)\("(-[^"]+)"'
 REGEX_DOC = r'AddArg\("(-[^"=]+?)(?:=|")'
-CMD_ROOT_DIR = '$(git rev-parse --show-toplevel)/{}'.format(FOLDER_GREP)
-CMD_GREP_ARGS = r"git grep --perl-regexp '{}' -- {} ':(exclude){}'".format(REGEX_ARG, CMD_ROOT_DIR, FOLDER_TEST)
-CMD_GREP_WALLET_ARGS = r"git grep --function-context 'void WalletInit::AddWalletOptions' -- {} | grep AddArg".format(CMD_ROOT_DIR)
-CMD_GREP_WALLET_HIDDEN_ARGS = r"git grep --function-context 'void DummyWalletInit::AddWalletOptions' -- {}".format(CMD_ROOT_DIR)
-CMD_GREP_DOCS = r"git grep --perl-regexp '{}' {}".format(REGEX_DOC, CMD_ROOT_DIR)
-# list unsupported, deprecated and duplicate args as they need no documentation
-SET_DOC_OPTIONAL = set(['-h', '-help', '-dbcrashratio', '-forcecompactdb'])
+ROOT = Path(__file__).resolve().parents[2]
+# List intentionally hidden, unsupported, deprecated and duplicate arguments
+# that do not belong in the generated command-line help.
+SET_DOC_OPTIONAL = set([
+    '-h', '-help', '-dbcrashratio', '-forcecompactdb',
+    '-qtkeepwalletsclosed',
+])
+
+
+def git_grep(*args):
+    result = run(
+        ['git', 'grep', *args], cwd=ROOT, stdout=PIPE, stderr=PIPE,
+        check=False)
+    if result.returncode not in (0, 1):
+        raise RuntimeError(result.stderr.decode('utf8'))
+    return result.stdout.decode('utf8').strip()
 
 
 def lint_missing_argument_documentation():
-    used = check_output(CMD_GREP_ARGS, shell=True).decode('utf8').strip()
-    docd = check_output(CMD_GREP_DOCS, shell=True).decode('utf8').strip()
+    used = git_grep(
+        '--perl-regexp', REGEX_ARG, '--', FOLDER_GREP,
+        ':(exclude){}'.format(FOLDER_TEST))
+    docd = git_grep('--perl-regexp', REGEX_DOC, '--', FOLDER_GREP)
 
     args_used = set(re.findall(re.compile(REGEX_ARG), used))
     args_docd = set(re.findall(re.compile(REGEX_DOC), docd)).union(SET_DOC_OPTIONAL)
@@ -46,8 +58,14 @@ def lint_missing_argument_documentation():
 
 
 def lint_missing_hidden_wallet_args():
-    wallet_args = check_output(CMD_GREP_WALLET_ARGS, shell=True).decode('utf8').strip()
-    wallet_hidden_args = check_output(CMD_GREP_WALLET_HIDDEN_ARGS, shell=True).decode('utf8').strip()
+    wallet_args = git_grep(
+        '--function-context', 'void WalletInit::AddWalletOptions', '--',
+        FOLDER_GREP)
+    wallet_args = '\n'.join(
+        line for line in wallet_args.splitlines() if 'AddArg' in line)
+    wallet_hidden_args = git_grep(
+        '--function-context', 'void DummyWalletInit::AddWalletOptions', '--',
+        FOLDER_GREP)
 
     wallet_args = set(re.findall(re.compile(REGEX_DOC), wallet_args))
     wallet_hidden_args = set(re.findall(re.compile(r'    "([^"=]+)'), wallet_hidden_args))
