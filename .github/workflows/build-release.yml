@@ -107,6 +107,12 @@ jobs:
                 ;;
             esac
           }
+          validate_version() {
+            if [[ ! "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$ ]]; then
+              echo "::error title=Invalid release version::$1 must use X.Y.Z or X.Y.Z-suffix format."
+              exit 1
+            fi
+          }
 
           targets="$(normalize_list "${TARGETS}")"
           stages="$(normalize_list "${STAGES}")"
@@ -126,9 +132,15 @@ jobs:
           if [ -z "$build_scope" ]; then
             build_scope=all
           fi
+          validate_version "$VERSION"
           validate_targets "$targets"
           validate_stages "$stages"
           validate_build_scope "$build_scope"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error title=Release tag/version mismatch::Tag ${GITHUB_REF_NAME} must match workflow version v${VERSION}."
+            exit 1
+          fi
 
           if [ "$build_scope" != "all" ]; then
             if list_has "$stages" verify || list_has "$stages" package || list_has "$stages" upload || list_has "$stages" index; then
@@ -2019,6 +2031,18 @@ jobs:
       - macos-arm64
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    env:
+      # Only official tagged public releases receive attestations. Private
+      # mirrors and branch validation runs keep the release index usable but do
+      # not mint provenance that could be mistaken for an approved release.
+      ATTEST_PROVENANCE: ${{ github.repository == 'NitoNetwork/Nito-core' && github.ref_type == 'tag' }}
+    # id-token, attestations and artifact-metadata let this job create GitHub
+    # build provenance attestations (Sigstore-signed) for the release files.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
 
     steps:
       - name: Select release index stage
@@ -2209,6 +2233,12 @@ jobs:
             echo "Ref: ${GITHUB_REF}"
             echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo "Signing: UNSIGNED"
+            if [ "${ATTEST_PROVENANCE}" = "true" ]; then
+              echo "Provenance: GitHub build attestations; verify FILE from this exact workflow and ref with"
+              echo "  gh attestation verify FILE --repo ${GITHUB_REPOSITORY} --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/build-release.yml --source-ref ${GITHUB_REF}"
+            else
+              echo "Provenance: not generated because this is not an official tagged Nito Core release build"
+            fi
             echo
             echo "Artifacts:"
             cat expected-artifacts.txt
@@ -2248,6 +2278,23 @@ jobs:
           test -s release-manifest.txt.minisig
           echo "- Signing: \`MINISIGN\` (release index signatures generated)." >> "$GITHUB_STEP_SUMMARY"
 
+      # Build provenance: binds each verified release file, and the index
+      # itself, to this repository, workflow, commit and run. Verification must
+      # constrain both the signer workflow and the signed release-tag ref.
+      - name: Attest release artifacts
+        if: env.RUN_INDEX == 'true' && env.ATTEST_PROVENANCE == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: release-artifacts/SHA256SUMS
+
+      - name: Attest release index
+        if: env.RUN_INDEX == 'true' && env.ATTEST_PROVENANCE == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            release-artifacts/SHA256SUMS
+            release-artifacts/release-manifest.txt
+
       - name: Upload checksum and manifest
         if: env.RUN_INDEX == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -2269,6 +2316,11 @@ jobs:
             echo "- All expected artifacts were present and non-empty."
             echo "- \`SHA256SUMS\` generated."
             echo "- \`release-manifest.txt\` generated."
+            if [ "${ATTEST_PROVENANCE}" = "true" ]; then
+              echo "- Build provenance attestations created for every file in \`SHA256SUMS\`, and for \`SHA256SUMS\` and \`release-manifest.txt\`."
+            else
+              echo "- Build provenance attestations skipped because this is not an official tagged Nito Core release build."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish-github-release:

@@ -103,6 +103,46 @@ independent authenticated channel, such as the official website and a
 separately controlled announcement; publishing it only in the same GitHub
 Release does not establish authenticity.
 
+For official tagged builds in `NitoNetwork/Nito-core`, the index job also
+creates GitHub build provenance attestations, with no keys or secrets to
+manage: one for every file listed in `SHA256SUMS`, and one each for
+`SHA256SUMS` and `release-manifest.txt`. Each attestation is signed through
+Sigstore and records the repository, workflow, commit, ref and run that built
+the file. Constrain verification to the release workflow and signed tag:
+
+```bash
+gh attestation verify nito-X.Y.Z-x86_64-linux-gnu.tar.gz \
+  --repo NitoNetwork/Nito-core \
+  --signer-workflow NitoNetwork/Nito-core/.github/workflows/build-release.yml \
+  --source-ref refs/tags/vX.Y.Z
+```
+
+Replace `X.Y.Z` with the release version. Changed bytes, or the absence of an
+attestation matching the repository, workflow and tag, fail this check. Compare
+the reported source commit with the target of the verified signed tag.
+Attestations prove provenance, not reproducibility or maintainer approval; they
+do not replace the signed tag or the Minisign signature.
+
+Start the final release build from the signed release tag with GitHub CLI or the
+GitHub API. The web interface's **Use workflow from** selector is for branches.
+For GitHub CLI, use matching tag and version values:
+
+```bash
+gh workflow run build-release.yml \
+  --repo NitoNetwork/Nito-core \
+  --ref vX.Y.Z \
+  -f version=X.Y.Z \
+  -f targets=all \
+  -f stages=all \
+  -f build_scope=all
+```
+
+The preflight rejects a tagged build when the tag and version differ. A valid
+tagged run records the tag in each attestation, and the
+`publish-github-release` job attaches the complete file set, `SHA256SUMS`, the
+manifest and any Minisign signatures to a draft GitHub Release, so no file has
+to be downloaded and uploaded again by hand.
+
 The macOS packaging step signs the stripped executables with ad-hoc signatures
 and launches the command-line tools extracted from the final archive. It also
 re-signs `Nito-Qt.app` after the license notices are added, verifies its sealed
@@ -138,8 +178,11 @@ Historical Nito release notes are archived under
    to a tag object, its signature is valid and **Verified**, and its target is
    the qualified commit. The tag-object SHA is expected to differ from the
    target commit SHA.
-4. Publish the approved platform packages and `SHA256SUMS`, plus the checksum's
-   Minisign signature when signing is configured.
+4. Run the release workflow from the signed tag, review the draft GitHub
+   Release it creates, and publish it with the approved platform packages and
+   `SHA256SUMS`, plus the checksum's Minisign signature when signing is
+   configured. Confirm that constrained attestation verification passes for
+   each attached file and reports the signed tag's target commit.
 5. Publish release notes with the exact commit, workflow provenance, signed-tag
    status and a clear upgrade path.
 6. Reinspect the published asset names, sizes and checksums, and keep the

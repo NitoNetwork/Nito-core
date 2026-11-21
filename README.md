@@ -75,6 +75,25 @@ Get-FileHash .\nito-4.0.1-win64.zip -Algorithm SHA256
 ```
 
 Compare the complete reported hash with the matching line in `SHA256SUMS`.
+
+Official tagged release files built after provenance support was introduced
+carry GitHub build attestations. With the
+[GitHub CLI](https://cli.github.com/), constrain verification to Nito Core's
+release workflow and the release tag:
+
+```bash
+gh attestation verify nito-X.Y.Z-x86_64-linux-gnu.tar.gz \
+  --repo NitoNetwork/Nito-core \
+  --signer-workflow NitoNetwork/Nito-core/.github/workflows/build-release.yml \
+  --source-ref refs/tags/vX.Y.Z
+```
+
+Replace `X.Y.Z` with the release version and compare the reported source commit
+with the target of the verified signed tag. Earlier releases have no
+attestations, so this check fails for them. An attestation proves where matching
+bytes were built; it does not by itself prove reproducibility or maintainer
+approval.
+
 Portable archives contain a single top-level `bin/` directory. Executables,
 `LICENSE.txt` and the consolidated `THIRD_PARTY_LICENSES.txt` are kept directly
 inside it.

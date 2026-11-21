@@ -81,8 +81,12 @@ class ReleaseBundleTest(unittest.TestCase):
 
 
 class ReleaseWorkflowContractTest(unittest.TestCase):
+    def load_workflow(self):
+        path = ROOT / '.github/workflows/build-release.yml'
+        return path.read_text(encoding='utf-8')
+
     def test_binary_archive_contract(self):
-        workflow = (ROOT / '.github/workflows/build-release.yml').read_text(encoding='utf-8')
+        workflow = self.load_workflow()
         self.assertEqual(workflow.count('archive: false'), 8)
         self.assertEqual(workflow.count('skip-decompress: true'), 2)
         self.assertIn('for dmg_attempt in 1 2 3; do', workflow)
@@ -92,6 +96,44 @@ class ReleaseWorkflowContractTest(unittest.TestCase):
         for platform in ('linux', 'windows', 'macos'):
             self.assertIn(
                 'binary/' + platform + '/THIRD_PARTY_LICENSES.txt', workflow)
+
+    def test_release_attestation_contract(self):
+        workflow = self.load_workflow()
+        attest_action = (
+            'uses: actions/attest@'
+            '1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2')
+        official_tag_condition = (
+            "github.repository == 'NitoNetwork/Nito-core' && "
+            "github.ref_type == 'tag'")
+
+        self.assertEqual(workflow.count(attest_action), 2)
+        self.assertIn('id-token: write', workflow)
+        self.assertIn('attestations: write', workflow)
+        self.assertIn('artifact-metadata: write', workflow)
+        self.assertIn(
+            'ATTEST_PROVENANCE: ${{ ' + official_tag_condition + ' }}',
+            workflow)
+        self.assertEqual(
+            workflow.count(
+                "if: env.RUN_INDEX == 'true' && "
+                "env.ATTEST_PROVENANCE == 'true'"),
+            2)
+        self.assertIn(
+            '--signer-workflow '
+            '${GITHUB_REPOSITORY}/.github/workflows/build-release.yml',
+            workflow)
+        self.assertIn('--source-ref ${GITHUB_REF}', workflow)
+        self.assertIn('validate_version "$VERSION"', workflow)
+        self.assertIn('[ "${GITHUB_REF_TYPE}" = "tag" ]', workflow)
+        self.assertIn('[ "${GITHUB_REF_NAME}" != "v${VERSION}" ]', workflow)
+
+        for relative_path in ('README.md', 'doc/release-process.md'):
+            text = (ROOT / relative_path).read_text(encoding='utf-8')
+            self.assertIn(
+                '--signer-workflow '
+                'NitoNetwork/Nito-core/.github/workflows/build-release.yml',
+                text)
+            self.assertIn('--source-ref refs/tags/vX.Y.Z', text)
 
 
 if __name__ == '__main__':
