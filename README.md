@@ -8,6 +8,9 @@ Nito Core V4 is the reference full node and wallet for Nito.network. It
 preserves the existing transparent chain, wallet and SHA-256 mining interfaces
 and adds opt-in Bech32x private transactions backed by Orchard cryptography.
 
+[Official Nito logos](share/branding/README.md) are available for pools,
+exchanges and explorers.
+
 Download official binaries from the
 [Nito Core releases](https://github.com/NitoNetwork/Nito-core/releases).
 GitHub provides source archives generated from the signed release tag. The

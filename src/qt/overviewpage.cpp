@@ -3,8 +3,14 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#if defined(HAVE_CONFIG_H)
+#include <config/nito-config.h>
+#endif
+
 #include <qt/overviewpage.h>
 #include <qt/forms/ui_overviewpage.h>
+
+#include <clientversion.h>
 
 #include <qt/nitounits.h>
 #include <qt/clientmodel.h>
@@ -20,9 +26,13 @@
 #include <QAbstractItemDelegate>
 #include <QApplication>
 #include <QDateTime>
+#include <QHBoxLayout>
+#include <QImage>
+#include <QLabel>
 #include <QPainter>
 #include <QStatusTipEvent>
 #include <QStringList>
+#include <QVBoxLayout>
 
 #include <algorithm>
 #include <map>
@@ -148,6 +158,7 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
     ui->setupUi(this);
 
     updateStatusIcons();
+    setupAboutPanel();
 
     // Recent transactions
     ui->listTransactions->setItemDelegate(txdelegate);
@@ -161,6 +172,93 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
     showOutOfSyncWarning(true);
     connect(ui->labelWalletStatus, &QPushButton::clicked, this, &OverviewPage::outOfSyncWarningClicked);
     connect(ui->labelTransactionsStatus, &QPushButton::clicked, this, &OverviewPage::outOfSyncWarningClicked);
+}
+
+void OverviewPage::setupAboutPanel()
+{
+    auto* panel = new QWidget(this);
+    m_about_panel = panel;
+    panel->setObjectName(QStringLiteral("nitoAboutPanel"));
+    auto* layout = new QHBoxLayout(panel);
+    layout->setContentsMargins(14, 0, 0, 14);
+
+    auto* text = new QVBoxLayout;
+    text->setSpacing(0);
+    m_about_links = new QLabel(panel);
+    m_about_links->setObjectName(QStringLiteral("nitoAboutLinks"));
+    m_about_links->setTextFormat(Qt::RichText);
+    m_about_links->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    m_about_links->setOpenExternalLinks(true);
+    connect(m_about_links, &QLabel::linkHovered, this, [this](const QString& link) {
+        m_hovered_link = link;
+        updateAboutLinks();
+    });
+    text->addStretch();
+    text->addWidget(m_about_links);
+    layout->addLayout(text);
+    layout->addStretch();
+
+    // Below the balances, pushed to the bottom by the column's spacer.
+    ui->verticalLayout_2->addWidget(panel);
+    updateAboutPanel();
+}
+
+void OverviewPage::updateAboutPanel()
+{
+    if (!m_about_links) return;
+
+    // The flat Nito N in the theme's accent colour, faint enough to sit behind text.
+    QImage image{QStringLiteral(":/icons/nito_watermark")};
+    image = image.convertToFormat(QImage::Format_ARGB32);
+    const QColor accent{palette().color(QPalette::Highlight)};
+    const bool dark{palette().color(QPalette::Window).lightnessF() < 0.5};
+    const double opacity{dark ? 0.10 : 0.07};
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const int alpha{static_cast<int>(qAlpha(image.pixel(x, y)) * opacity)};
+            image.setPixel(x, y, qRgba(accent.red(), accent.green(), accent.blue(), alpha));
+        }
+    }
+    m_watermark = QPixmap::fromImage(image);
+    update();
+
+    updateAboutLinks();
+}
+
+void OverviewPage::updateAboutLinks()
+{
+    if (!m_about_links) return;
+    // Version and links on one quiet line in the muted text colour. A link
+    // turns to the normal text colour while the mouse is over it.
+    const QString muted{palette().color(QPalette::PlaceholderText).name()};
+    const QString hover{palette().color(QPalette::WindowText).name()};
+    auto link = [&](const QString& url, const QString& text) {
+        return QStringLiteral("<a href=\"%1\" style=\"color: %2; text-decoration: none;\">%3</a>")
+            .arg(url, url == m_hovered_link ? hover : muted, text.toHtmlEscaped());
+    };
+    const QString separator{QStringLiteral(" &nbsp;&middot;&nbsp; ")};
+    m_about_links->setText(
+        QStringLiteral("<span style=\"font-size: 11px; color: %1;\">").arg(muted) +
+        QString::fromStdString(FormatFullVersion()).toHtmlEscaped() + separator +
+        link(QStringLiteral("https://github.com/NitoNetwork/Nito-core"), tr("GitHub")) + separator +
+        link(QStringLiteral("https://github.com/NitoNetwork/Nito-core/releases"), tr("Releases")) +
+        QStringLiteral("</span>"));
+}
+
+void OverviewPage::paintEvent(QPaintEvent* e)
+{
+    QWidget::paintEvent(e);
+    if (m_watermark.isNull()) return;
+    // Fill the empty space under the balances, anchored to the bottom left corner.
+    const QRect balances{ui->frame->geometry()};
+    const QRect area{QPoint{balances.left(), balances.bottom() + 16}, QPoint{balances.right(), height() - 8}};
+    if (area.height() < 60) return;
+    QSize size{m_watermark.size()};
+    size.scale(area.size() * 0.7, Qt::KeepAspectRatio);
+    const QRect target{QPoint{area.left(), area.bottom() - size.height() + 1}, size};
+    QPainter painter{this};
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    painter.drawPixmap(target, m_watermark);
 }
 
 void OverviewPage::handleTransactionClicked(const QModelIndex &index)
@@ -325,6 +423,7 @@ void OverviewPage::changeEvent(QEvent* e)
 {
     if (e->type() == QEvent::PaletteChange) {
         updateStatusIcons();
+        updateAboutPanel();
     }
 
     QWidget::changeEvent(e);

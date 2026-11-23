@@ -371,6 +371,11 @@ Podpisywanie jest możliwe tylko z adresami typu 'legacy'.</translation>
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>Ten portfel działa w sieci %1. Monety w tej sieci nie mają wartości.</translation>
+        </message>
+        <message>
             <source>&amp;Overview</source>
             <translation>&amp;Przeglad</translation>
         </message>
@@ -1981,6 +1986,14 @@ Wprowadź je dokładnie: inna wartość otwiera inny portfel.</translation>
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Wydania</translation>
+        </message>
         <message>
             <source>Form</source>
             <translation>Formularz</translation>

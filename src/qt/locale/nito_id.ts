@@ -299,6 +299,11 @@ Tanda tangan hanya bisa digunakan dengan tipe alamat 'warisan'</translation>
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>Dompet ini berjalan di jaringan %1. Koinnya tidak memiliki nilai.</translation>
+        </message>
+        <message>
             <source>Connecting to peers…</source>
             <translation>Menghubungkan ke peers...</translation>
         </message>
@@ -1254,6 +1259,14 @@ Masukkan secara persis: nilai yang berbeda membuka dompet yang berbeda.</transla
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Rilis</translation>
+        </message>
         <message>
             <source>Form</source>
             <translation>Formulir</translation>

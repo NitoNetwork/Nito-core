@@ -32,9 +32,6 @@ namespace interfaces {
 class Init;
 } // namespace interfaces
 
-/** Apply Nito's complete light application palette and widget accents. */
-void ApplyNitoAccentStyle(QApplication& app);
-
 
 /** Main Nito application object */
 class NitoApplication: public QApplication

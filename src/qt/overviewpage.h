@@ -8,6 +8,7 @@
 
 #include <interfaces/wallet.h>
 
+#include <QPixmap>
 #include <QString>
 #include <QWidget>
 #include <memory>
@@ -23,6 +24,7 @@ namespace Ui {
 }
 
 QT_BEGIN_NAMESPACE
+class QLabel;
 class QModelIndex;
 QT_END_NAMESPACE
 
@@ -49,9 +51,19 @@ Q_SIGNALS:
 
 protected:
     void changeEvent(QEvent* e) override;
+    void paintEvent(QPaintEvent* e) override;
 
 private:
+    //! Client name, version and links in the bottom left corner.
+    void setupAboutPanel();
+    void updateAboutPanel();
+    void updateAboutLinks();
+
     Ui::OverviewPage *ui;
+    QPixmap m_watermark; //!< large faint Nito N in the bottom left corner
+    QLabel* m_about_links{nullptr};
+    QString m_hovered_link; //!< link under the mouse in the about panel
+    QWidget* m_about_panel{nullptr};
     ClientModel* clientModel{nullptr};
     WalletModel* walletModel{nullptr};
     bool m_privacy{false};

@@ -410,6 +410,11 @@ Solo es posible firmar con direcciones de tipo "legacy".</translation>
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>Este monedero funciona en la red %1. Sus monedas no tienen valor.</translation>
+        </message>
+        <message>
             <source>&amp;Overview</source>
             <translation>&amp;Vista general</translation>
         </message>
@@ -2014,6 +2019,14 @@ Introdúzcala exactamente: un valor diferente abre una cartera diferente.</trans
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Versiones</translation>
+        </message>
         <message>
             <source>Form</source>
             <translation>Formulario</translation>

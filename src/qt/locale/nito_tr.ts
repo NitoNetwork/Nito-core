@@ -384,6 +384,11 @@ Cüzdan kilidini aç.</translation>
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>Bu cüzdan %1 ağında çalışıyor. Bu ağdaki coinlerin değeri yoktur.</translation>
+        </message>
+        <message>
             <source>&amp;Overview</source>
             <translation>&amp;Genel bakis</translation>
         </message>
@@ -1817,6 +1822,14 @@ Tam olarak girin: farklı bir değer farklı bir cüzdan açar.</translation>
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Sürümler</translation>
+        </message>
         <message>
             <source>The displayed information may be out of date. Your wallet automatically synchronizes with the Nito network after a connection is established, but this process has not completed yet.</source>
             <translation>Görüntülenen bilgiler güncel olmayabilir. Bağlantı kurulduğunda cüzdanınız otomatik olarak Nito ağı ile senkronize olur ancak bu işlem henüz tamamlanmamıştır.</translation>

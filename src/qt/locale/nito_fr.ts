@@ -443,6 +443,11 @@ Il n’est possible de signer qu’avec les adresses de type « legacy ».</tr
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>Ce portefeuille utilise le réseau %1. Ses pièces n’ont aucune valeur.</translation>
+        </message>
+        <message>
             <source>&amp;Overview</source>
             <translation>&amp;Vue d’ensemble</translation>
         </message>
@@ -2054,6 +2059,14 @@ Saisissez-la exactement : une valeur différente ouvre un wallet différent.</tr
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Versions</translation>
+        </message>
         <message>
             <source>Form</source>
             <translation>Formulaire</translation>

@@ -425,6 +425,11 @@ Signing is only possible with addresses of the type 'legacy'.</source>
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>이 지갑은 %1 네트워크에서 실행 중입니다. 이 네트워크의 코인은 가치가 없습니다.</translation>
+        </message>
+        <message>
             <source>&amp;Overview</source>
             <translation>개요(&amp;O)</translation>
         </message>
@@ -1965,6 +1970,14 @@ Enter it exactly: a different value opens a different wallet.</source>
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>릴리스</translation>
+        </message>
         <message>
             <source>Form</source>
             <translation>유형</translation>

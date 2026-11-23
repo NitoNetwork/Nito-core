@@ -414,6 +414,11 @@ Assinar só é possível com endereços do tipo "legado".</translation>
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>Esta carteira está a funcionar na rede %1. As suas moedas não têm valor.</translation>
+        </message>
+        <message>
             <source>&amp;Overview</source>
             <translation>&amp;Visao geral</translation>
         </message>
@@ -2030,6 +2035,14 @@ Introduza-a exatamente: um valor diferente abre uma carteira diferente.</transla
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Versões</translation>
+        </message>
         <message>
             <source>Form</source>
             <translation>Formulário</translation>

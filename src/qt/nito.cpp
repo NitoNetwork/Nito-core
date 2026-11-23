@@ -28,6 +28,7 @@
 #include <qt/initexecutor.h>
 #include <qt/intro.h>
 #include <qt/networkstyle.h>
+#include <qt/nitotheme.h>
 #include <qt/optionsmodel.h>
 #include <qt/platformstyle.h>
 #include <qt/splashscreen.h>
@@ -53,6 +54,7 @@
 
 #include <QApplication>
 #include <QColor>
+#include <QColorSpace>
 #include <QDebug>
 #include <QLatin1String>
 #include <QLibraryInfo>
@@ -61,6 +63,7 @@
 #include <QPalette>
 #include <QSettings>
 #include <QString>
+#include <QSurfaceFormat>
 #include <QThread>
 #include <QTimer>
 #include <QTranslator>
@@ -110,70 +113,6 @@ static void RegisterMetaTypes()
     qRegisterMetaType<interfaces::BlockAndHeaderTipInfo>("interfaces::BlockAndHeaderTipInfo");
 
     qRegisterMetaType<NitoUnit>("NitoUnit");
-}
-
-void ApplyNitoAccentStyle(QApplication& app)
-{
-    QPalette palette{app.palette()};
-
-    // Define the complete foreground palette as well as the backgrounds. This
-    // prevents a dark or high-contrast system palette from leaving light text
-    // on Nito's deliberately light surfaces.
-    palette.setColor(QPalette::WindowText, QColor("#102a43"));
-    palette.setColor(QPalette::Text, QColor("#102a43"));
-    palette.setColor(QPalette::ButtonText, QColor("#102a43"));
-    palette.setColor(QPalette::BrightText, QColor("#ffffff"));
-    palette.setColor(QPalette::PlaceholderText, QColor("#52677a"));
-    palette.setColor(QPalette::Link, QColor("#006bbf"));
-    palette.setColor(QPalette::LinkVisited, QColor("#5b4bb7"));
-    palette.setColor(QPalette::Highlight, QColor("#0073cf"));
-    palette.setColor(QPalette::HighlightedText, QColor("#ffffff"));
-    palette.setColor(QPalette::Window, QColor("#f3f8fd"));
-    palette.setColor(QPalette::Base, QColor("#ffffff"));
-    palette.setColor(QPalette::AlternateBase, QColor("#eaf4ff"));
-    palette.setColor(QPalette::Button, QColor("#f8fbff"));
-    palette.setColor(QPalette::ToolTipBase, QColor("#0b1d2e"));
-    palette.setColor(QPalette::ToolTipText, QColor("#ffffff"));
-
-    const QColor disabled_text{"#5b6f82"};
-    palette.setColor(QPalette::Disabled, QPalette::WindowText, disabled_text);
-    palette.setColor(QPalette::Disabled, QPalette::Text, disabled_text);
-    palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabled_text);
-    palette.setColor(QPalette::Disabled, QPalette::PlaceholderText, disabled_text);
-    palette.setColor(QPalette::Disabled, QPalette::Link, disabled_text);
-    palette.setColor(QPalette::Disabled, QPalette::LinkVisited, disabled_text);
-    palette.setColor(QPalette::Disabled, QPalette::Button, QColor("#edf3f9"));
-    app.setPalette(palette);
-
-    app.setStyleSheet(QStringLiteral(
-        "QMainWindow, QDialog { background-color: #f3f8fd; }"
-        "QMenuBar { background-color: #f8fbff; border-bottom: 1px solid #c4ddf4; }"
-        "QMenuBar::item { padding: 5px 9px; background: transparent; }"
-        "QMenuBar::item:selected { color: #004f8d; background-color: #dff0ff; }"
-        "QMenu { background-color: #ffffff; border: 1px solid #b7d4ef; }"
-        "QMenu::item:selected { color: #ffffff; background-color: #0073cf; }"
-        "QToolBar { background-color: #edf6ff; border: 0; border-bottom: 1px solid #c4ddf4; spacing: 3px; }"
-        "QToolButton { border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; }"
-        "QToolButton:hover { border-color: #71b4ea; background-color: #dff0ff; }"
-        "QToolButton:pressed, QToolButton:checked { background-color: #0073cf; color: #ffffff; border-color: #005fa8; }"
-        "QGroupBox { border: 1px solid #b7d4ef; border-radius: 6px; margin-top: 8px; padding-top: 10px; background-color: #fbfdff; }"
-        "QGroupBox::title { color: #005fa8; subcontrol-origin: margin; left: 8px; padding: 0 3px; }"
-        "QFrame[frameShape=\"4\"], QFrame[frameShape=\"6\"] { border-color: #c4ddf4; }"
-        "QPushButton { border: 1px solid #adcce8; border-radius: 4px; padding: 4px 9px; background-color: #ffffff; }"
-        "QPushButton:hover { border-color: #0073cf; background-color: #e8f4ff; }"
-        "QPushButton:pressed, QPushButton:checked { background-color: #0073cf; color: #ffffff; border-color: #005fa8; }"
-        "QPushButton:default { border-color: #0073cf; }"
-        "QPushButton:disabled { background-color: #edf3f9; border-color: #cfdfed; }"
-        "QTabBar::tab { padding: 5px 10px; }"
-        "QTabBar::tab:selected { color: #004f8d; background-color: #e3f2ff; border-bottom: 2px solid #0073cf; }"
-        "QHeaderView::section { background-color: #e6f3ff; color: #103a5c; border: 0; border-right: 1px solid #c4ddf4; border-bottom: 1px solid #c4ddf4; padding: 4px; }"
-        "QTableView, QTreeView, QListView { alternate-background-color: #eef7ff; selection-background-color: #0073cf; selection-color: #ffffff; }"
-        "QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border: 1px solid #0073cf; background-color: #ffffff; }"
-        "QCheckBox, QRadioButton { spacing: 6px; }"
-        "QProgressBar { border: 1px solid #adcce8; border-radius: 3px; background-color: #e7f1fb; text-align: center; }"
-        "QProgressBar::chunk { background-color: #0073cf; }"
-        "QStatusBar { background-color: #f8fbff; border-top: 1px solid #c4ddf4; }"
-    ));
 }
 
 static QString GetLangTerritory()
@@ -557,6 +496,7 @@ static void SetupUIArgs(ArgsManager& argsman)
     argsman.AddArg("-lang=<lang>", "Set language, for example \"de_DE\" (default: system locale)", ArgsManager::ALLOW_ANY, OptionsCategory::GUI);
     argsman.AddArg("-min", "Start minimized", ArgsManager::ALLOW_ANY, OptionsCategory::GUI);
     argsman.AddArg("-resetguisettings", "Reset all settings changed in the GUI", ArgsManager::ALLOW_ANY, OptionsCategory::GUI);
+    argsman.AddArg("-guitheme=<mode>", "Use a light or dark theme (one of auto, light, dark; default: auto, which follows the system)", ArgsManager::ALLOW_ANY, OptionsCategory::GUI);
     argsman.AddArg("-splash", strprintf("Show splash screen on startup (default: %u)", DEFAULT_SPLASHSCREEN), ArgsManager::ALLOW_ANY, OptionsCategory::GUI);
     argsman.AddArg("-uiplatform", strprintf("Select platform to customize UI for (one of windows, macosx, other; default: %s)", NitoGUI::DEFAULT_UIPLATFORM), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::GUI);
 }
@@ -588,6 +528,15 @@ int GuiMain(int argc, char* argv[])
     QApplication::setAttribute(Qt::AA_DontUseNativeMenuBar);
     QApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+#endif
+
+#ifdef Q_OS_MACOS
+    // Tell macOS the windows are drawn in sRGB, so it converts them for the
+    // display. Otherwise Qt uses the screen's colour space, and on wide-gamut
+    // displays every colour (especially red) looks more saturated than intended.
+    QSurfaceFormat surface_format{QSurfaceFormat::defaultFormat()};
+    surface_format.setColorSpace(QColorSpace::SRgb);
+    QSurfaceFormat::setDefaultFormat(surface_format);
 #endif
 
     NitoApplication app;
@@ -637,7 +586,8 @@ int GuiMain(int argc, char* argv[])
 
     // Now that the QApplication is setup and we have parsed our parameters, we can set the platform style
     app.setupPlatformStyle();
-    ApplyNitoAccentStyle(app);
+    // Nito's theme, in mainnet colours until the network is known (for the intro dialog)
+    SetupNitoTheme(app, ChainType::MAIN);
 
     /// 3. Application identification
     // must be set before OptionsModel is initialized or translations are loaded,
@@ -697,6 +647,8 @@ int GuiMain(int argc, char* argv[])
     assert(!networkStyle.isNull());
     // Allow for separate UI settings for testnets
     QApplication::setApplicationName(networkStyle->getAppName());
+    // Use this network's colours from now on
+    SetupNitoTheme(app, Params().GetChainType());
     // Re-initialize translations after changing application name (language in network-specific settings can be different)
     initTranslations(qtTranslatorBase, qtTranslator, translatorBase, translator);
 

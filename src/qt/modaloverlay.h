@@ -54,6 +54,7 @@ private:
     bool userClosed{false};
     QPropertyAnimation m_animation;
     void UpdateHeaderSyncLabel();
+    void UpdateWarningIcon();
     void UpdateHeaderPresyncLabel(int height, const QDateTime& blockDate);
 };
 

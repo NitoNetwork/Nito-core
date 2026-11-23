@@ -19,6 +19,7 @@
 #include <qt/walletmodel.h>
 #include <util/translation.h>
 
+#include <algorithm>
 #include <functional>
 
 #include <QApplication>
@@ -63,13 +64,21 @@ SplashScreen::SplashScreen(const NetworkStyle* networkStyle)
     // Set text color to white
     pixPaint.setPen(QColor(255, 255, 255));
 
-    // Draw a black background
-    pixPaint.fillRect(pixmap.rect(), QColor("#2e3754"));
+    // Background: Nito's dark blue on mainnet, a dark shade of the network's
+    // colour on the test networks
+    QColor background_inner{"#1f2845"};
+    QColor background_outer{"#2e3754"};
+    if (networkStyle->getChainType() != ChainType::MAIN) {
+        const float hue{std::max(0.0f, networkStyle->getAccentColor().hslHueF())};
+        background_inner = QColor::fromHslF(hue, 0.38f, 0.20f);
+        background_outer = QColor::fromHslF(hue, 0.29f, 0.25f);
+    }
+    pixPaint.fillRect(pixmap.rect(), background_outer);
 
     // draw a slightly radial gradient
     QRadialGradient gradient(QPoint(0,0), splashSize.width()/devicePixelRatio);
-    gradient.setColorAt(0, QColor("#1f2845"));
-    gradient.setColorAt(1, QColor("#2e3754"));
+    gradient.setColorAt(0, background_inner);
+    gradient.setColorAt(1, background_outer);
     QRect rGradient(QPoint(0,0), splashSize);
     pixPaint.fillRect(rGradient, gradient);
 

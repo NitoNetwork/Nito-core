@@ -411,6 +411,11 @@ Ondertekenen is alleen mogelijk met adressen van het type 'legacy'.</translation
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>Deze portemonnee draait op het %1-netwerk. De munten op dit netwerk hebben geen waarde.</translation>
+        </message>
+        <message>
             <source>&amp;Overview</source>
             <translation>&amp;Overzicht</translation>
         </message>
@@ -1988,6 +1993,14 @@ Ongebruikte mempool geheugen is gedeeld voor deze cache.</translation>
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Releases</translation>
+        </message>
         <message>
             <source>Form</source>
             <translation>Vorm</translation>

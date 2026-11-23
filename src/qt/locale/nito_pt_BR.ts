@@ -386,6 +386,11 @@ Só é possível assinar com endereços do tipo 'legado'.</translation>
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>Esta carteira está operando na rede %1. Suas moedas não têm valor.</translation>
+        </message>
+        <message>
             <source>&amp;Overview</source>
             <translation>&amp;Visao geral</translation>
         </message>
@@ -1939,6 +1944,14 @@ Digite-a exatamente: um valor diferente abre uma carteira diferente.</translatio
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Versões</translation>
+        </message>
         <message>
             <source>Form</source>
             <translation>Formulário</translation>

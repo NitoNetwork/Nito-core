@@ -431,6 +431,11 @@ Das Signieren ist nur mit Adressen vom Typ 'Legacy' möglich.</translation>
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>Diese Wallet läuft im Netzwerk %1. Ihre Coins haben keinen Wert.</translation>
+        </message>
+        <message>
             <source>&amp;Overview</source>
             <translation>&amp;Uebersicht</translation>
         </message>
@@ -2037,6 +2042,14 @@ Geben Sie sie exakt ein: Ein anderer Wert öffnet eine andere Wallet.</translati
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Veröffentlichungen</translation>
+        </message>
         <message>
             <source>Form</source>
             <translation>Formular</translation>

@@ -355,6 +355,11 @@ Signing is only possible with addresses of the type 'legacy'.</source>
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>This wallet is running on %1. Its coins have no value.</translation>
+        </message>
+        <message>
             <location filename="../nitogui.cpp" line="+250" />
             <source>&amp;Overview</source>
             <translation>&amp;Overview</translation>
@@ -2290,6 +2295,14 @@ The migration process will create a backup of the wallet before migrating. This 
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Releases</translation>
+        </message>
         <message>
             <location filename="../forms/overviewpage.ui" line="+14" />
             <source>Form</source>

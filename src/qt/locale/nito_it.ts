@@ -406,6 +406,11 @@ E' possibile firmare solo con indirizzi di tipo "legacy".</translation>
     <context>
         <name>NitoGUI</name>
         <message>
+            <source>This wallet is running on %1. Its coins have no value.</source>
+            <extracomment>%1 is the network name, such as Testnet</extracomment>
+            <translation>Questo portafoglio usa la rete %1. Le sue monete non hanno valore.</translation>
+        </message>
+        <message>
             <source>&amp;Overview</source>
             <translation>&amp;Panoramica</translation>
         </message>
@@ -2018,6 +2023,14 @@ Inseriscila esattamente: un valore diverso apre un portafoglio diverso.</transla
     </context>
     <context>
         <name>OverviewPage</name>
+        <message>
+            <source>GitHub</source>
+            <translation>GitHub</translation>
+        </message>
+        <message>
+            <source>Releases</source>
+            <translation>Versioni</translation>
+        </message>
         <message>
             <source>Form</source>
             <translation>Modulo</translation>

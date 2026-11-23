@@ -28,6 +28,7 @@
     <ClCompile Include="..\..\src\qt\intro.cpp" />
     <ClCompile Include="..\..\src\qt\modaloverlay.cpp" />
     <ClCompile Include="..\..\src\qt\networkstyle.cpp" />
+    <ClCompile Include="..\..\src\qt\nitotheme.cpp" />
     <ClCompile Include="..\..\src\qt\notificator.cpp" />
     <ClCompile Include="..\..\src\qt\openuridialog.cpp" />
     <ClCompile Include="..\..\src\qt\optionsdialog.cpp" />
