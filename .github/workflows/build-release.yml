@@ -6,7 +6,7 @@ on:
       version:
         description: "Release version used in artifact names"
         required: true
-        default: "4.0.1"
+        default: "4.1.0"
       targets:
         description: "Targets value: all, windows, macos, linux-x86_64,linux-aarch64. targets=windows also works."
         required: true
@@ -28,7 +28,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  VERSION: ${{ github.event.inputs.version || '4.0.1' }}
+  VERSION: ${{ github.event.inputs.version || '4.1.0' }}
   MAKEJOBS: "4"
   RUST_TOOLCHAIN: "1.97.0"
   TARGETS: ${{ github.event.inputs.targets || 'all' }}
@@ -2404,11 +2404,39 @@ jobs:
           find release-artifacts -maxdepth 1 -type f -print | sort
           echo "::endgroup::"
 
+      - name: Check out release notes from the verified tag target
+        if: env.PUBLISH_RELEASE == 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.release_tag_commit }}
+          path: release-source
+          sparse-checkout: doc/release-notes.md
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Prepare draft release notes
+        if: env.PUBLISH_RELEASE == 'true'
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ needs.preflight.outputs.release_tag_commit }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_COMMIT"
+          test "$(git -C release-source rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test -s release-source/doc/release-notes.md
+          {
+            cat release-source/doc/release-notes.md
+            printf '\n## Build provenance\n\n'
+            printf 'Source commit: [%s](%s/%s/commit/%s).\n\n' "$RELEASE_COMMIT" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RELEASE_COMMIT"
+            printf 'Official build: [GitHub Actions run %s](%s/%s/actions/runs/%s).\n' "$GITHUB_RUN_ID" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > release-artifacts/draft-release-notes.md
+
       - name: Create unsigned draft release
         if: env.PUBLISH_RELEASE == 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           draft: true
+          name: Nito Core ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'ci') || contains(github.ref_name, 'test') }}
           overwrite_files: false
           fail_on_unmatched_files: true
@@ -2420,4 +2448,4 @@ jobs:
             release-artifacts/nito-${{ env.VERSION }}-arm64-apple-darwin.tar.gz
             release-artifacts/nito-${{ env.VERSION }}-arm64-apple-darwin.dmg
             release-artifacts/SHA256SUMS
-          body_path: release-artifacts/release-manifest.txt
+          body_path: release-artifacts/draft-release-notes.md
