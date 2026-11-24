@@ -220,20 +220,25 @@ void AppTests::paletteTests()
         }
     }
 
-    // The mainnet window and tray keep the established official logo and framing.
+    // The mainnet logo inside the app keeps its original colors and framing.
     const QScopedPointer<const NetworkStyle> main_style{NetworkStyle::instantiate(ChainType::MAIN)};
     QVERIFY(main_style);
-    const QSize main_icon_size{256, 256};
     const QPixmap official_logo{QStringLiteral(":/icons/nito")};
     QVERIFY(!official_logo.isNull());
+    QCOMPARE(main_style->getAppIcon().pixmap(official_logo.size()).toImage(),
+             QIcon{official_logo}.pixmap(official_logo.size()).toImage());
+
+#if !defined(Q_OS_MACOS) && !defined(Q_OS_WIN)
+    const QSize main_icon_size{256, 256};
     const QIcon expected_main_icon{official_logo.scaled(main_icon_size)};
     QCOMPARE(main_style->getTrayAndWindowIcon().pixmap(main_icon_size).toImage(),
              expected_main_icon.pixmap(main_icon_size).toImage());
+#endif
 
 #ifdef Q_OS_MACOS
     // On macOS the Dock icon sits in a rounded square in a dark shade of the
     // network's colour: transparent outside the square, opaque inside it.
-    for (const ChainType chain : {ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST}) {
+    for (const ChainType chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST}) {
         const QScopedPointer<const NetworkStyle> style{NetworkStyle::instantiate(chain)};
         QVERIFY(style);
         const QImage icon{style->getTrayAndWindowIcon().pixmap(QSize{1024, 1024}).toImage().convertToFormat(QImage::Format_ARGB32)};
@@ -248,9 +253,11 @@ void AppTests::paletteTests()
         QVERIFY2(std::min(hue_gap, 1.0f - hue_gap) < 0.05f, qPrintable(name + ": icon background should be a shade of the network colour, is " + background.name()));
     }
 #else
-    // Elsewhere the window and taskbar icon is the plain N, cropped so it
-    // fills the icon instead of sitting in a wide empty margin.
-    for (const ChainType chain : {ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST}) {
+    // Windows and the non-mainnet window icons outside macOS use a tighter crop.
+    for (const ChainType chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST}) {
+#ifndef Q_OS_WIN
+        if (chain == ChainType::MAIN) continue;
+#endif
         const QScopedPointer<const NetworkStyle> style{NetworkStyle::instantiate(chain)};
         QVERIFY(style);
         const QImage icon{style->getTrayAndWindowIcon().pixmap(QSize{256, 256}).toImage().convertToFormat(QImage::Format_ARGB32)};

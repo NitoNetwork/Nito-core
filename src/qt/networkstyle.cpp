@@ -177,21 +177,23 @@ NetworkStyle::NetworkStyle(const QString &_appName, const ChainType _chain, cons
     // load pixmap
     QPixmap pixmap(":/icons/nito");
 
+    if (chain != ChainType::MAIN) {
+        QImage img = pixmap.toImage();
+        RecolourIcon(img, accent);
+        pixmap = QPixmap::fromImage(img);
+    }
+
+    appIcon = QIcon(pixmap);
+#ifdef Q_OS_MACOS
+    trayAndWindowIcon = QIcon(MacAppIcon(pixmap, accent));
+#else
+#ifndef Q_OS_WIN
     if (chain == ChainType::MAIN) {
-        appIcon = QIcon(pixmap);
         trayAndWindowIcon = QIcon(pixmap.scaled(QSize{256, 256}));
         return;
     }
-
-    QImage img = pixmap.toImage();
-    RecolourIcon(img, accent);
-    pixmap = QPixmap::fromImage(img);
-
-    appIcon             = QIcon(pixmap);
-#ifdef Q_OS_MACOS
-    trayAndWindowIcon   = QIcon(MacAppIcon(pixmap, accent));
-#else
-    trayAndWindowIcon   = QIcon(TrimmedIcon(pixmap).scaled(QSize(256,256), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+#endif
+    trayAndWindowIcon = QIcon(TrimmedIcon(pixmap).scaled(QSize{256, 256}, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 #endif
 }
 
