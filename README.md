@@ -20,8 +20,12 @@ default branch contains the maintained V4 source line.
 ## Major V4 Additions
 
 - **Bech32x and Orchard:** opt-in private receive and send flows, with explicit
-  private funding and a dedicated Orchard index. See the
-  [Bech32x wallet guide](doc/nito/bech32x-private-wallet.md).
+  private funding and a dedicated Orchard index. Nito’s shielded pool starts
+  with a zero balance on the Nito blockchain. From the first shielded
+  transaction, Nito Core verifies Orchard proofs using the corrected circuit
+  introduced in Zcash NU6.2 and enforces the canonical proof length. See
+  [Orchard consensus details](src/private/orchard_ffi/README.md#consensus-baseline)
+  and the [Bech32x wallet guide](doc/nito/bech32x-private-wallet.md).
 - **Compatible wallet upgrades:** supported V3 wallet files continue to open
   directly; Orchard can be added without replacing existing transparent keys.
   See [wallet backup and restore](doc/nito/wallet-backup-restore.md).
